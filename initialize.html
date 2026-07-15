@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DJYX_APITOOL 初始化</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+        body {
+            background: #0f172a;
+            color: #e2e8f0;
+            font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+            user-select: none;
+        }
+        #titlebar {
+            height: 34px;
+            display: flex;
+            align-items: center;
+            padding-left: 12px;
+            border-bottom: 1px solid #273449;
+            background: #0b1220;
+        }
+        #titlebar img { width: 18px; height: 18px; margin-right: 8px; }
+        #titlebar strong { font-size: 12px; letter-spacing: 0; }
+        .controls { margin-left: auto; height: 100%; display: flex; }
+        .controls button {
+            width: 46px;
+            height: 33px;
+            border: 0;
+            background: transparent;
+            color: #cbd5e1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .control-glyph { position: relative; display: block; width: 12px; height: 12px; }
+        .control-glyph::before,
+        .control-glyph::after {
+            content: "";
+            position: absolute;
+            left: 1px;
+            top: 5px;
+            width: 10px;
+            height: 1px;
+            background: currentColor;
+        }
+        .control-glyph.close::before { transform: rotate(45deg); }
+        .control-glyph.close::after { transform: rotate(-45deg); }
+        .controls button:hover { background: #263247; }
+        .controls .close:hover { background: #e81123; color: #fff; }
+        main {
+            height: calc(100% - 34px);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 36px;
+        }
+        .mark {
+            width: 58px;
+            height: 58px;
+            margin-bottom: 22px;
+        }
+        h1 { margin: 0 0 8px; font-size: 20px; font-weight: 650; }
+        p { margin: 0; color: #94a3b8; font-size: 12px; text-align: center; }
+        .progress {
+            width: min(420px, 75vw);
+            height: 5px;
+            margin-top: 28px;
+            overflow: hidden;
+            background: #263247;
+        }
+        #bar { width: 4%; height: 100%; background: #8b5cf6; transition: width .2s ease; }
+        #status { margin-top: 12px; min-height: 18px; color: #cbd5e1; }
+        #detail { margin-top: 4px; font-size: 10px; }
+        #retry {
+            display: none;
+            margin-top: 20px;
+            padding: 7px 20px;
+            border: 1px solid #64748b;
+            background: transparent;
+            color: #e2e8f0;
+            cursor: pointer;
+        }
+        #retry:hover { background: #263247; }
+    </style>
+</head>
+<body>
+    <header id="titlebar">
+        <img src="assets/title_logo.png" alt="">
+        <strong>DJYX_APITOOL</strong>
+        <div class="controls">
+            <button type="button" onclick="window.pywebview?.api?.window_action('minimize')" title="最小化" aria-label="最小化"><span class="control-glyph"></span></button>
+            <button type="button" class="close" onclick="window.pywebview?.api?.window_action('close')" title="关闭" aria-label="关闭"><span class="control-glyph close"></span></button>
+        </div>
+    </header>
+    <main>
+        <img class="mark" src="assets/title_logo.png" alt="">
+        <h1>正在初始化项目</h1>
+        <p>首次运行需要从国内镜像缓存界面依赖，后续启动将直接使用本地文件。</p>
+        <div class="progress"><div id="bar"></div></div>
+        <p id="status">正在连接国内镜像…</p>
+        <p id="detail">Lucide 0.468.0</p>
+        <button id="retry" type="button">重新尝试</button>
+    </main>
+    <script>
+        const bar = document.getElementById('bar');
+        const status = document.getElementById('status');
+        const detail = document.getElementById('detail');
+        const retry = document.getElementById('retry');
+
+        let polling = false;
+
+        function updateInitialization(state) {
+            bar.style.width = `${Math.max(4, Math.min(100, Number(state?.percent) || 0))}%`;
+            status.textContent = state?.message || '正在初始化…';
+            detail.textContent = state?.item || '';
+            retry.style.display = state?.status === 'failed' ? 'block' : 'none';
+        }
+
+        function wait(milliseconds) {
+            return new Promise(resolve => setTimeout(resolve, milliseconds));
+        }
+
+        async function initialize(retryFailed = false) {
+            if (polling) return;
+            polling = true;
+            retry.style.display = 'none';
+            updateInitialization({ percent: 4, message: '正在连接国内镜像…', item: 'Lucide 0.468.0' });
+            try {
+                let state = await window.pywebview.api.initialize_assets(retryFailed);
+                updateInitialization(state);
+                while (state.status === 'installing' || state.status === 'idle') {
+                    await wait(120);
+                    state = await window.pywebview.api.get_asset_status();
+                    updateInitialization(state);
+                }
+                if (state.status !== 'ready' || !state.url) {
+                    throw new Error(state.item || '初始化失败');
+                }
+                const navigation = await window.pywebview.api.complete_initialization();
+                if (!navigation?.ok) {
+                    throw new Error(navigation?.error || '无法进入应用');
+                }
+            } catch (error) {
+                status.textContent = '初始化失败';
+                detail.textContent = error?.message || String(error);
+                retry.style.display = 'block';
+            } finally {
+                polling = false;
+            }
+        }
+
+        document.getElementById('titlebar').addEventListener('mousedown', event => {
+            if (event.button !== 0 || event.target.closest('.controls')) return;
+            event.preventDefault();
+            window.pywebview?.api?.native_drag('move');
+        });
+        retry.addEventListener('click', () => initialize(true));
+        if (window.pywebview?.api) initialize();
+        else window.addEventListener('pywebviewready', initialize, { once: true });
+    </script>
+</body>
+</html>

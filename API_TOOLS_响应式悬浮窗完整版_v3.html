@@ -1,0 +1,2980 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DJYX_APITOOL</title>
+    <link rel="stylesheet" href="assets/app.css?v=14">
+    <script defer src="vendor/lucide/lucide.min.js"></script>
+    <style media="not all" data-legacy-styles-disabled>
+        /* 强制无圆角 */
+        * {
+            border-radius: 0px !important;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            min-width: 0;
+            min-height: 0;
+            margin: 0;
+            overflow: hidden;
+            overscroll-behavior: none;
+        }
+
+        body {
+            position: fixed;
+            inset: 0;
+        }
+
+        button,
+        input,
+        select {
+            min-width: 0;
+        }
+
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .dark ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.15);
+        }
+
+        /* 超轻量窗口动画 */
+        .settings-transition {
+            transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* 整个页面始终等于可视窗口，禁止页面与面板产生滚动穿模 */
+        #widget-root {
+            width: 100vw;
+            height: 100vh;
+            height: 100dvh;
+            min-width: 0;
+            min-height: 0;
+            max-width: 100vw;
+            max-height: 100vh;
+            max-height: 100dvh;
+            overflow: hidden;
+            isolation: isolate;
+        }
+
+        .native-resize-handle {
+            position: fixed;
+            z-index: 100;
+            display: block;
+        }
+
+        .window-maximized .native-resize-handle {
+            display: none;
+        }
+
+        .resize-left, .resize-right {
+            top: 7px;
+            bottom: 7px;
+            width: 7px;
+        }
+
+        .resize-top, .resize-bottom {
+            left: 7px;
+            right: 7px;
+            height: 7px;
+        }
+
+        .resize-left { left: 0; cursor: ew-resize; }
+        .resize-right { right: 0; cursor: ew-resize; }
+        .resize-top { top: 0; cursor: ns-resize; }
+        .resize-bottom { bottom: 0; cursor: ns-resize; }
+        .resize-top-left, .resize-top-right, .resize-bottom-left, .resize-bottom-right {
+            width: 10px;
+            height: 10px;
+        }
+        .resize-top-left { left: 0; top: 0; cursor: nwse-resize; }
+        .resize-top-right { right: 0; top: 0; cursor: nesw-resize; }
+        .resize-bottom-left { left: 0; bottom: 0; cursor: nesw-resize; }
+        .resize-bottom-right { right: 0; bottom: 0; cursor: nwse-resize; }
+
+        #appMain,
+        #dashboardGrid,
+        #dashboardPrimary,
+        #speedPanel,
+        #settingsContent {
+            min-width: 0;
+            min-height: 0;
+        }
+
+        #appMain,
+        #dashboardGrid,
+        #dashboardPrimary,
+        #speedPanel {
+            overflow: hidden;
+        }
+
+        /* Windows 风格标题栏 */
+        #windowTitleBar {
+            height: 33px !important;
+            min-height: 33px !important;
+            max-height: 33px !important;
+            flex: 0 0 33px !important;
+            padding: 0 0 0 12px !important;
+            font-size: 12px !important;
+            line-height: 1 !important;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #windowTitleIdentity {
+            height: 32px;
+            min-height: 32px;
+            max-height: 32px;
+            gap: 8px !important;
+        }
+
+        #windowTitleLogo {
+            width: 16px !important;
+            height: 16px !important;
+            min-width: 16px !important;
+            min-height: 16px !important;
+            max-width: 16px !important;
+            max-height: 16px !important;
+            flex: 0 0 16px !important;
+        }
+
+        #windowTitleText {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 12px !important;
+            line-height: 16px !important;
+            letter-spacing: 0 !important;
+        }
+
+        .window-controls {
+            height: 32px !important;
+            min-height: 32px !important;
+            max-height: 32px !important;
+            flex: 0 0 auto !important;
+            margin-left: auto;
+        }
+
+        .window-control {
+            width: 46px !important;
+            min-width: 46px !important;
+            max-width: 46px !important;
+            height: 32px !important;
+            min-height: 32px !important;
+            max-height: 32px !important;
+            flex: 0 0 46px !important;
+            padding: 0 !important;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 0;
+            color: inherit;
+            background: transparent;
+            transition: background-color 0.12s ease, color 0.12s ease;
+        }
+
+        .window-control:hover {
+            background: rgba(100, 116, 139, 0.16);
+        }
+
+        .window-control-close:hover {
+            background: #e81123;
+            color: #fff;
+        }
+
+        /* 图标拥有独立于文字的固定尺寸，窗口断点不得改变其物理大小。 */
+        [data-lucide] {
+            width: 12px;
+            height: 12px;
+            min-width: 12px;
+            min-height: 12px;
+            display: inline-block;
+            flex: 0 0 12px;
+            vertical-align: -2px;
+            stroke-width: 2;
+        }
+
+        .icon-10 {
+            width: 10px;
+            height: 10px;
+            min-width: 10px;
+            min-height: 10px;
+            flex-basis: 10px;
+        }
+
+        .icon-11 {
+            width: 11px;
+            height: 11px;
+            min-width: 11px;
+            min-height: 11px;
+            flex-basis: 11px;
+        }
+
+        .icon-14 {
+            width: 14px;
+            height: 14px;
+            min-width: 14px;
+            min-height: 14px;
+            flex-basis: 14px;
+        }
+
+        .window-control .titlebar-icon,
+        .window-control [data-lucide] {
+            width: 13px;
+            height: 13px;
+            min-width: 13px;
+            min-height: 13px;
+            max-width: 13px;
+            max-height: 13px;
+            flex: 0 0 13px;
+            stroke-width: 1.5 !important;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            vector-effect: non-scaling-stroke;
+        }
+
+        #keyToolbar {
+            height: 31px;
+            min-height: 31px;
+            padding-top: 4px !important;
+            padding-bottom: 4px !important;
+            font-size: 12px !important;
+        }
+
+        #keyToolbar .toolbar-label { font-size: 9px !important; }
+        #keyToolbar .toolbar-button-text { font-size: 10px !important; }
+
+        #keySelector,
+        .toolbar-action-button {
+            height: 22px;
+            min-height: 22px;
+            line-height: 1;
+        }
+
+        #keySelector { font-size: 12px !important; }
+
+        .toolbar-action-button [data-lucide] {
+            width: 11px;
+            height: 11px;
+            min-width: 11px;
+            min-height: 11px;
+            flex-basis: 11px;
+        }
+
+        /* 内容字号随各自父组件宽度连续变化；标题栏、窗口按钮和图标保持固定。 */
+        .responsive-fonts {
+            container-type: inline-size;
+            --content-fs-7: clamp(7px, 0.95cqi, 12px);
+            --content-fs-8: clamp(8px, 1.02cqi, 13px);
+            --content-fs-9: clamp(9px, 1.1cqi, 14px);
+            --content-fs-10: clamp(10px, 1.18cqi, 15px);
+            --content-fs-11: clamp(11px, 1.3cqi, 17px);
+            --content-fs-14: clamp(14px, 1.75cqi, 24px);
+            --content-fs-xs: clamp(12px, 1.25cqi, 16px);
+            --content-fs-sm: clamp(14px, 1.45cqi, 18px);
+            --content-fs-base: clamp(16px, 1.62cqi, 20px);
+            --content-fs-lg: clamp(18px, 1.9cqi, 24px);
+            --content-fs-xl: clamp(20px, 2.2cqi, 28px);
+            --content-fs-2xl: clamp(24px, 2.85cqi, 36px);
+            font-size: var(--content-fs-xs);
+        }
+
+        .responsive-fonts-size {
+            container-type: size;
+            --content-fs-7: clamp(7px, max(1cqi, 1.2cqh), 12px);
+            --content-fs-8: clamp(8px, max(1.1cqi, 1.35cqh), 13px);
+            --content-fs-9: clamp(9px, max(1.2cqi, 1.5cqh), 14px);
+            --content-fs-10: clamp(10px, max(1.3cqi, 1.65cqh), 15px);
+            --content-fs-11: clamp(11px, max(1.45cqi, 1.8cqh), 17px);
+            --content-fs-14: clamp(14px, max(1.85cqi, 2.2cqh), 24px);
+            --content-fs-xs: clamp(12px, max(1.5cqi, 1.9cqh), 16px);
+            --content-fs-sm: clamp(14px, max(1.7cqi, 2.1cqh), 18px);
+            --content-fs-base: clamp(16px, max(1.9cqi, 2.3cqh), 20px);
+            --content-fs-lg: clamp(18px, max(2.15cqi, 2.55cqh), 24px);
+            --content-fs-xl: clamp(20px, max(2.45cqi, 2.8cqh), 28px);
+            --content-fs-2xl: clamp(24px, max(3cqi, 3.4cqh), 36px);
+        }
+
+        .responsive-fonts [class~="text-[7px]"] { font-size: var(--content-fs-7) !important; }
+        .responsive-fonts [class~="text-[8px]"] { font-size: var(--content-fs-8) !important; }
+        .responsive-fonts [class~="text-[9px]"] { font-size: var(--content-fs-9) !important; }
+        .responsive-fonts [class~="text-[10px]"] { font-size: var(--content-fs-10) !important; }
+        .responsive-fonts [class~="text-[11px]"] { font-size: var(--content-fs-11) !important; }
+        .responsive-fonts [class~="text-[14px]"] { font-size: var(--content-fs-14) !important; }
+        .responsive-fonts [class~="text-xs"] { font-size: var(--content-fs-xs) !important; }
+        .responsive-fonts [class~="text-sm"] { font-size: var(--content-fs-sm) !important; }
+        .responsive-fonts [class~="text-base"] { font-size: var(--content-fs-base) !important; }
+        .responsive-fonts [class~="text-lg"] { font-size: var(--content-fs-lg) !important; }
+        .responsive-fonts [class~="text-xl"] { font-size: var(--content-fs-xl) !important; }
+        .responsive-fonts [class~="text-2xl"] { font-size: var(--content-fs-2xl) !important; }
+
+        .metrics-strip {
+            height: clamp(66px, 7dvh, 84px);
+            min-height: 66px;
+            padding: 0 !important;
+            gap: 0 !important;
+            align-items: stretch;
+        }
+
+        .metric-cell {
+            min-width: 0;
+            height: 100%;
+            min-height: 66px;
+            padding: 8px 10px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: flex-start;
+            gap: 3px;
+            line-height: 1.15;
+            text-align: left;
+            border-left: 1px solid rgb(226 232 240);
+            background: transparent !important;
+        }
+
+        .dark .metric-cell { border-left-color: rgb(30 41 59); }
+        .metric-cell:first-child { border-left: 0; }
+        .metric-label { line-height: 1.1; }
+        .metric-value { min-width: 0; line-height: 1.2; }
+        .metric-detail { line-height: 1.1; }
+
+        .model-access-button {
+            border: 0;
+            outline: 0;
+            cursor: pointer;
+            transition: color 0.15s ease;
+        }
+
+        .model-access-button:hover .metric-label,
+        .model-access-button:hover .metric-value,
+        .model-access-button:hover [data-lucide] {
+            color: rgb(79 70 229) !important;
+        }
+
+        .dark .model-access-button:hover .metric-label,
+        .dark .model-access-button:hover .metric-value,
+        .dark .model-access-button:hover [data-lucide] {
+            color: rgb(129 140 248) !important;
+        }
+
+        .model-access-button:focus-visible {
+            box-shadow: inset 0 0 0 1px rgb(99 102 241 / 0.55);
+        }
+        #usageTrendChart {
+            width: 100%;
+            height: 100%;
+            min-height: 54px;
+            overflow: visible;
+        }
+
+        #usageTrendWrap {
+            height: clamp(88px, 15cqh, 108px);
+            flex: 0 0 auto;
+        }
+
+        .trend-hit-zone { fill: transparent; pointer-events: all; }
+        #trendNodeLayer {
+            position: absolute;
+            inset: 0.375rem 0.5rem;
+            pointer-events: none;
+            overflow: visible;
+        }
+
+        .trend-point {
+            position: absolute;
+            width: 6.5px;
+            height: 6.5px;
+            border-radius: 9999px !important;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #modelModal[hidden] { display: none !important; }
+        #modelModal { padding: clamp(8px, 2vw, 24px) !important; }
+
+        #modelModalPanel {
+            width: min(88%, 1680px);
+            height: min(82%, 900px);
+            max-width: calc(100% - 16px);
+            max-height: calc(100% - 16px);
+            flex: 0 0 auto;
+            container-type: size;
+            --content-fs-7: clamp(10px, calc(8px + 0.2cqi + 0.15cqh), 14px);
+            --content-fs-8: clamp(11px, calc(8.5px + 0.22cqi + 0.16cqh), 15px);
+            --content-fs-9: clamp(12px, calc(9px + 0.24cqi + 0.18cqh), 16px);
+            --content-fs-10: clamp(13px, calc(10px + 0.25cqi + 0.2cqh), 18px);
+            --content-fs-xs: clamp(14px, calc(11px + 0.28cqi + 0.22cqh), 20px);
+            --content-fs-sm: clamp(16px, calc(12px + 0.3cqi + 0.24cqh), 22px);
+        }
+
+        #modelModalList {
+            scrollbar-width: thin;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            align-content: start;
+            padding: clamp(10px, 1.4cqi, 18px) !important;
+            gap: clamp(6px, 0.7cqi, 12px) !important;
+        }
+
+        .model-list-item { min-height: 38px; }
+
+        @media (max-width: 520px) {
+            #modelModalList { grid-template-columns: minmax(0, 1fr); }
+        }
+
+        /* 响应式高度控制辅助类 */
+        .micro-only { display: none !important; }
+        .size-micro .micro-only { display: flex !important; }
+        .size-micro .micro-hide { display: none !important; }
+        .size-tiny .tiny-hide { display: none !important; }
+        .size-compact .compact-hide { display: none !important; }
+
+        /* 宽度不足时强制单列，避免 Tailwind md 断点造成穿模 */
+        #dashboardGrid {
+            grid-template-columns: minmax(0, 1fr) !important;
+            grid-template-rows: minmax(0, 1fr) auto;
+        }
+
+        #dashboardPrimary { grid-column: 1; grid-row: 1; }
+        #speedPanel { grid-column: 1; grid-row: 1; }
+        #dashboardMetrics { grid-column: 1 / -1; grid-row: 2; }
+
+        #speedPanel {
+            display: none !important;
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #dashboardGrid {
+            grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) 66px;
+            overflow: hidden;
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #dashboardPrimary,
+        .width-narrow:not(.size-tiny):not(.size-micro) #speedPanel {
+            container-type: size;
+            height: 100%;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #dashboardPrimary {
+            display: grid !important;
+            grid-column: 1;
+            grid-row: 1;
+            grid-template-rows: auto minmax(0, 1fr);
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #speedPanel {
+            display: grid !important;
+            grid-column: 1;
+            grid-row: 2;
+            grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+            border-top: 1px solid rgb(203 213 225);
+        }
+
+        .dark .width-narrow:not(.size-tiny):not(.size-micro) #speedPanel {
+            border-top-color: rgb(30 41 59);
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #dashboardMetrics {
+            display: grid !important;
+            grid-column: 1;
+            grid-row: 3;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            height: 66px;
+            min-height: 66px;
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #dashboardMetrics .metric-secondary {
+            display: none !important;
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #dashboardMetrics .metric-cell {
+            min-height: 58px;
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #dashboardMetrics .metric-primary {
+            border-left: 0;
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #dashboardMetrics .metric-expiry {
+            border-left: 1px solid rgb(226 232 240);
+        }
+
+        .dark .width-narrow:not(.size-tiny):not(.size-micro) #dashboardMetrics .metric-expiry {
+            border-left-color: rgb(30 41 59);
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #dashboardPrimary > div:nth-child(2) {
+            display: grid !important;
+            grid-template-rows: auto repeat(3, minmax(0, 1fr));
+            gap: 0.3rem;
+            overflow: hidden;
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #dashboardPrimary > div:nth-child(2) > :not([hidden]) ~ :not([hidden]) {
+            margin-top: 0 !important;
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #dashboardPrimary > div:nth-child(2) > div,
+        .width-narrow:not(.size-tiny):not(.size-micro) #speedPanel > div {
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #speedPanel > div:first-child > .space-y-1\.5 {
+            display: grid;
+            grid-template-rows: repeat(2, minmax(0, 1fr));
+            gap: 0.25rem;
+            height: calc(100% - 34px);
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #speedPanel > div:first-child > .space-y-1\.5 > :not([hidden]) ~ :not([hidden]) {
+            margin-top: 0 !important;
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #usageAnalysisPanel {
+            padding-top: 0.4rem !important;
+            padding-bottom: 0.4rem !important;
+        }
+
+        .width-narrow:not(.size-tiny):not(.size-micro) #usageTrendWrap {
+            height: clamp(58px, 11cqh, 82px);
+        }
+
+        .width-narrow #appFooter { display: none !important; }
+
+        .width-wide:not(.size-tiny):not(.size-micro) #dashboardGrid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            grid-template-rows: minmax(0, 1fr) auto;
+        }
+
+        .width-wide:not(.size-tiny):not(.size-micro) #dashboardPrimary {
+            grid-column: 1;
+            grid-row: 1;
+        }
+
+        .width-wide:not(.size-tiny):not(.size-micro) #speedPanel {
+            display: flex !important;
+            grid-column: 2;
+            grid-row: 1;
+            border-left: 1px solid rgb(203 213 225);
+        }
+
+        .width-wide:not(.size-tiny):not(.size-micro) #dashboardMetrics {
+            grid-column: 1 / -1;
+            grid-row: 2;
+        }
+
+        .dark .width-wide:not(.size-tiny):not(.size-micro) #speedPanel {
+            border-left-color: rgb(30 41 59);
+        }
+
+        /* 双列桌面视图：让左右内容完整占满可用高度，并统一底部信息区 */
+        .width-wide:not(.size-tiny):not(.size-micro) #dashboardPrimary {
+            display: grid !important;
+            grid-template-rows: auto minmax(0, 1fr);
+            height: 100%;
+        }
+
+        .width-wide:not(.size-tiny):not(.size-micro) #speedPanel {
+            display: grid !important;
+            grid-template-rows: minmax(0, 1fr) auto;
+            height: 100%;
+        }
+
+        /* 左侧限额区：标题 + 三张卡片等比分配剩余空间 */
+        .width-wide:not(.size-tiny):not(.size-micro) #dashboardPrimary > div:nth-child(2) {
+            display: grid !important;
+            grid-template-rows: auto repeat(3, minmax(0, 1fr));
+            align-content: stretch;
+            gap: 0.5rem;
+            overflow: hidden;
+        }
+
+        .width-wide:not(.size-tiny):not(.size-micro) #dashboardPrimary > div:nth-child(2) > :not([hidden]) ~ :not([hidden]) {
+            margin-top: 0 !important;
+        }
+
+        .width-wide:not(.size-tiny):not(.size-micro) #dashboardPrimary > div:nth-child(2) > div {
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* 右侧速度区：上下两组内容各占一半，内部卡片继续均匀填充 */
+        .width-wide:not(.size-tiny):not(.size-micro) #speedPanel {
+            display: grid !important;
+            grid-template-rows: minmax(0, 1fr) auto;
+        }
+
+        .width-wide:not(.size-tiny):not(.size-micro) #speedPanel > div:first-child,
+        .width-wide:not(.size-tiny):not(.size-micro) #speedPanel > div:nth-child(2) {
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .width-wide:not(.size-tiny):not(.size-micro) #usageAnalysisPanel {
+            flex-grow: 0 !important;
+        }
+
+        .width-wide:not(.size-tiny):not(.size-micro) #speedPanel > div:first-child > .space-y-1\.5 {
+            flex: 1 1 auto;
+            min-height: 0;
+            display: grid;
+            grid-template-rows: repeat(2, minmax(0, 1fr));
+            gap: 0.375rem;
+        }
+
+        .width-wide:not(.size-tiny):not(.size-micro) #speedPanel > div:first-child > .space-y-1\.5 > :not([hidden]) ~ :not([hidden]) {
+            margin-top: 0 !important;
+        }
+
+        .width-wide:not(.size-tiny):not(.size-micro) #speedPanel > div:first-child > .space-y-1\.5 > div {
+            min-height: 0;
+            height: 100%;
+        }
+
+        /* 中等高度：仅收紧间距，不改变正常窗口的视觉和组件顺序 */
+        .size-compact #dashboardPrimary > div:first-child,
+        .size-compact #speedPanel > div,
+        .size-compact #dashboardPrimary > div:nth-child(2) {
+            padding-top: 0.5rem !important;
+            padding-bottom: 0.5rem !important;
+        }
+
+        .size-compact #dashboardPrimary > div:nth-child(2) {
+            gap: 0.35rem;
+        }
+
+        /* 小高度：隐藏元数据和页脚，核心额度卡片自动压缩，仍保持原有顺序 */
+        .size-tiny #dashboardPrimary > div:first-child {
+            padding: 0.45rem 0.75rem !important;
+        }
+
+        .size-tiny:not(.width-narrow) #dashboardGrid { grid-template-rows: minmax(0, 1fr); }
+
+        .size-tiny #dashboardPrimary > div:nth-child(2) {
+            padding: 0.45rem 0.75rem !important;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 0.25rem;
+        }
+
+        .size-tiny #dashboardPrimary > div:nth-child(2) > div {
+            padding: 0.3rem 0.375rem !important;
+        }
+
+        .size-tiny #dashboardPrimary > div:nth-child(2) h3 {
+            margin-bottom: 0 !important;
+        }
+
+        .size-tiny #dashboardPrimary > div:nth-child(2) > div .mt-1 {
+            margin-top: 0.125rem !important;
+        }
+
+        /* 极小悬浮窗：保留 Windows 标题栏、密钥工具栏和两条核心状态 */
+        .size-micro #windowTitleBar,
+        .size-micro #keyToolbar {
+            display: flex !important;
+        }
+
+        .size-micro #appMain {
+            flex: 1 1 auto;
+        }
+
+        .size-micro .micro-only {
+            min-height: 0;
+            padding: 0.4rem 0.5rem !important;
+        }
+
+        /* 超窄窗口按钮只保留图标，仍维持“添加 → 删除 → 设置”的顺序 */
+        .width-micro .toolbar-label,
+        .width-micro .toolbar-button-text {
+            display: none !important;
+        }
+
+        .width-micro #keyToolbar {
+            gap: 0.25rem !important;
+        }
+
+        .width-micro #keyToolbar .toolbar-actions {
+            gap: 0.15rem !important;
+        }
+
+        .width-micro #keyToolbar .toolbar-action-button {
+            width: 22px;
+            padding: 0 !important;
+        }
+
+        .size-ultra .micro-only {
+            padding-top: 0.2rem !important;
+            padding-bottom: 0.2rem !important;
+            gap: 0.2rem !important;
+        }
+
+        /* 添加密钥面板在小窗中改为覆盖层，避免挤压主内容导致穿模 */
+        .size-tiny #keyFormPanel,
+        .size-micro #keyFormPanel {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 64px;
+            bottom: 0;
+            z-index: 35;
+            overflow: hidden;
+            padding: 0.5rem !important;
+        }
+
+        .size-tiny #keyFormPanel form,
+        .size-micro #keyFormPanel form {
+            gap: 0.35rem;
+        }
+
+        .size-tiny #keyFormPanel .mb-2,
+        .size-micro #keyFormPanel .mb-2 {
+            margin-bottom: 0.35rem !important;
+        }
+
+        /* 设置页同样参与窗口尺寸调整，且绝不出现内部滚动 */
+        #settingsPanel {
+            overflow: hidden !important;
+        }
+
+        #settingsHeader {
+            min-height: 33px;
+        }
+
+        #settingsContent {
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+        }
+
+        #settingsFooter {
+            flex: 0 0 auto;
+        }
+
+        .size-compact #settingsContent {
+            padding: 0.6rem !important;
+            gap: 0.65rem !important;
+        }
+
+        .size-tiny #settingsHeader,
+        .size-micro #settingsHeader {
+            min-height: 29px;
+            padding-top: 0.25rem !important;
+            padding-bottom: 0.25rem !important;
+        }
+
+        .size-tiny #settingsContent,
+        .size-micro #settingsContent {
+            padding: 0.45rem !important;
+            gap: 0.4rem !important;
+        }
+
+        .size-tiny #settingsContent .settings-group,
+        .size-micro #settingsContent .settings-group {
+            gap: 0.25rem !important;
+        }
+
+        .size-tiny #settingsContent .settings-help,
+        .size-micro #settingsContent .settings-help,
+        .size-tiny #settingsFooter,
+        .size-micro #settingsFooter {
+            display: none !important;
+        }
+
+        .size-micro #settingsContent button,
+        .size-micro #settingsContent input {
+            padding-top: 0.125rem !important;
+            padding-bottom: 0.125rem !important;
+        }
+
+        .size-ultra #settingsContent .refresh-cards {
+            display: none !important;
+        }
+
+        /* 防止 toast 超出极窄窗口 */
+        #toast {
+            max-width: calc(100vw - 12px);
+        }
+
+        .width-micro #toast {
+            left: 6px;
+            right: 6px;
+            bottom: 6px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="widget-root">
+        <!-- Windows 风格顶部窗口外框 -->
+        <header id="windowTitleBar">
+            <div id="windowTitleIdentity">
+                <img id="windowTitleLogo" src="assets/title_logo.png" alt="">
+                <span id="windowTitleText">DJYX_APITOOL</span>
+            </div>
+
+            <div class="window-controls">
+                <button type="button" onclick="requestWindowAction('minimize')" class="window-control" title="最小化" aria-label="最小化">
+                    <i data-lucide="minus" class="titlebar-icon" aria-hidden="true"></i>
+                </button>
+                <button type="button" id="maximizeButton" onclick="requestWindowAction('maximize')" class="window-control" title="最大化" aria-label="最大化">
+                    <i id="maximizeIcon" data-lucide="square" class="titlebar-icon" aria-hidden="true"></i>
+                </button>
+                <button type="button" onclick="requestWindowAction('close')" class="window-control window-control-close" title="关闭" aria-label="关闭">
+                    <i data-lucide="x" class="titlebar-icon" aria-hidden="true"></i>
+                </button>
+            </div>
+        </header>
+
+        <span class="native-resize-handle resize-left" data-resize="left"></span>
+        <span class="native-resize-handle resize-right" data-resize="right"></span>
+        <span class="native-resize-handle resize-top" data-resize="top"></span>
+        <span class="native-resize-handle resize-bottom" data-resize="bottom"></span>
+        <span class="native-resize-handle resize-top-left" data-resize="top-left"></span>
+        <span class="native-resize-handle resize-top-right" data-resize="top-right"></span>
+        <span class="native-resize-handle resize-bottom-left" data-resize="bottom-left"></span>
+        <span class="native-resize-handle resize-bottom-right" data-resize="bottom-right"></span>
+
+        <div id="keyToolbar">
+            <div>
+                <span class="toolbar-label">密钥:</span>
+                <div>
+                    <select id="keySelector" onchange="selectKey(this.value)">
+                        <!-- 动态加载 -->
+                    </select>
+                    <div>
+                        <i data-lucide="chevron-down" class="icon-10" aria-hidden="true"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="toolbar-actions">
+                <button onclick="manualRefresh()" class="toolbar-action-button" title="立即刷新">
+                    <i data-lucide="refresh-cw" aria-hidden="true"></i>
+                </button>
+                <button onclick="toggleFormPanel()" class="toolbar-action-button" title="添加密钥">
+                    <i data-lucide="plus" aria-hidden="true"></i>
+                    <span class="toolbar-button-text">添加</span>
+                </button>
+                <button onclick="deleteActiveKey()" class="toolbar-action-button" title="删除当前密钥">
+                    <i data-lucide="trash-2" aria-hidden="true"></i>
+                </button>
+                <button onclick="toggleSettingsPanel()" class="toolbar-action-button" title="小工具设置">
+                    <i data-lucide="sliders-horizontal" aria-hidden="true"></i>
+                    <span class="toolbar-button-text">设置</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 添加密钥面板 (在小窗口高度下自适应收纳) -->
+        <div id="keyFormPanel" class="is-hidden">
+            <div>
+                <span>
+                    <i data-lucide="code-2" aria-hidden="true"></i> 配置输入
+                </span>
+                <button onclick="toggleFormPanel()">
+                    <i data-lucide="x" aria-hidden="true"></i>
+                </button>
+            </div>
+
+            <form id="keyForm" onsubmit="saveKey(event)">
+                <div>
+                    <div>
+                        <label>昵称 / 标签 *</label>
+                        <input type="text" id="keyNickname" required placeholder="例如：我的主 Key">
+                    </div>
+                    <div>
+                        <label>密钥值 *</label>
+                        <input type="text" id="keyValue" required placeholder="sk-...">
+                    </div>
+                </div>
+
+                <div>
+                    <div>
+                        <label>总额度 (USD)</label>
+                        <input type="number" step="any" id="keyTotal" required value="0">
+                    </div>
+                    <div>
+                        <label>已用 (USD)</label>
+                        <input type="number" step="any" id="keyUsed" required value="0">
+                    </div>
+                    <div>
+                        <label>今日已用 (USD)</label>
+                        <input type="number" step="any" id="keyTodayUsed" required value="0">
+                    </div>
+                </div>
+
+                <button type="submit">
+                    确认并保存密钥
+                </button>
+            </form>
+        </div>
+
+        <div id="appMain">
+            
+            <!-- 1. 微型视图专用面板 (仅在高度极小时激活) -->
+            <div id="microSummary" class="micro-only">
+                <!-- 条一：可用额度 -->
+                <div id="microTotalRow">
+                    <div>
+                        <span>剩余: <span id="microRemainVal">—</span> USD</span>
+                        <span id="microPercentVal">—</span>
+                    </div>
+                    <div>
+                        <div id="microProgressBar" style="width: 0%"></div>
+                    </div>
+                </div>
+                <!-- 5h / 1d / 7d 简化进度；最小高度只显示其中最紧张的一条 -->
+                <div id="microLimitRows">
+                    <div id="micro5hRow" class="micro-limit-row is-tightest" data-window="5h">
+                        <div><span>5h 限制: <b id="micro5hRemain">—</b><span id="micro5hSuffix"> USD 可用</span></span><span id="micro5hPercent">—</span></div>
+                        <div><div id="micro5hProgress" style="width: 0%"></div></div>
+                    </div>
+                    <div id="micro1dRow" class="micro-limit-row" data-window="1d">
+                        <div><span>1d 限制: <b id="micro1dRemain">—</b><span id="micro1dSuffix"> USD 可用</span></span><span id="micro1dPercent">—</span></div>
+                        <div><div id="micro1dProgress" style="width: 0%"></div></div>
+                    </div>
+                    <div id="micro7dRow" class="micro-limit-row" data-window="7d">
+                        <div><span>7d 限制: <b id="micro7dRemain">—</b><span id="micro7dSuffix"> USD 可用</span></span><span id="micro7dPercent">—</span></div>
+                        <div><div id="micro7dProgress" style="width: 0%"></div></div>
+                    </div>
+                </div>
+                <div id="microCountdownRow">
+                    <span id="microCountdownLabel">最紧张窗口重置</span>
+                    <span id="microCountdownValue">—</span>
+                </div>
+            </div>
+
+            <!-- 2. 标准与中度视图融合布局 -->
+            <div id="dashboardGrid" class="micro-hide">
+                
+                <div id="dashboardPrimary">
+                    <!-- 置顶首要可用额度卡片 -->
+                    <div id="quotaSummary">
+                        <div>
+                            <span>可用剩余额度 (REMAINING)</span>
+                            <span id="topKeyStatus" class="key-status status-neutral">
+                                未选择 NO KEY
+                            </span>
+                        </div>
+
+                        <div>
+                            <span id="bigRemainingVal">—</span>
+                            <span>USD</span>
+                        </div>
+
+                        <div>
+                            <span>总额度: <b id="bigTotalVal">—</b></span>
+                            <span id="bigPercentVal">未选择密钥</span>
+                        </div>
+
+                        <!-- 主进度条 -->
+                        <div>
+                            <div id="bigProgressBar" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- 三大限额进度组件 (高度 < 520px 时最核心) -->
+                    <div id="limitCards">
+                        <h3>
+                            <span>频率限制窗口 (RATE LIMITS)</span>
+                            <span id="limitModeLabel">
+                                <i data-lucide="shield" class="icon-10 color-brand" aria-hidden="true"></i>
+                                <span data-icon-label>等待密钥</span>
+                            </span>
+                        </h3>
+
+                        <!-- 5小时 -->
+                        <div id="limit5hCard" class="limit-card">
+                            <div>
+                                <span>5小时窗口 (5h)</span>
+                                <span id="win5hPercent">—</span>
+                            </div>
+                            <div>
+                                <span id="win5hRemaining">—</span>
+                                <span id="win5hTotal">—</span>
+                            </div>
+                            <div>
+                                <div id="win5hProgress" style="width: 0%"></div>
+                            </div>
+                            <div class="limit-meta">
+                                <span>已用: <b id="win5hUsed">—</b></span>
+                                <span id="win5hCountdown">
+                                    <i data-lucide="clock" class="icon-10" aria-hidden="true"></i>
+                                    <span data-icon-label>—</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- 1天 -->
+                        <div id="limit1dCard" class="limit-card">
+                            <div>
+                                <span>1天窗口 (1d)</span>
+                                <span id="win1dPercent">—</span>
+                            </div>
+                            <div>
+                                <span id="win1dRemaining">—</span>
+                                <span id="win1dTotal">—</span>
+                            </div>
+                            <div>
+                                <div id="win1dProgress" style="width: 0%"></div>
+                            </div>
+                            <div class="limit-meta">
+                                <span>已用: <b id="win1dUsed">—</b></span>
+                                <span id="win1dCountdown">
+                                    <i data-lucide="clock" class="icon-10" aria-hidden="true"></i>
+                                    <span data-icon-label>—</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- 7天 -->
+                        <div id="limit7dCard" class="limit-card">
+                            <div>
+                                <span>7天窗口 (7d)</span>
+                                <span id="win7dPercent">—</span>
+                            </div>
+                            <div>
+                                <span id="win7dRemaining">—</span>
+                                <span id="win7dTotal">—</span>
+                            </div>
+                            <div>
+                                <div id="win7dProgress" style="width: 0%"></div>
+                            </div>
+                            <div class="limit-meta">
+                                <span>已用: <b id="win7dUsed">—</b></span>
+                                <span id="win7dCountdown">
+                                    <i data-lucide="clock" class="icon-10" aria-hidden="true"></i>
+                                    <span data-icon-label>—</span>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div id="speedPanel">
+                    <div id="intervalUsageSection">
+                        <h3>
+                            <span>区间用量 (USAGE STATS)</span>
+                            <span>滚动区间统计</span>
+                        </h3>
+                        <p>根据本地用量采样，展示最近区间累计消费：</p>
+                        
+                        <!-- 区间用量卡片组 -->
+                        <div>
+                            <!-- 10分钟用量 -->
+                            <div id="interval10mCard">
+                                <div>
+                                    <span>最近 10min 用量</span>
+                                    <span id="speed10mVal">—</span>
+                                    <span>滚动 10 分钟累计</span>
+                                </div>
+                                <span class="load-status status-neutral" id="speed10mStatus">
+                                    等待采样
+                                </span>
+                            </div>
+
+                            <!-- 1小时用量 -->
+                            <div id="interval1hCard">
+                                <div>
+                                    <span>最近 1h 用量</span>
+                                    <span id="speed1hVal">—</span>
+                                    <span>滚动 1 小时累计</span>
+                                </div>
+                                <span class="load-status status-neutral" id="speed1hStatus">
+                                    等待采样
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 自然周期平均与 12 小时逐小时用量 -->
+                    <div id="usageAnalysisPanel">
+                        <div id="averageHeader">
+                            <div>
+                                <h4>自然周期平均用量</h4>
+                                <span id="averagePeriodLabel">UTC+8 自然日</span>
+                            </div>
+                            <div role="group" aria-label="平均用量周期">
+                                <button id="averageTodayButton" type="button" onclick="setAveragePeriod('today')" class="period-button is-active">今日</button>
+                                <button id="averageWeekButton" type="button" onclick="setAveragePeriod('week')" class="period-button">本周</button>
+                            </div>
+                        </div>
+
+                        <div id="averageSummary">
+                            <div>
+                                <span>平均每分钟</span>
+                                <span id="avgMinVal">—</span>
+                            </div>
+                            <div>
+                                <span>平均每小时</span>
+                                <span id="avgHourVal">—</span>
+                            </div>
+                        </div>
+
+                        <div id="usageTrendSection">
+                            <div>
+                                <span>最近 12h · 每 1h 用量</span>
+                                <span>颜色表示负载</span>
+                            </div>
+                            <div id="usageTrendWrap">
+                                <div id="usageTrendPlot">
+                                    <svg id="usageTrendChart" viewBox="0 0 600 120" preserveAspectRatio="none" aria-label="最近 12 小时逐小时用量曲线"></svg>
+                                    <div id="trendNodeLayer" aria-hidden="true"></div>
+                                    <div id="trendTooltip" class="hidden"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- 全宽状态指标：统一五列宽度、标签和值基线 -->
+                <div id="dashboardMetrics" class="tiny-hide">
+                    <div class="metric-cell metric-secondary">
+                        <span class="metric-label">监控密钥</span>
+                        <span id="maskedKeyText" class="metric-value">尚未选择</span>
+                        <span class="metric-detail invisible" aria-hidden="true">占位</span>
+                    </div>
+                    <button type="button" onclick="openModelModal()" class="metric-cell metric-secondary model-access-button" title="查看可访问模型">
+                        <span class="metric-label">模型访问权限</span>
+                        <span class="metric-value">
+                            <i data-lucide="boxes" class="icon-10 color-brand" aria-hidden="true"></i>
+                            <span id="modelsCount">—</span>
+                        </span>
+                        <span class="metric-detail invisible" aria-hidden="true">占位</span>
+                    </button>
+                    <div class="metric-cell metric-primary metric-today">
+                        <span class="metric-label">今日累计用量</span>
+                        <span class="metric-value" id="todayUsageVal">—</span>
+                        <span class="metric-detail" id="todayRequestsVal">—</span>
+                    </div>
+                    <div class="metric-cell metric-primary metric-expiry">
+                        <span class="metric-label">距到期日</span>
+                        <span id="expireDaysLeft" class="metric-value">—</span>
+                        <span class="metric-detail invisible" aria-hidden="true">占位</span>
+                    </div>
+                    <div class="metric-cell metric-secondary">
+                        <span class="metric-label">总累计消耗 (TOTAL)</span>
+                        <span class="metric-value" id="totalUsageVal">—</span>
+                        <span class="metric-detail invisible" aria-hidden="true">占位</span>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <div id="settingsPanel">
+            <!-- 设置页顶部 -->
+            <div id="settingsHeader">
+                <span>小工具个性化设置</span>
+                <button onclick="toggleSettingsPanel()">
+                    <i data-lucide="arrow-left" class="icon-11" aria-hidden="true"></i><span>返回</span>
+                </button>
+            </div>
+
+            <!-- 设置核心选项 -->
+            <div id="settingsContent">
+                <!-- 1. 独立主题设置 -->
+                <div class="settings-group settings-theme">
+                    <label>界面色彩主题 (THEME)</label>
+                    <div>
+                        <button onclick="changeThemeMode('light')" id="themeBtnLight">
+                            <i data-lucide="sun" aria-hidden="true"></i> 浅色模式
+                        </button>
+                        <button onclick="changeThemeMode('dark')" id="themeBtnDark">
+                            <i data-lucide="moon" aria-hidden="true"></i> 深色模式
+                        </button>
+                    </div>
+                </div>
+
+                <div class="settings-group settings-progress-mode">
+                    <label>频率窗口进度逻辑 (RATE LIMIT DISPLAY)</label>
+                    <div role="group" aria-label="频率窗口进度逻辑">
+                        <button type="button" onclick="changeRateLimitProgressMode('remaining')" id="rateModeRemaining">
+                            <i data-lucide="battery-medium" aria-hidden="true"></i> 血条 · 剩余
+                        </button>
+                        <button type="button" onclick="changeRateLimitProgressMode('used')" id="rateModeUsed">
+                            <i data-lucide="chart-no-axes-column-increasing" aria-hidden="true"></i> 用量 · 已用
+                        </button>
+                    </div>
+                    <span class="settings-help">仅改变 5h / 1d / 7d 的填充方向；预警颜色始终由实际可用余量决定。</span>
+                </div>
+
+                <!-- 2. 三段提示预警阈值 -->
+                <div class="settings-group settings-thresholds">
+                    <label>余量警报限额阈值 (TRIGGER ALERT)</label>
+                    <div>
+                        <div>
+                            <span>一级预警 (黄色)</span>
+                            <div>
+                                <input type="number" id="thWarn" onchange="updateThresholds()" value="25">
+                                <span>%</span>
+                            </div>
+                        </div>
+                        <div>
+                            <span>二级预警 (橙色)</span>
+                            <div>
+                                <input type="number" id="thDanger" onchange="updateThresholds()" value="10">
+                                <span>%</span>
+                            </div>
+                        </div>
+                        <div>
+                            <span>极端预警 (红/闪)</span>
+                            <div>
+                                <input type="number" id="thCritical" onchange="updateThresholds()" value="5">
+                                <span>%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <span class="settings-help">当剩余比例小于阈值时，进度条自动切换为黄色、橙色或红色闪烁预警。</span>
+                </div>
+
+                <!-- 3. 自定义自动刷新速度 -->
+                <div class="settings-group settings-refresh">
+                    <label>自适应后台刷新机制 (AUTO REFRESH)</label>
+                    <div class="refresh-cards">
+                        <div>
+                            <span>前台活跃模式</span>
+                            <div>
+                                <span>每</span>
+                                <input type="number" id="foregroundRefreshMinutes" min="1" step="1" value="1" onchange="updateRefreshIntervals()">
+                                <span>分钟</span>
+                            </div>
+                        </div>
+                        <div>
+                            <span>后台闲置模式</span>
+                            <div>
+                                <span>每</span>
+                                <input type="number" id="backgroundRefreshMinutes" min="5" step="1" value="5" onchange="updateRefreshIntervals()">
+                                <span>分钟</span>
+                            </div>
+                        </div>
+                    </div>
+                    <span class="settings-help">允许延长周期；前台不得短于 1 分钟，后台不得短于 5 分钟。</span>
+                    <div>
+                        <span>下一次检测预计在：<span id="refreshTimerVal">60s</span> 后</span>
+                        <span id="tabStatusBadge" class="refresh-state is-foreground">前台监控中</span>
+                    </div>
+                </div>
+
+                <div class="settings-group settings-app-behavior">
+                    <label>应用行为 (APP BEHAVIOR)</label>
+                    <div class="settings-fields">
+                        <label>
+                            <span>检测更新频率</span>
+                            <select id="updateFrequency" onchange="updateAppPreferences()">
+                                <option value="startup">每次启动时</option>
+                                <option value="weekly">每周</option>
+                                <option value="manual">仅手动检测</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>点击关闭按钮时</span>
+                            <select id="closeAction" onchange="updateAppPreferences()">
+                                <option value="ask">每次询问</option>
+                                <option value="tray">最小化到托盘</option>
+                                <option value="exit">关闭应用</option>
+                            </select>
+                        </label>
+                    </div>
+                    <label class="settings-toggle">
+                        <input type="checkbox" id="startupEnabled" onchange="updateAppPreferences()">
+                        <span>随 Windows 开机自动启动</span>
+                    </label>
+                </div>
+
+                <div class="settings-group settings-update">
+                    <label>应用更新 (APPLICATION UPDATE)</label>
+                    <div class="update-heading">
+                        <span>当前版本 <b id="appVersionValue">v—</b></span>
+                        <span id="updateVersionValue">尚未检查</span>
+                    </div>
+                    <div class="update-progress-track">
+                        <div id="updateProgress"></div>
+                    </div>
+                    <span class="settings-help" id="updateStatusText">尚未检查更新</span>
+                    <div class="update-actions">
+                        <button type="button" onclick="checkForUpdates()" id="checkUpdateButton">
+                            <i data-lucide="refresh-cw" aria-hidden="true"></i> 检查更新
+                        </button>
+                        <button type="button" onclick="downloadUpdate()" id="downloadUpdateButton" disabled>
+                            <i data-lucide="download" aria-hidden="true"></i> 下载并安装
+                        </button>
+                        <button type="button" onclick="openChangelogModal()">
+                            <i data-lucide="scroll-text" aria-hidden="true"></i> 更新日志
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="settingsFooter">
+                <i data-lucide="info" class="icon-11 color-brand" aria-hidden="true"></i>
+                <span>设置会自动保存 · <span id="settingsVersionValue">v—</span></span>
+            </div>
+        </div>
+
+        <div id="modelModal" class="animated-modal" hidden role="dialog" aria-modal="true" aria-labelledby="modelModalTitle" onclick="handleModelModalBackdrop(event)">
+            <div id="modelModalPanel">
+                <div>
+                    <div>
+                        <i data-lucide="boxes" class="icon-14 color-brand" aria-hidden="true"></i>
+                        <div>
+                            <h2 id="modelModalTitle">可访问模型</h2>
+                            <p id="modelModalSubtitle">当前密钥</p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closeModelModal()" title="关闭模型列表" aria-label="关闭模型列表">
+                        <i data-lucide="x" class="icon-14" aria-hidden="true"></i>
+                    </button>
+                </div>
+                <div id="modelModalList"></div>
+                <div>
+                    <i data-lucide="info" class="icon-11" aria-hidden="true"></i>
+                    模型列表来自上游 /models 接口
+                </div>
+            </div>
+        </div>
+
+        <div id="changelogModal" class="app-modal animated-modal" hidden role="dialog" aria-modal="true" aria-labelledby="changelogModalTitle" onclick="handleAppModalBackdrop(event)">
+            <div class="app-modal-panel changelog-panel">
+                <div class="app-modal-header">
+                    <div>
+                        <i data-lucide="scroll-text" class="icon-14 color-brand" aria-hidden="true"></i>
+                        <div>
+                            <h2 id="changelogModalTitle">更新日志</h2>
+                            <p id="changelogModalVersion">当前版本</p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closeChangelogModal()" title="关闭更新日志" aria-label="关闭更新日志">
+                        <i data-lucide="x" class="icon-14" aria-hidden="true"></i>
+                    </button>
+                </div>
+                <pre id="changelogContent">暂无更新日志。</pre>
+            </div>
+        </div>
+
+        <div id="closeActionModal" class="app-modal animated-modal" hidden role="dialog" aria-modal="true" aria-labelledby="closeActionModalTitle" onclick="handleAppModalBackdrop(event)">
+            <div class="app-modal-panel close-action-panel">
+                <div class="app-modal-header">
+                    <div>
+                        <i data-lucide="power" class="icon-14 color-brand" aria-hidden="true"></i>
+                        <div>
+                            <h2 id="closeActionModalTitle">关闭 DJYX_APITOOL</h2>
+                            <p>选择本次关闭按钮的操作</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="close-action-buttons">
+                    <button type="button" onclick="resolveCloseAction('tray')">
+                        <i data-lucide="panel-bottom-close" aria-hidden="true"></i>
+                        <span>最小化到托盘</span>
+                    </button>
+                    <button type="button" class="danger-action" onclick="resolveCloseAction('exit')">
+                        <i data-lucide="power" aria-hidden="true"></i>
+                        <span>关闭应用</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 极简底页脚 (高度不足时隐藏) -->
+        <footer id="appFooter" class="micro-hide tiny-hide">
+            <span>API_TOOLS (直角便携版)</span>
+            <span id="liveClock">—</span>
+        </footer>
+    </div>
+
+    <!-- 自定义轻量吐司通知 -->
+    <div id="toast">
+        <i id="toastIcon" data-lucide="circle-check" class="icon-14 color-good" aria-hidden="true"></i>
+        <span id="toastMessage">保存成功</span>
+    </div>
+
+    <script>
+
+        function renderLucideIcons() {
+            if (!window.lucide || typeof window.lucide.createIcons !== 'function') return;
+            try {
+                window.lucide.createIcons({
+                    attrs: { 'aria-hidden': 'true', focusable: 'false' }
+                });
+            } catch (error) {
+                console.error('Lucide 图标渲染失败:', error);
+            }
+        }
+
+        function iconMarkup(name, className = '') {
+            return `<i data-lucide="${name}" class="${className}" aria-hidden="true"></i>`;
+        }
+
+        function setLucideIcon(element, name, className = '') {
+            if (!element) return;
+            element.setAttribute('data-lucide', name);
+            element.setAttribute('class', className);
+            renderLucideIcons();
+        }
+
+        function setIconLabel(element, name, label, className = 'icon-10') {
+            if (!element) return;
+            let icon = element.querySelector('[data-lucide]');
+            let text = element.querySelector('[data-icon-label]');
+            const needsIconRender = !icon || icon.getAttribute('data-lucide') !== name;
+
+            if (!icon || !text) {
+                element.replaceChildren();
+                icon = document.createElement('i');
+                icon.setAttribute('data-lucide', name);
+                icon.setAttribute('aria-hidden', 'true');
+                text = document.createElement('span');
+                text.setAttribute('data-icon-label', '');
+                element.append(icon, text);
+            } else if (needsIconRender) {
+                icon.setAttribute('data-lucide', name);
+            }
+
+            icon.setAttribute('class', className);
+            text.textContent = label;
+            if (needsIconRender || icon.tagName.toLowerCase() !== 'svg') renderLucideIcons();
+        }
+
+        // 统一基准系统时间。
+        window.ctxTime = new Date();
+
+        window.appState = {
+            userId: null,
+            keys: [],
+            activeKeyId: null,
+            firebaseInitialized: false,
+            // 默认警报阈值配置
+            thresholds: {
+                warn: 25,
+                danger: 10,
+                critical: 5
+            },
+            // 自适应后台刷新参数
+            refreshCounter: 60,
+            refreshIntervals: { foreground: 60, background: 300 },
+            rateLimitProgressMode: 'remaining',
+            appVersion: '',
+            updateFrequency: 'startup',
+            closeAction: 'ask',
+            startupEnabled: false,
+            update: { status: 'idle', percent: 0, message: '尚未检查更新', releaseNotes: '' },
+            isTabActive: true,
+            averagePeriod: 'today'
+        };
+
+        try {
+            const savedThresholds = JSON.parse(localStorage.getItem('api-tools-thresholds') || 'null');
+            if (savedThresholds) {
+                window.appState.thresholds = {
+                    warn: Number(savedThresholds.warn) || 25,
+                    danger: Number(savedThresholds.danger) || 10,
+                    critical: Number(savedThresholds.critical) || 5
+                };
+            }
+        } catch (error) {
+            console.warn('读取本地设置失败:', error);
+        }
+
+        async function runAuthAndInitialize() {
+            const loadState = async () => {
+                if (!window.pywebview || !window.pywebview.api) return false;
+                try {
+                    const state = await window.pywebview.api.get_state();
+                    window.applyBackendState(state);
+                    return true;
+                } catch (error) {
+                    console.error("本地数据加载失败:", error);
+                    return false;
+                }
+            };
+
+            if (await loadState()) return;
+            window.addEventListener('pywebviewready', loadState, { once: true });
+        }
+
+        window.applyBackendState = function(state) {
+            const previousActiveId = window.appState.activeKeyId;
+            window.appState.keys = Array.isArray(state.keys) ? state.keys : [];
+            window.appState.thresholds = state.thresholds || window.appState.thresholds;
+            window.appState.rateLimitProgressMode = state.rateLimitProgressMode === 'used' ? 'used' : 'remaining';
+            window.appState.appVersion = state.appVersion || window.appState.appVersion;
+            window.appState.updateFrequency = state.updateFrequency || 'startup';
+            window.appState.closeAction = state.closeAction || 'ask';
+            window.appState.startupEnabled = state.startupEnabled === true;
+            window.appState.update = state.update || window.appState.update;
+            window.appState.refreshIntervals = state.refreshIntervals || window.appState.refreshIntervals;
+            window.appState.refreshCounter = Number(state.nextRefreshSeconds) || (
+                state.isForeground
+                    ? window.appState.refreshIntervals.foreground
+                    : window.appState.refreshIntervals.background
+            );
+            window.appState.isTabActive = state.isForeground !== false;
+
+            if (previousActiveId && window.appState.keys.some(key => key.id === previousActiveId)) {
+                window.appState.activeKeyId = previousActiveId;
+            } else {
+                window.appState.activeKeyId = window.appState.keys[0]?.id || null;
+            }
+
+            document.getElementById('thWarn').value = window.appState.thresholds.warn;
+            document.getElementById('thDanger').value = window.appState.thresholds.danger;
+            document.getElementById('thCritical').value = window.appState.thresholds.critical;
+            updateRateLimitModeButtons();
+            document.getElementById('foregroundRefreshMinutes').value = Math.max(
+                1, Math.round(window.appState.refreshIntervals.foreground / 60)
+            );
+            document.getElementById('backgroundRefreshMinutes').value = Math.max(
+                5, Math.round(window.appState.refreshIntervals.background / 60)
+            );
+            document.getElementById('updateFrequency').value = window.appState.updateFrequency;
+            document.getElementById('closeAction').value = window.appState.closeAction;
+            document.getElementById('startupEnabled').checked = window.appState.startupEnabled;
+            document.getElementById('appVersionValue').textContent = `v${window.appState.appVersion}`;
+            document.getElementById('settingsVersionValue').textContent = `v${window.appState.appVersion}`;
+            window.applyUpdateState(window.appState.update);
+            updateRefreshBadge();
+            updateUI();
+        };
+
+        window.applyWindowState = function(maximized) {
+            const isMaximized = Boolean(maximized);
+            const root = document.getElementById('widget-root');
+            const button = document.getElementById('maximizeButton');
+            const icon = document.getElementById('maximizeIcon');
+            root.classList.toggle('window-maximized', isMaximized);
+            setLucideIcon(icon, isMaximized ? 'copy' : 'square', 'titlebar-icon');
+            button.title = isMaximized ? '还原' : '最大化';
+            button.setAttribute('aria-label', isMaximized ? '还原' : '最大化');
+            handleResponsiveLayout();
+        };
+
+        function updateRefreshBadge() {
+            const badge = document.getElementById('tabStatusBadge');
+            if (!badge) return;
+            if (window.appState.isTabActive) {
+                badge.textContent = "前台监控中";
+                badge.className = "refresh-state is-foreground";
+            } else {
+                badge.textContent = "后台闲置";
+                badge.className = "refresh-state is-background";
+            }
+        }
+
+        window.dbSaveKey = async function(keyObject) {
+            try {
+                const result = await window.pywebview.api.add_key(keyObject.name, keyObject.value);
+                if (!result.ok) throw new Error(result.error || "密钥验证失败");
+                window.appState.activeKeyId = result.activeKeyId;
+                window.applyBackendState(result.state);
+            } catch (error) {
+                console.error('密钥验证失败:', error);
+                throw error;
+            }
+        }
+
+        window.dbDeleteKey = async function(id) {
+            try {
+                const result = await window.pywebview.api.delete_key(id);
+                window.applyBackendState(result.state);
+            } catch (error) {
+                console.error('删除密钥失败:', error);
+            }
+        }
+
+        function reportFrontendStartup(stage) {
+            const report = () => window.pywebview?.api?.report_startup(
+                stage,
+                Math.round(performance.now())
+            );
+            if (window.pywebview?.api) report();
+            else window.addEventListener('pywebviewready', report, { once: true });
+        }
+
+        function initializePage() {
+            if (window.__pageInitialized) return;
+            window.__pageInitialized = true;
+
+            runAuthAndInitialize();
+
+            const beginWindowDrag = event => {
+                if (event.button !== 0 || event.target.closest('button, input, select, textarea, .window-controls')) return;
+                event.preventDefault();
+                const dragRequest = window.pywebview?.api?.native_drag('move');
+                if (dragRequest && typeof dragRequest.then === 'function') {
+                    dragRequest.then(result => {
+                        if (result?.ok) window.applyWindowState(result.maximized);
+                    }).catch(error => console.error('窗口拖动失败:', error));
+                }
+            };
+            document.getElementById('windowTitleBar')?.addEventListener('mousedown', beginWindowDrag);
+            document.getElementById('settingsHeader')?.addEventListener('mousedown', beginWindowDrag);
+
+            document.querySelectorAll('[data-resize]').forEach(handle => {
+                handle.addEventListener('mousedown', event => {
+                    if (event.button !== 0) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    window.pywebview?.api?.native_drag(handle.dataset.resize);
+                });
+            });
+
+            document.getElementById('thWarn').value = window.appState.thresholds.warn;
+            document.getElementById('thDanger').value = window.appState.thresholds.danger;
+            document.getElementById('thCritical').value = window.appState.thresholds.critical;
+            updateRateLimitModeButtons();
+            renderLucideIcons();
+
+            document.addEventListener('keydown', event => {
+                if (event.key === 'Escape') {
+                    closeModelModal();
+                    closeChangelogModal();
+                }
+                handleDevToolsSequence(event);
+            });
+            
+            // 实时倒计时
+            setInterval(updateClockCountdowns, 1000);
+            
+            // 响应式高宽监测
+            window.addEventListener('resize', handleResponsiveLayout, { passive: true });
+            if ('ResizeObserver' in window) {
+                const rootResizeObserver = new ResizeObserver(handleResponsiveLayout);
+                rootResizeObserver.observe(document.getElementById('widget-root'));
+                window.__rootResizeObserver = rootResizeObserver;
+                initializeProgressResizeObserver();
+            }
+            handleResponsiveLayout();
+
+            updateRefreshBadge();
+            reportFrontendStartup('frontend_interactive');
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializePage, { once: true });
+        } else {
+            initializePage();
+        }
+
+        window.addEventListener('load', () => reportFrontendStartup('frontend_load'));
+    </script>
+
+    <script>
+        function handleResponsiveLayout() {
+            const root = document.getElementById('widget-root');
+            if (!root) return;
+
+            const rect = root.getBoundingClientRect();
+            const width = Math.max(0, Math.round(rect.width || window.innerWidth));
+            const height = Math.max(0, Math.round(rect.height || window.innerHeight));
+
+            root.classList.remove(
+                'height-summary-2', 'height-summary-4', 'height-summary-countdown',
+                'height-details', 'height-details-metrics', 'height-intervals',
+                'height-trend', 'height-full',
+                'width-micro', 'width-narrow', 'width-wide'
+            );
+
+            const trendHeight = width >= 768 ? 640 : 690;
+            const fullHeight = width >= 768 ? 760 : 820;
+            const heightClass = height < 170
+                ? 'height-summary-2'
+                : height < 200
+                    ? 'height-summary-4'
+                    : height < 360
+                        ? 'height-summary-countdown'
+                        : height < 460
+                            ? 'height-details'
+                            : height < 520
+                                ? 'height-details-metrics'
+                                : height < trendHeight
+                                    ? 'height-intervals'
+                                    : height < fullHeight
+                                        ? 'height-trend'
+                                        : 'height-full';
+            root.classList.add(heightClass);
+
+            if (width < 340) {
+                root.classList.add('width-micro', 'width-narrow');
+            } else if (width < 768) {
+                root.classList.add('width-narrow');
+            } else {
+                root.classList.add('width-wide');
+            }
+
+            const fullLayoutWidth = width >= 768 ? 768 : 340;
+            const fullLayoutHeight = trendHeight;
+            const widthGrowth = width >= 768
+                ? Math.max(0, (width - fullLayoutWidth) / fullLayoutWidth)
+                : 0;
+            const heightGrowth = Math.max(0, (height - fullLayoutHeight) / fullLayoutHeight);
+            const contentScale = Math.min(1.6, 1 + Math.max(widthGrowth * 0.45, heightGrowth * 0.35));
+            root.style.setProperty('--content-scale', contentScale.toFixed(4));
+            cancelAnimationFrame(window.__progressResizeFrame || 0);
+            window.__progressResizeFrame = requestAnimationFrame(rerenderProgressBars);
+        }
+
+        async function requestWindowAction(action) {
+            if (!window.pywebview || !window.pywebview.api) return;
+            const result = await window.pywebview.api.window_action(action);
+            if (action === 'maximize' && result) {
+                window.applyWindowState(result.maximized);
+            }
+        }
+
+        function getActiveKey() {
+            if (!window.appState || !window.appState.keys) return null;
+            return window.appState.keys.find(k => k.id === window.appState.activeKeyId);
+        }
+
+        function selectKey(id) {
+            window.appState.activeKeyId = id;
+            updateUI();
+        }
+
+        const DEVTOOLS_SEQUENCE = 'ddjjyyxx';
+        let devtoolsSequenceBuffer = '';
+
+        function isSettingsPanelOpen() {
+            return document.getElementById('settingsPanel')?.classList.contains('is-open') === true;
+        }
+
+        async function requestDevTools() {
+            if (!window.pywebview?.api?.open_devtools) {
+                showToast('开发者工具仅在桌面应用中可用', 'info');
+                return;
+            }
+            try {
+                const result = await window.pywebview.api.open_devtools();
+                if (!result?.ok) throw new Error(result?.error || '无法打开开发者工具');
+                showToast('开发者工具已打开', 'info');
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+            }
+        }
+
+        function handleDevToolsSequence(event) {
+            if (!isSettingsPanelOpen()) {
+                devtoolsSequenceBuffer = '';
+                return;
+            }
+            if (event.ctrlKey || event.altKey || event.metaKey || event.key.length !== 1) return;
+            if (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable="true"]')) {
+                devtoolsSequenceBuffer = '';
+                return;
+            }
+
+            devtoolsSequenceBuffer = (devtoolsSequenceBuffer + event.key.toLowerCase())
+                .slice(-DEVTOOLS_SEQUENCE.length);
+            if (devtoolsSequenceBuffer === DEVTOOLS_SEQUENCE) {
+                devtoolsSequenceBuffer = '';
+                requestDevTools();
+            }
+        }
+
+        // 打开/关闭设置浮层
+        function toggleSettingsPanel() {
+            const panel = document.getElementById('settingsPanel');
+            panel.classList.toggle('is-open');
+            devtoolsSequenceBuffer = '';
+        }
+
+        // 修改并应用主题模式
+        function changeThemeMode(mode) {
+            const html = document.documentElement;
+            const btnLight = document.getElementById('themeBtnLight');
+            const btnDark = document.getElementById('themeBtnDark');
+
+            if (mode === 'light') {
+                html.classList.remove('dark');
+                localStorage.setItem('theme', 'light');
+                btnLight.classList.add('is-active');
+                btnDark.classList.remove('is-active');
+            } else {
+                html.classList.add('dark');
+                localStorage.setItem('theme', 'dark');
+                btnDark.classList.add('is-active');
+                btnLight.classList.remove('is-active');
+            }
+        }
+
+        function updateRateLimitModeButtons() {
+            const usedMode = window.appState.rateLimitProgressMode === 'used';
+            document.getElementById('rateModeRemaining')?.classList.toggle('is-active', !usedMode);
+            document.getElementById('rateModeUsed')?.classList.toggle('is-active', usedMode);
+        }
+
+        async function changeRateLimitProgressMode(mode) {
+            window.appState.rateLimitProgressMode = mode === 'used' ? 'used' : 'remaining';
+            updateRateLimitModeButtons();
+            updateUI();
+            if (!window.pywebview?.api?.update_rate_limit_progress_mode) return;
+            try {
+                const result = await window.pywebview.api.update_rate_limit_progress_mode(
+                    window.appState.rateLimitProgressMode
+                );
+                window.appState.rateLimitProgressMode = result?.rateLimitProgressMode === 'used'
+                    ? 'used'
+                    : 'remaining';
+                updateRateLimitModeButtons();
+                updateUI();
+            } catch (error) {
+                console.error('保存频率窗口进度逻辑失败:', error);
+            }
+        }
+
+        // 更新用户设置的警报阈值
+        function updateThresholds() {
+            const warnVal = parseFloat(document.getElementById('thWarn').value) || 25;
+            const dangerVal = parseFloat(document.getElementById('thDanger').value) || 10;
+            const criticalVal = parseFloat(document.getElementById('thCritical').value) || 5;
+
+            window.appState.thresholds.warn = warnVal;
+            window.appState.thresholds.danger = dangerVal;
+            window.appState.thresholds.critical = criticalVal;
+            localStorage.setItem('api-tools-thresholds', JSON.stringify(window.appState.thresholds));
+            if (window.pywebview && window.pywebview.api) {
+                window.pywebview.api.update_thresholds(window.appState.thresholds);
+            }
+
+            updateUI(); // 实时应用色彩转换
+        }
+
+        async function updateRefreshIntervals() {
+            const foregroundInput = document.getElementById('foregroundRefreshMinutes');
+            const backgroundInput = document.getElementById('backgroundRefreshMinutes');
+            const foregroundMinutes = Math.max(1, Math.round(Number(foregroundInput.value) || 1));
+            const backgroundMinutes = Math.max(5, Math.round(Number(backgroundInput.value) || 5));
+            foregroundInput.value = foregroundMinutes;
+            backgroundInput.value = backgroundMinutes;
+            if (!window.pywebview?.api) return;
+            try {
+                const result = await window.pywebview.api.update_refresh_intervals(
+                    foregroundMinutes * 60,
+                    backgroundMinutes * 60
+                );
+                if (result?.state) window.applyBackendState(result.state);
+            } catch (error) {
+                console.error('保存刷新周期失败:', error);
+            }
+        }
+
+        async function updateAppPreferences() {
+            const updateFrequency = document.getElementById('updateFrequency').value;
+            const closeAction = document.getElementById('closeAction').value;
+            const startupEnabled = document.getElementById('startupEnabled').checked;
+            if (!window.pywebview?.api?.update_app_preferences) return;
+            try {
+                const result = await window.pywebview.api.update_app_preferences(
+                    updateFrequency, closeAction, startupEnabled
+                );
+                if (!result?.ok) throw new Error(result?.error || '保存应用设置失败');
+                if (result.state) window.applyBackendState(result.state);
+                showToast('应用设置已保存');
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+            }
+        }
+
+        window.applyUpdateState = function(update) {
+            if (!update) return;
+            window.appState.update = { ...window.appState.update, ...update };
+            const current = window.appState.update;
+            const busy = current.status === 'checking' || current.status === 'downloading';
+            document.getElementById('updateStatusText').textContent = current.message || '尚未检查更新';
+            document.getElementById('updateVersionValue').textContent = current.available
+                ? `最新 v${current.latestVersion}`
+                : current.status === 'current'
+                    ? '已是最新版本'
+                    : '尚未发现新版本';
+            document.getElementById('checkUpdateButton').disabled = busy;
+            document.getElementById('downloadUpdateButton').disabled = !current.available || busy;
+            const progress = document.getElementById('updateProgress');
+            renderProgressBar(progress, Number(current.percent) || 0, 100, { update: true });
+            progress.classList.remove('bar-good', 'bar-warn', 'bar-danger', 'bar-critical');
+            progress.classList.add(current.status === 'failed' ? 'bar-critical' : 'bar-good');
+        };
+
+        async function checkForUpdates() {
+            if (!window.pywebview?.api?.check_for_updates) return;
+            try {
+                const result = await window.pywebview.api.check_for_updates();
+                if (!result?.ok) throw new Error(result?.error || '无法检查更新');
+                if (result.update) window.applyUpdateState(result.update);
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+            }
+        }
+
+        async function downloadUpdate() {
+            try {
+                const result = await window.pywebview.api.download_update();
+                if (!result?.ok) throw new Error(result?.error || '无法下载更新');
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+            }
+        }
+
+        const MODAL_ANIMATION_MS = 260;
+
+        function openAnimatedModal(modal) {
+            if (!modal) return;
+            clearTimeout(modal.__hideTimer);
+            modal.hidden = false;
+            modal.classList.remove('is-closing');
+            modal.classList.add('is-opening');
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                modal.classList.remove('is-opening');
+                modal.classList.add('is-open');
+            }));
+        }
+
+        function closeAnimatedModal(modal) {
+            if (!modal || modal.hidden) return Promise.resolve();
+            clearTimeout(modal.__hideTimer);
+            modal.classList.remove('is-opening', 'is-open');
+            modal.classList.add('is-closing');
+            return new Promise(resolve => {
+                modal.__hideTimer = setTimeout(() => {
+                    modal.classList.remove('is-closing');
+                    modal.hidden = true;
+                    resolve();
+                }, MODAL_ANIMATION_MS);
+            });
+        }
+
+        function openChangelogModal() {
+            const update = window.appState.update || {};
+            document.getElementById('changelogModalVersion').textContent = update.available
+                ? `v${update.latestVersion}`
+                : `v${window.appState.appVersion}`;
+            document.getElementById('changelogContent').textContent = update.releaseNotes || '暂无更新日志。';
+            openAnimatedModal(document.getElementById('changelogModal'));
+            renderLucideIcons();
+        }
+
+        function closeChangelogModal() {
+            return closeAnimatedModal(document.getElementById('changelogModal'));
+        }
+
+        window.openCloseActionModal = function() {
+            openAnimatedModal(document.getElementById('closeActionModal'));
+            renderLucideIcons();
+        };
+
+        async function resolveCloseAction(action) {
+            await closeAnimatedModal(document.getElementById('closeActionModal'));
+            await window.pywebview?.api?.resolve_close_action(action);
+        }
+
+        function handleAppModalBackdrop(event) {
+            if (event.target !== event.currentTarget) return;
+            if (event.currentTarget.id === 'changelogModal') closeChangelogModal();
+        }
+
+        async function manualRefresh() {
+            if (!window.pywebview?.api) return;
+            try {
+                const result = await window.pywebview.api.refresh_now();
+                if (result?.state) window.applyBackendState(result.state);
+                const refreshedCount = Array.isArray(result?.refreshed) ? result.refreshed.length : 0;
+                const failedCount = Array.isArray(result?.failed) ? result.failed.length : 0;
+                showToast(
+                    failedCount
+                        ? `已刷新 ${refreshedCount} 个密钥，${failedCount} 个失败`
+                        : `已刷新全部 ${refreshedCount} 个密钥`,
+                    failedCount ? 'error' : 'info'
+                );
+            } catch (error) {
+                console.error('手动刷新失败:', error);
+                showToast(error.message || String(error), 'error');
+            }
+        }
+
+        function toggleFormPanel() {
+            const panel = document.getElementById('keyFormPanel');
+            panel.classList.toggle('is-hidden');
+        }
+
+        function deleteActiveKey() {
+            const activeKey = getActiveKey();
+            if (!activeKey) return;
+            if (window.dbDeleteKey) {
+                window.dbDeleteKey(activeKey.id);
+            }
+        }
+
+        function clearDashboard() {
+            const values = {
+                bigRemainingVal: '—', microRemainVal: '—', bigTotalVal: '—',
+                bigPercentVal: '未选择密钥', microPercentVal: '—',
+                micro5hRemain: '—', micro5hPercent: '—', micro1dRemain: '—',
+                micro1dPercent: '—', micro7dRemain: '—', micro7dPercent: '—',
+                microCountdownValue: '—', maskedKeyText: '尚未选择', modelsCount: '—',
+                todayUsageVal: '—', todayRequestsVal: '—', totalUsageVal: '—',
+                expireDaysLeft: '—', speed10mVal: '—', speed1hVal: '—',
+                speed10mStatus: '等待采样', speed1hStatus: '等待采样',
+                avgMinVal: '—', avgHourVal: '—', averagePeriodLabel: 'UTC+8 自然日'
+            };
+            Object.entries(values).forEach(([id, value]) => {
+                const element = document.getElementById(id);
+                if (element) element.textContent = value;
+            });
+            ['5h', '1d', '7d'].forEach(windowName => {
+                document.getElementById(`micro${windowName}Suffix`).textContent = ' USD 可用';
+                document.getElementById(`micro${windowName}Row`).style.order = '0';
+                document.getElementById(`micro${windowName}Row`).classList.toggle('is-tightest', windowName === '5h');
+            });
+            ['bigProgressBar', 'microProgressBar', 'micro5hProgress', 'micro1dProgress', 'micro7dProgress', 'win5hProgress', 'win1dProgress', 'win7dProgress'].forEach(id => {
+                const bar = document.getElementById(id);
+                if (bar) renderProgressBar(bar, 0, 100, { unlimited: false });
+            });
+            ['5h', '1d', '7d'].forEach(windowName => renderLimitWindow(windowName, null));
+            const status = document.getElementById('topKeyStatus');
+            status.className = 'key-status status-neutral';
+            status.textContent = '未选择 NO KEY';
+            setIconLabel(document.getElementById('limitModeLabel'), 'shield', '等待密钥', 'icon-10 color-brand');
+            renderUsageTrend(null);
+            closeModelModal();
+            renderLucideIcons();
+        }
+
+        function renderLimitWindow(windowName, data) {
+            const configured = data && Number(data.limit) > 0;
+            const percent = configured ? Math.max(0, ((data.limit - data.used) / data.limit) * 100) : 100;
+            const displayPercent = window.appState.rateLimitProgressMode === 'used'
+                ? 100 - percent
+                : percent;
+            const percentElement = document.getElementById(`win${windowName}Percent`);
+            const remainingElement = document.getElementById(`win${windowName}Remaining`);
+            const totalElement = document.getElementById(`win${windowName}Total`);
+            const usedElement = document.getElementById(`win${windowName}Used`);
+            const countdownElement = document.getElementById(`win${windowName}Countdown`);
+            const bar = document.getElementById(`win${windowName}Progress`);
+
+            if (!data) {
+                percentElement.textContent = '—';
+                remainingElement.textContent = '—';
+                totalElement.textContent = '—';
+                if (usedElement) usedElement.textContent = '—';
+                if (countdownElement) setIconLabel(countdownElement, 'clock', '—');
+                renderProgressBar(bar, 0, 100, { unlimited: false });
+                return 0;
+            }
+
+            if (!configured) {
+                percentElement.textContent = '无限额';
+                remainingElement.innerHTML = `${iconMarkup('infinity', 'icon-14')} <span class="limit-unit">未限制</span>`;
+                totalElement.textContent = formatLimitChange(data?.limitChange, '无窗口上限');
+                if (usedElement) usedElement.textContent = '不计入限制';
+                if (countdownElement) setIconLabel(countdownElement, 'infinity', '无需重置');
+                renderProgressBar(bar, 100, 100, { unlimited: true });
+                return 100;
+            }
+
+            percentElement.textContent = window.appState.rateLimitProgressMode === 'used'
+                ? `${(100 - percent).toFixed(2)}% 已用`
+                : `${percent.toFixed(2)}% 剩余`;
+            remainingElement.innerHTML = `${(data.limit - data.used).toFixed(4)} <span class="limit-unit">USD 可用</span>`;
+            totalElement.textContent = formatLimitChange(data.limitChange, `上限 ${data.limit.toFixed(2)} USD`);
+            if (usedElement) usedElement.textContent = `${data.used.toFixed(4)} USD`;
+            renderProgressBar(bar, displayPercent, percent, { unlimited: false });
+            return percent;
+        }
+
+        function formatLimitChange(change, fallback) {
+            if (!change) return fallback;
+            const previous = Number(change.previous) || 0;
+            const current = Number(change.current) || 0;
+            if (current <= 0 && previous > 0) {
+                return `${fallback} · 已取消限制（原 ${previous.toFixed(2)}）`;
+            }
+            if (previous <= 0 && current > 0) {
+                return `${fallback} · 新增限制`;
+            }
+            return `${fallback} · 已调整 ${previous.toFixed(2)}→${current.toFixed(2)}`;
+        }
+
+        function selectMostConstrainedWindow(activeKey) {
+            const windows = [
+                { name: '5h', data: activeKey.win5h, order: 0 },
+                { name: '1d', data: activeKey.win1d, order: 1 },
+                { name: '7d', data: activeKey.win7d, order: 2 }
+            ].map(item => {
+                const limit = Math.max(0, Number(item.data?.limit) || 0);
+                const used = Math.max(0, Number(item.data?.used) || 0);
+                const remaining = Math.max(0, limit - used);
+                return {
+                    ...item,
+                    limit,
+                    remaining,
+                    configured: limit > 0,
+                    percent: limit > 0 ? Math.max(0, Math.min(100, (remaining / limit) * 100)) : 100
+                };
+            });
+            const configured = windows.filter(item => item.configured);
+            return (configured.length ? configured : windows).sort((left, right) =>
+                left.percent - right.percent ||
+                left.remaining - right.remaining ||
+                left.order - right.order
+            )[0];
+        }
+
+        function renderMicroLimitWindows(activeKey) {
+            const windows = ['5h', '1d', '7d'].map((name, order) => {
+                const data = activeKey[`win${name}`] || {};
+                const limit = Math.max(0, Number(data.limit) || 0);
+                const used = Math.max(0, Number(data.used) || 0);
+                const remaining = Math.max(0, limit - used);
+                return {
+                    name, order, data, limit, remaining,
+                    configured: limit > 0,
+                    percent: limit > 0 ? Math.max(0, Math.min(100, remaining / limit * 100)) : 100
+                };
+            }).sort((left, right) =>
+                Number(right.configured) - Number(left.configured) ||
+                left.percent - right.percent || left.remaining - right.remaining || left.order - right.order
+            );
+
+            windows.forEach((item, index) => {
+                const row = document.getElementById(`micro${item.name}Row`);
+                const remain = document.getElementById(`micro${item.name}Remain`);
+                const suffix = document.getElementById(`micro${item.name}Suffix`);
+                const percent = document.getElementById(`micro${item.name}Percent`);
+                const progress = document.getElementById(`micro${item.name}Progress`);
+                row.style.order = String(index);
+                row.classList.toggle('is-tightest', index === 0);
+                remain.textContent = item.configured ? item.remaining.toFixed(2) : '不限';
+                suffix.textContent = item.configured ? ' USD 可用' : '';
+                const displayPercent = window.appState.rateLimitProgressMode === 'used'
+                    ? 100 - item.percent
+                    : item.percent;
+                percent.textContent = item.configured
+                    ? `${displayPercent.toFixed(1)}% ${window.appState.rateLimitProgressMode === 'used' ? '已用' : '剩余'}`
+                    : '无限额';
+                renderProgressBar(progress, item.configured ? displayPercent : 100, item.percent, {
+                    unlimited: !item.configured
+                });
+            });
+
+            window.microTightestWindow = windows[0];
+            document.getElementById('microCountdownLabel').textContent = `${windows[0].name} 窗口重置`;
+        }
+
+        function updateUI() {
+            const keys = window.appState.keys;
+            const activeKey = getActiveKey();
+            if (!activeKey) {
+                document.getElementById('keySelector').innerHTML = '<option value="">暂无密钥，请点击添加</option>';
+                clearDashboard();
+                return;
+            }
+
+            // 1. 切换下拉列表刷新
+            const selector = document.getElementById('keySelector');
+            selector.innerHTML = '';
+            keys.forEach(key => {
+                const opt = document.createElement('option');
+                opt.value = key.id;
+                opt.text = key.name;
+                opt.selected = key.id === window.appState.activeKeyId;
+                selector.appendChild(opt);
+            });
+
+            // 2. 算可用率
+            const remaining = Number.isFinite(activeKey.remainingQuota) ? activeKey.remainingQuota : (activeKey.totalQuota - activeKey.usedQuota);
+            const rawPercent = activeKey.totalQuota > 0 ? (remaining / activeKey.totalQuota) * 100 : 0;
+            const percentStr = rawPercent.toFixed(2) + "%";
+
+            // 3. 常规与微型模式并列渲染
+            document.getElementById('bigRemainingVal').textContent = remaining.toFixed(6);
+            document.getElementById('microRemainVal').textContent = remaining.toFixed(2);
+            
+            document.getElementById('bigTotalVal').textContent = formatLimitChange(
+                activeKey.quotaLimitChange,
+                activeKey.totalQuota.toFixed(2) + " USD"
+            );
+            document.getElementById('bigPercentVal').textContent = percentStr + " 可用";
+            document.getElementById('microPercentVal').textContent = percentStr;
+
+            // 4. 应用自适应阈值颜色
+            const bigProgress = document.getElementById('bigProgressBar');
+            const microProgress = document.getElementById('microProgressBar');
+            
+            renderProgressBar(bigProgress, rawPercent, rawPercent, { unlimited: false });
+            renderProgressBar(microProgress, rawPercent, rawPercent, { unlimited: false });
+
+            // 5. 极简模式：三个限制按剩余比例排序，最紧张窗口始终优先。
+            renderMicroLimitWindows(activeKey);
+
+            // 6. 三大详细窗口深度渲染
+            renderLimitWindow('5h', activeKey.win5h);
+            renderLimitWindow('1d', activeKey.win1d);
+            renderLimitWindow('7d', activeKey.win7d);
+            const hasWindowLimits = [activeKey.win5h, activeKey.win1d, activeKey.win7d]
+                .some(item => Number(item?.limit) > 0);
+            setIconLabel(
+                document.getElementById('limitModeLabel'),
+                hasWindowLimits ? 'shield' : 'infinity',
+                hasWindowLimits ? '受限模式 (quota)' : '无限额模式',
+                hasWindowLimits ? 'icon-10 color-brand' : 'icon-10 color-good'
+            );
+
+            // 激活状态标签
+            const statusLabel = document.getElementById('topKeyStatus');
+            if (activeKey.status === 'active') {
+                statusLabel.className = "key-status status-active";
+                statusLabel.textContent = "有效 ACTIVE";
+            } else {
+                statusLabel.className = "key-status status-disabled";
+                statusLabel.textContent = "失效 DISABLED";
+            }
+
+            // 隐藏部分敏感信息
+            document.getElementById('maskedKeyText').textContent = activeKey.value;
+            const models = Array.isArray(activeKey.models) ? activeKey.models : [];
+            document.getElementById('modelsCount').textContent = `${models.length || Number(activeKey.modelsCount) || 0} 个可用`;
+
+            // 天数倒计时
+            const remainingDays = activeKey.expireTimestamp ? Math.ceil((activeKey.expireTimestamp - Date.now()) / (1000 * 60 * 60 * 24)) : null;
+            document.getElementById('expireDaysLeft').textContent = remainingDays === null
+                ? '长期有效'
+                : remainingDays < 0
+                    ? '已过期'
+                    : `${remainingDays} 天后到期`;
+
+            // 用量次数
+            document.getElementById('todayUsageVal').textContent = activeKey.todayCost.toFixed(7) + " USD";
+            document.getElementById('todayRequestsVal').textContent = `共 ${activeKey.todayRequests} 次成功请求`;
+            document.getElementById('totalUsageVal').textContent = activeKey.totalCost.toFixed(7) + " USD";
+
+            // 计算使用流速
+            calculateUsageRateMetrics(activeKey);
+            updateClockCountdowns();
+            renderLucideIcons();
+        }
+
+        function calculateUsageRateMetrics(activeKey) {
+            const rates = activeKey.rates || {};
+            renderIntervalMetric(activeKey, rates.intervals?.['10m'], rates.speed10m, 'speed10mVal', 'speed10mStatus', 600);
+            renderIntervalMetric(activeKey, rates.intervals?.['1h'], rates.speed1h, 'speed1hVal', 'speed1hStatus', 3600);
+            renderAverageMetrics(activeKey);
+            renderUsageTrend(activeKey);
+        }
+
+        function renderIntervalMetric(activeKey, interval, fallbackValue, valueId, statusId, intervalSeconds) {
+            const valueElement = document.getElementById(valueId);
+            const statusElement = document.getElementById(statusId);
+            const value = interval ? Number(interval.value) : Number(fallbackValue);
+            const status = interval?.status || (Number.isFinite(value) ? 'recorded' : 'unrecorded');
+            if (status === 'unrecorded' || !Number.isFinite(value)) {
+                valueElement.textContent = '未记录';
+                applyLoadStatus(statusElement, null, 'unrecorded');
+                return;
+            }
+            valueElement.textContent = "$" + Math.max(0, value).toFixed(4);
+            const load = calculateLoadComponents(activeKey, Math.max(0, value));
+            applyLoadStatus(
+                statusElement,
+                load.overall,
+                status,
+                load
+            );
+        }
+
+        function setAveragePeriod(period) {
+            window.appState.averagePeriod = period === 'week' ? 'week' : 'today';
+            const activeKey = getActiveKey();
+            if (activeKey) renderAverageMetrics(activeKey);
+        }
+
+        function renderAverageMetrics(activeKey) {
+            const period = window.appState.averagePeriod === 'week' ? 'week' : 'today';
+            const rates = activeKey?.rates || {};
+            const averages = rates.averages || {};
+            const selected = averages[period] || {
+                avgMin: Number(rates.avgMin) || 0,
+                avgHour: Number(rates.avgHour) || 0,
+                label: ''
+            };
+            document.getElementById('avgMinVal').textContent = "$" + (Number(selected.avgMin) || 0).toFixed(4);
+            document.getElementById('avgHourVal').textContent = "$" + (Number(selected.avgHour) || 0).toFixed(4);
+            document.getElementById('averagePeriodLabel').textContent = [
+                rates.timezone || 'UTC+8',
+                period === 'week' ? '自然周' : '自然日',
+                selected.label || ''
+            ].filter(Boolean).join(' · ');
+
+            const todayButton = document.getElementById('averageTodayButton');
+            const weekButton = document.getElementById('averageWeekButton');
+            todayButton.classList.toggle('is-active', period === 'today');
+            weekButton.classList.toggle('is-active', period === 'week');
+        }
+
+        const LOAD_NODE_COLORS = [
+            [0, '#10b981'],
+            [40, '#facc15'],
+            [65, '#f97316'],
+            [85, '#f43f5e']
+        ];
+        const LOAD_NODE_COLOR_INDEX = new Map([
+            ['#10b981', 0],
+            ['#facc15', 1],
+            ['#f97316', 2],
+            ['#f43f5e', 3]
+        ]);
+        const LOAD_TRANSITION_RECIPES = {
+            '0-1': [[0, '#10b981'], [0.34, '#65c466'], [0.62, '#a8cf18'], [0.82, '#facc15'], [1, '#facc15']],
+            '0-2': [[0, '#10b981'], [0.18, '#65c466'], [0.34, '#a8cf18'], [0.48, '#facc15'], [0.68, '#facc15'], [0.84, '#f5a916'], [1, '#f97316']],
+            '0-3': [[0, '#10b981'], [0.12, '#65c466'], [0.24, '#a8cf18'], [0.36, '#facc15'], [0.62, '#facc15'], [0.76, '#f5a916'], [0.88, '#f97316'], [0.94, '#f85a35'], [1, '#f43f5e']],
+            '1-2': [[0, '#facc15'], [0.5, '#facc15'], [0.76, '#f5a916'], [1, '#f97316']],
+            '1-3': [[0, '#facc15'], [0.34, '#facc15'], [0.54, '#f5a916'], [0.72, '#f97316'], [0.88, '#f85a35'], [1, '#f43f5e']],
+            '2-3': [[0, '#f97316'], [0.46, '#f97316'], [0.72, '#f85a35'], [1, '#f43f5e']]
+        };
+
+        function loadColor(pressure) {
+            const value = Math.max(0, Math.min(100, Number(pressure) || 0));
+            if (value >= 85) return LOAD_NODE_COLORS[3][1];
+            if (value >= 65) return LOAD_NODE_COLORS[2][1];
+            if (value >= 40) return LOAD_NODE_COLORS[1][1];
+            return LOAD_NODE_COLORS[0][1];
+        }
+
+        function transitionRecipe(fromColor, toColor) {
+            const fromIndex = LOAD_NODE_COLOR_INDEX.get(fromColor);
+            const toIndex = LOAD_NODE_COLOR_INDEX.get(toColor);
+            if (fromIndex === toIndex) return [[0, fromColor], [1, toColor]];
+            const lowIndex = Math.min(fromIndex, toIndex);
+            const highIndex = Math.max(fromIndex, toIndex);
+            const recipe = LOAD_TRANSITION_RECIPES[`${lowIndex}-${highIndex}`];
+            return fromIndex < toIndex
+                ? recipe
+                : recipe.slice().reverse().map(([position, color]) => [1 - position, color]);
+        }
+
+        function usageGradientStops(points, width) {
+            const stops = [];
+            points.forEach((point, index) => {
+                if (!point.recorded) return;
+                const color = loadColor(point.pressure);
+                stops.push({ x: point.x, color });
+                const next = points[index + 1];
+                if (!next?.recorded) return;
+                const nextColor = loadColor(next.pressure);
+                transitionRecipe(color, nextColor).slice(1, -1).forEach(([position, transitionColor]) => {
+                    stops.push({
+                        x: point.x + (next.x - point.x) * position,
+                        color: transitionColor
+                    });
+                });
+            });
+            return stops.sort((left, right) => left.x - right.x).map(stop => ({
+                offset: Math.max(0, Math.min(100, stop.x / width * 100)),
+                color: stop.color
+            }));
+        }
+
+        function smoothTrendPath(points) {
+            if (!points.length) return '';
+            if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+            let path = `M ${points[0].x} ${points[0].y}`;
+            for (let index = 0; index < points.length - 1; index++) {
+                const current = points[index];
+                const next = points[index + 1];
+                const controlX = (current.x + next.x) / 2;
+                path += ` C ${controlX} ${current.y}, ${controlX} ${next.y}, ${next.x} ${next.y}`;
+            }
+            return path;
+        }
+
+        function renderUsageTrend(activeKey) {
+            const svg = document.getElementById('usageTrendChart');
+            const nodeLayer = document.getElementById('trendNodeLayer');
+            const tooltip = document.getElementById('trendTooltip');
+            if (!svg || !nodeLayer || !tooltip) return;
+            svg.replaceChildren();
+            nodeLayer.replaceChildren();
+            tooltip.classList.add('hidden');
+
+            const buckets = Array.isArray(activeKey?.rates?.hourly12h)
+                ? activeKey.rates.hourly12h.slice(-12)
+                : [];
+            const validBuckets = buckets.filter(item => item.status !== 'unrecorded' && Number.isFinite(Number(item.cost)));
+            if (!validBuckets.length) {
+                const emptyText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                emptyText.setAttribute('x', '300');
+                emptyText.setAttribute('y', '64');
+                emptyText.setAttribute('text-anchor', 'middle');
+                emptyText.setAttribute('fill', '#94a3b8');
+                emptyText.setAttribute('font-size', '11');
+                emptyText.textContent = '暂无可用小时记录';
+                svg.append(emptyText);
+                return;
+            }
+
+            const width = 600;
+            const height = 120;
+            const paddingX = 12;
+            const paddingY = 14;
+            const maxCost = Math.max(...validBuckets.map(item => Math.max(0, Number(item.cost))), 0.0001);
+            const points = buckets.map((bucket, index) => {
+                const recorded = bucket.status !== 'unrecorded' && Number.isFinite(Number(bucket.cost));
+                const cost = recorded ? Math.max(0, Number(bucket.cost)) : null;
+                const x = buckets.length === 1
+                    ? width / 2
+                    : paddingX + index * ((width - paddingX * 2) / (buckets.length - 1));
+                const y = recorded
+                    ? height - paddingY - (cost / maxCost) * (height - paddingY * 2)
+                    : height - paddingY;
+                const pressure = recorded ? calculateLoadPressure(activeKey, cost, 3600) : null;
+                return { x, y, cost, pressure, recorded, bucket };
+            });
+
+            const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+            const gradient = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+            gradient.setAttribute('id', 'usageLoadGradient');
+            gradient.setAttribute('gradientUnits', 'userSpaceOnUse');
+            gradient.setAttribute('x1', '0');
+            gradient.setAttribute('x2', String(width));
+            usageGradientStops(points, width).forEach(({ offset, color }) => {
+                const stop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
+                stop.setAttribute('offset', `${offset}%`);
+                stop.setAttribute('stop-color', color);
+                gradient.append(stop);
+            });
+            const fadeGradient = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+            fadeGradient.setAttribute('id', 'usageAreaFade');
+            fadeGradient.setAttribute('x1', '0%');
+            fadeGradient.setAttribute('y1', '0%');
+            fadeGradient.setAttribute('x2', '0%');
+            fadeGradient.setAttribute('y2', '100%');
+            [
+                ['0%', '0.34'],
+                ['58%', '0.12'],
+                ['100%', '0']
+            ].forEach(([offset, opacity]) => {
+                const stop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
+                stop.setAttribute('offset', offset);
+                stop.setAttribute('stop-color', '#ffffff');
+                stop.setAttribute('stop-opacity', opacity);
+                fadeGradient.append(stop);
+            });
+            const mask = document.createElementNS('http://www.w3.org/2000/svg', 'mask');
+            mask.setAttribute('id', 'usageAreaFadeMask');
+            const maskRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            maskRect.setAttribute('width', width);
+            maskRect.setAttribute('height', height);
+            maskRect.setAttribute('fill', 'url(#usageAreaFade)');
+            mask.append(maskRect);
+            defs.append(gradient, fadeGradient, mask);
+            svg.append(defs);
+
+            [0.25, 0.5, 0.75].forEach(ratio => {
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', paddingX);
+                line.setAttribute('x2', width - paddingX);
+                line.setAttribute('y1', paddingY + (height - paddingY * 2) * ratio);
+                line.setAttribute('y2', paddingY + (height - paddingY * 2) * ratio);
+                line.setAttribute('stroke', '#94a3b8');
+                line.setAttribute('stroke-opacity', '0.16');
+                line.setAttribute('stroke-width', '1');
+                line.setAttribute('vector-effect', 'non-scaling-stroke');
+                svg.append(line);
+            });
+
+            const segments = [];
+            points.forEach((point, index) => {
+                if (!point.recorded) return;
+                if (!segments.length || points[index - 1]?.recorded !== true) segments.push([]);
+                segments[segments.length - 1].push(point);
+            });
+            segments.forEach(segment => {
+                const linePath = smoothTrendPath(segment);
+                const area = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                area.setAttribute('d', `${linePath} L ${segment[segment.length - 1].x} ${height - paddingY} L ${segment[0].x} ${height - paddingY} Z`);
+                area.setAttribute('fill', 'url(#usageLoadGradient)');
+                area.setAttribute('mask', 'url(#usageAreaFadeMask)');
+                area.setAttribute('pointer-events', 'none');
+                svg.append(area);
+
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', linePath);
+                path.setAttribute('fill', 'none');
+                path.setAttribute('stroke', 'url(#usageLoadGradient)');
+                path.setAttribute('stroke-width', '2.5');
+                path.setAttribute('stroke-linecap', 'round');
+                path.setAttribute('vector-effect', 'non-scaling-stroke');
+                svg.append(path);
+            });
+
+            const hitWidth = (width - paddingX * 2) / Math.max(1, buckets.length - 1);
+            points.forEach((point, index) => {
+                if (point.recorded) {
+                    const node = document.createElement('span');
+                    node.className = 'trend-point';
+                    node.style.left = `${(point.x / width) * 100}%`;
+                    node.style.top = `${(point.y / height) * 100}%`;
+                    node.style.backgroundColor = loadColor(point.pressure);
+                    nodeLayer.append(node);
+                }
+
+                const hitZone = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                hitZone.setAttribute('class', 'trend-hit-zone');
+                hitZone.setAttribute('x', Math.max(0, point.x - hitWidth / 2));
+                hitZone.setAttribute('y', '0');
+                hitZone.setAttribute('width', Math.min(hitWidth, width - Math.max(0, point.x - hitWidth / 2)));
+                hitZone.setAttribute('height', height);
+                hitZone.addEventListener('mouseenter', () => showTrendTooltip(point, index, points.length));
+                hitZone.addEventListener('mousemove', () => showTrendTooltip(point, index, points.length));
+                hitZone.addEventListener('mouseleave', () => tooltip.classList.add('hidden'));
+                svg.append(hitZone);
+            });
+        }
+
+        function showTrendTooltip(point, index, pointCount) {
+            const tooltip = document.getElementById('trendTooltip');
+            const start = new Date(Number(point.bucket.startTimestamp));
+            const end = new Date(Number(point.bucket.endTimestamp));
+            const timeFormat = { hour: '2-digit', minute: '2-digit', hour12: false };
+            tooltip.replaceChildren();
+            const timeRow = document.createElement('div');
+            timeRow.className = 'tooltip-title';
+            timeRow.textContent = `${start.toLocaleTimeString('zh-CN', timeFormat)}–${end.toLocaleTimeString('zh-CN', timeFormat)}`;
+            const valueRow = document.createElement('div');
+            valueRow.className = 'tooltip-value';
+            valueRow.textContent = point.recorded
+                ? `${point.bucket.status === 'estimated' ? '估算' : '用量'} $${point.cost.toFixed(4)} · 负载 ${point.pressure.toFixed(0)}%`
+                : '未记录';
+            tooltip.append(timeRow, valueRow);
+            tooltip.style.left = `${pointCount <= 1 ? 50 : (index / (pointCount - 1)) * 100}%`;
+            tooltip.style.top = `${Math.max(14, (point.y / 120) * 100)}%`;
+            const translateX = index === 0 ? '0' : index === pointCount - 1 ? '-100%' : '-50%';
+            const translateY = point.y < 54 ? '8px' : 'calc(-100% - 8px)';
+            tooltip.style.transform = `translate(${translateX}, ${translateY})`;
+            tooltip.classList.remove('hidden');
+        }
+
+        function openModelModal() {
+            const activeKey = getActiveKey();
+            if (!activeKey) return;
+            const models = Array.isArray(activeKey.models) ? activeKey.models : [];
+            const modal = document.getElementById('modelModal');
+            const list = document.getElementById('modelModalList');
+            document.getElementById('modelModalSubtitle').textContent = `${activeKey.name} · ${models.length} 个模型`;
+            list.replaceChildren();
+            if (!models.length) {
+                const empty = document.createElement('div');
+                empty.className = 'model-list-empty';
+                empty.textContent = '上游暂未返回可访问模型';
+                list.append(empty);
+            } else {
+                models.forEach(model => {
+                    const item = document.createElement('div');
+                    item.className = 'model-list-item';
+                    const icon = document.createElement('i');
+                    icon.setAttribute('data-lucide', 'box');
+                    icon.setAttribute('class', 'icon-11 color-brand');
+                    const label = document.createElement('span');
+                    label.className = 'model-list-label';
+                    label.textContent = String(model);
+                    label.title = String(model);
+                    item.append(icon, label);
+                    list.append(item);
+                });
+            }
+            openAnimatedModal(modal);
+            renderLucideIcons();
+            modal.querySelector('button')?.focus();
+        }
+
+        function closeModelModal() {
+            const modal = document.getElementById('modelModal');
+            return closeAnimatedModal(modal);
+        }
+
+        function handleModelModalBackdrop(event) {
+            if (event.target === event.currentTarget) closeModelModal();
+        }
+
+        function calculateLoadComponents(activeKey, intervalCost) {
+            const cost = Math.max(0, Number(intervalCost) || 0);
+            const totalQuota = Math.max(0, Number(activeKey.totalQuota) || 0);
+            const quotaPercent = totalQuota > 0 ? cost / totalQuota * 100 : 0;
+            const ratePercent = [activeKey.win5h, activeKey.win1d, activeKey.win7d]
+                .map(item => Math.max(0, Number(item?.limit) || 0))
+                .filter(limit => limit > 0)
+                .reduce((highest, limit) => Math.max(highest, cost / limit * 100), 0);
+            const points = [
+                [0, 0], [1, 10], [5, 30], [10, 45], [25, 65], [50, 82], [100, 100]
+            ];
+            const quota = interpolatePressure(quotaPercent, points);
+            const rate = interpolatePressure(ratePercent, points);
+            const source = quota > rate
+                ? '额度'
+                : rate > quota
+                    ? '速率'
+                    : quota > 0
+                        ? '额度和速率'
+                        : '无';
+            return { overall: Math.max(quota, rate), quota, rate, quotaPercent, ratePercent, source };
+        }
+
+        function calculateLoadPressure(activeKey, intervalCost, intervalSeconds = 3600) {
+            void intervalSeconds;
+            return calculateLoadComponents(activeKey, intervalCost).overall;
+        }
+
+        function interpolatePressure(value, points) {
+            if (value <= points[0][0]) return points[0][1];
+            for (let index = 1; index < points.length; index++) {
+                const [rightValue, rightPressure] = points[index];
+                const [leftValue, leftPressure] = points[index - 1];
+                if (value <= rightValue) {
+                    const ratio = (value - leftValue) / (rightValue - leftValue);
+                    return leftPressure + (rightPressure - leftPressure) * ratio;
+                }
+            }
+            return points[points.length - 1][1];
+        }
+
+        function applyLoadStatus(element, pressure, samplingStatus = 'recorded', load = null) {
+            if (samplingStatus === 'unrecorded' || !Number.isFinite(pressure)) {
+                element.textContent = '未记录';
+                element.className = 'load-status status-neutral';
+                return;
+            }
+            const levels = pressure >= 85
+                ? ['极高负载', 'status-critical']
+                : pressure >= 65
+                    ? ['高负载', 'status-high']
+                    : pressure >= 40
+                        ? ['中度负载', 'status-medium']
+                        : ['低负载', 'status-low'];
+            element.textContent = `${samplingStatus === 'estimated' ? '估算 · ' : ''}${levels[0]} ${pressure.toFixed(0)}%`;
+            element.className = `load-status ${levels[1]}`;
+            element.title = load
+                ? `触发来源：${load.source}；额度占比 ${load.quotaPercent.toFixed(3)}%，速率限额占比 ${load.ratePercent.toFixed(3)}%`
+                : '';
+        }
+
+        const PROGRESS_BAR_IDS = [
+            'bigProgressBar', 'microProgressBar',
+            'micro5hProgress', 'micro1dProgress', 'micro7dProgress',
+            'win5hProgress', 'win1dProgress', 'win7dProgress', 'updateProgress'
+        ];
+
+        function stableProgressSequence(length, seedText) {
+            let seed = 2166136261;
+            for (const character of seedText) {
+                seed ^= character.charCodeAt(0);
+                seed = Math.imul(seed, 16777619);
+            }
+            const values = Array.from({ length }, (_, index) => index);
+            for (let index = length - 1; index > 0; index--) {
+                seed = Math.imul(seed ^ (seed >>> 15), 2246822519) >>> 0;
+                const target = seed % (index + 1);
+                [values[index], values[target]] = [values[target], values[index]];
+            }
+            return values;
+        }
+
+        function progressMatrixSize(barElement) {
+            const root = document.getElementById('widget-root');
+            if (barElement.id === 'updateProgress') return 2;
+            if (barElement.id.startsWith('micro') || root?.className.includes('height-summary-')) return 2;
+            return barElement.id === 'bigProgressBar' ? 4 : 3;
+        }
+
+        function renderProgressBar(barElement, fillPercentage, remainingPercentage, options = {}) {
+            if (!barElement) return;
+            const fill = Math.max(0, Math.min(100, Number(fillPercentage) || 0));
+            const remaining = Math.max(0, Math.min(100, Number(remainingPercentage) || 0));
+            const track = barElement.parentElement;
+            const matrix = progressMatrixSize(barElement);
+            const trackStyle = track ? getComputedStyle(track) : null;
+            const trackContentWidth = track
+                ? track.clientWidth
+                    - parseFloat(trackStyle?.borderLeftWidth || '0')
+                    - parseFloat(trackStyle?.borderRightWidth || '0')
+                    - parseFloat(trackStyle?.paddingLeft || '0')
+                    - parseFloat(trackStyle?.paddingRight || '0')
+                : 0;
+            const barHorizontalPadding = 4;
+            const edgeSafety = 2;
+            const availableWidth = Math.max(
+                0,
+                Math.floor(trackContentWidth - barHorizontalPadding - edgeSafety)
+            );
+            const dotSize = matrix === 4 ? 3 : matrix === 3 ? 3 : 2;
+            const dotGap = 1;
+            const blockGap = matrix === 2 ? 2 : 3;
+            const blockSize = matrix * dotSize + (matrix - 1) * dotGap;
+            const blockCount = Math.max(0, Math.floor((availableWidth + blockGap) / (blockSize + blockGap)));
+            const minBlocks = matrix === 4 ? 8 : matrix === 3 ? 7 : 10;
+            const useMatrix = availableWidth > 0 && blockCount >= minBlocks;
+
+            barElement.dataset.fill = String(fill);
+            barElement.dataset.remaining = String(remaining);
+            barElement.dataset.unlimited = options.unlimited ? 'true' : 'false';
+            barElement.className = useMatrix ? 'matrix-progress' : 'linear-progress';
+            barElement.classList.toggle('bar-unlimited', options.unlimited === true);
+            barElement.classList.toggle('update-progress', options.update === true);
+            if (!options.unlimited) setFlexibleBarColor(barElement, remaining);
+
+            if (!useMatrix) {
+                if (barElement.childElementCount) barElement.replaceChildren();
+                barElement.style.width = '100%';
+                barElement.style.maxWidth = '100%';
+                barElement.style.setProperty('--linear-progress', String(fill / 100));
+                barElement.dataset.renderSignature = `linear:${fill}`;
+                return;
+            }
+
+            const matrixContentWidth = blockCount * blockSize + Math.max(0, blockCount - 1) * blockGap;
+            barElement.style.width = `${matrixContentWidth + barHorizontalPadding}px`;
+            barElement.style.maxWidth = '100%';
+            barElement.style.setProperty('--matrix-size', matrix);
+            barElement.style.setProperty('--matrix-dot-size', `${dotSize}px`);
+            barElement.style.setProperty('--matrix-dot-gap', `${dotGap}px`);
+            barElement.style.setProperty('--matrix-block-gap', `${blockGap}px`);
+            barElement.style.setProperty('--matrix-block-count', blockCount);
+            const dotsPerBlock = matrix * matrix;
+            const totalDots = blockCount * dotsPerBlock;
+            const filledDots = options.update ? totalDots : Math.round(totalDots * fill / 100);
+            if (options.update) {
+                const previousFill = Number(barElement.dataset.visualFill);
+                if (Number.isFinite(previousFill) && fill < previousFill) {
+                    barElement.classList.add('is-resetting');
+                    requestAnimationFrame(() => barElement.classList.remove('is-resetting'));
+                }
+                barElement.dataset.visualFill = String(fill);
+                barElement.style.setProperty('--update-progress-clip', `${100 - fill}%`);
+            }
+            const renderSignature = `matrix:${matrix}:${blockCount}:${filledDots}`;
+            if (barElement.dataset.renderSignature === renderSignature) return;
+            barElement.dataset.renderSignature = renderSignature;
+            const fragment = document.createDocumentFragment();
+            let consumed = 0;
+
+            for (let blockIndex = 0; blockIndex < blockCount; blockIndex++) {
+                const block = document.createElement('span');
+                block.className = 'matrix-block';
+                const blockFill = Math.max(0, Math.min(dotsPerBlock, filledDots - consumed));
+                if (blockFill === dotsPerBlock) block.classList.add('is-complete');
+                else if (blockFill > 0) block.classList.add('is-active');
+                const sequence = stableProgressSequence(dotsPerBlock, `${barElement.id}:${matrix}:${blockIndex}`);
+                const filledIndexes = new Set(sequence.slice(0, blockFill));
+                for (let dotIndex = 0; dotIndex < dotsPerBlock; dotIndex++) {
+                    const dot = document.createElement('i');
+                    dot.className = filledIndexes.has(dotIndex) ? 'matrix-dot is-filled' : 'matrix-dot';
+                    block.append(dot);
+                }
+                fragment.append(block);
+                consumed += blockFill;
+            }
+            barElement.replaceChildren(fragment);
+        }
+
+        function rerenderProgressBars() {
+            PROGRESS_BAR_IDS.forEach(id => {
+                const bar = document.getElementById(id);
+                if (!bar || bar.dataset.fill === undefined) return;
+                renderProgressBar(bar, bar.dataset.fill, bar.dataset.remaining, {
+                    unlimited: bar.dataset.unlimited === 'true'
+                });
+            });
+        }
+
+        function initializeProgressResizeObserver() {
+            if (!('ResizeObserver' in window) || window.__progressTrackResizeObserver) return;
+            const widths = new WeakMap();
+            const pendingBars = new Set();
+            const observer = new ResizeObserver(entries => {
+                entries.forEach(entry => {
+                    const track = entry.target;
+                    const bar = track.firstElementChild;
+                    if (!bar || !PROGRESS_BAR_IDS.includes(bar.id)) return;
+                    const width = Math.round(entry.contentRect.width);
+                    if (width <= 0 || widths.get(track) === width) return;
+                    widths.set(track, width);
+                    pendingBars.add(bar);
+                });
+                if (!pendingBars.size) return;
+                cancelAnimationFrame(window.__progressTrackResizeFrame || 0);
+                window.__progressTrackResizeFrame = requestAnimationFrame(() => {
+                    pendingBars.forEach(bar => {
+                        if (bar.dataset.fill === undefined) return;
+                        renderProgressBar(bar, bar.dataset.fill, bar.dataset.remaining, {
+                            unlimited: bar.dataset.unlimited === 'true'
+                        });
+                    });
+                    pendingBars.clear();
+                });
+            });
+            PROGRESS_BAR_IDS.forEach(id => {
+                const track = document.getElementById(id)?.parentElement;
+                if (track) observer.observe(track);
+            });
+            window.__progressTrackResizeObserver = observer;
+        }
+
+        function setFlexibleBarColor(barElement, percentage) {
+            const th = window.appState.thresholds;
+
+            barElement.classList.remove('bar-good', 'bar-warn', 'bar-danger', 'bar-critical', 'bar-unlimited');
+
+            // 根据用户自定义阈值动态决定颜色
+            if (percentage > th.warn) {
+                barElement.classList.add('bar-good');
+            } else if (percentage > th.danger) {
+                barElement.classList.add('bar-warn');
+            } else if (percentage > th.critical) {
+                barElement.classList.add('bar-danger');
+            } else {
+                barElement.classList.add('bar-critical');
+            }
+        }
+
+        function updateClockCountdowns() {
+            window.ctxTime = new Date();
+            
+            // 底部时钟同步显示
+            const clockEl = document.getElementById('liveClock');
+            if (clockEl) {
+                clockEl.textContent = window.ctxTime.toLocaleString('zh-CN', { hour12: false });
+            }
+
+            const activeKey = getActiveKey();
+            if (!activeKey) return;
+
+            // 仅显示后端调度倒计时，实际刷新由 Python 后台线程执行。
+            if (window.appState.refreshCounter > 1) {
+                window.appState.refreshCounter--;
+                document.getElementById('refreshTimerVal').textContent = window.appState.refreshCounter + "s";
+            } else {
+                const intervals = window.appState.refreshIntervals;
+                window.appState.refreshCounter = window.appState.isTabActive
+                    ? intervals.foreground
+                    : intervals.background;
+                document.getElementById('refreshTimerVal').textContent = window.appState.refreshCounter + "s";
+            }
+
+            ['5h', '1d', '7d'].forEach(windowName => {
+                const data = activeKey[`win${windowName}`] || {};
+                const countdownId = `win${windowName}Countdown`;
+                if (Number(data.limit) <= 0) {
+                    setIconLabel(document.getElementById(countdownId), 'infinity', '无需重置');
+                } else if (!data.resetTime || !Number.isFinite(new Date(data.resetTime).getTime())) {
+                    setIconLabel(document.getElementById(countdownId), 'clock', '重置时间未知');
+                } else {
+                    renderFormattedCountdown(countdownId, new Date(data.resetTime).getTime() - window.ctxTime.getTime());
+                }
+            });
+
+            const tightest = window.microTightestWindow;
+            const microCountdown = document.getElementById('microCountdownValue');
+            if (tightest && !tightest.configured) {
+                microCountdown.textContent = '无需重置';
+            } else if (!tightest?.data?.resetTime || !Number.isFinite(new Date(tightest.data.resetTime).getTime())) {
+                microCountdown.textContent = '重置时间未知';
+            } else {
+                renderTextCountdown(microCountdown, new Date(tightest.data.resetTime).getTime() - window.ctxTime.getTime());
+            }
+        }
+
+        function formatCountdown(diff) {
+            if (diff <= 0) return '正在刷新重置';
+            const msInDay = 24 * 60 * 60 * 1000;
+            const msInHour = 60 * 60 * 1000;
+            const msInMinute = 60 * 1000;
+            if (diff >= msInDay) {
+                const days = Math.floor(diff / msInDay);
+                const hrs = Math.floor((diff % msInDay) / msInHour).toString().padStart(2, '0');
+                const mins = Math.floor((diff % msInHour) / msInMinute).toString().padStart(2, '0');
+                return `${days}d:${hrs}h:${mins}m 后`;
+            }
+            const hrs = Math.floor(diff / msInHour).toString().padStart(2, '0');
+            const mins = Math.floor((diff % msInHour) / msInMinute).toString().padStart(2, '0');
+            const secs = Math.floor((diff % msInMinute) / 1000).toString().padStart(2, '0');
+            return `${hrs}h:${mins}m:${secs}s 后`;
+        }
+
+        function renderTextCountdown(targetEl, diff) {
+            if (targetEl) targetEl.textContent = formatCountdown(diff);
+        }
+
+        function renderFormattedCountdown(containerId, diff) {
+            const targetEl = document.getElementById(containerId);
+            if (!targetEl) return;
+            setIconLabel(targetEl, 'clock', formatCountdown(diff));
+        }
+
+        async function saveKey(event) {
+            event.preventDefault();
+            
+            const nickname = document.getElementById('keyNickname').value.trim();
+            const value = document.getElementById('keyValue').value.trim();
+            const newKey = {
+                name: nickname,
+                value: value
+            };
+
+            if (window.dbSaveKey) {
+                try {
+                    await window.dbSaveKey(newKey);
+                    toggleFormPanel();
+                    document.getElementById('keyForm').reset();
+                } catch (error) {
+                    console.error('保存密钥失败:', error);
+                }
+            }
+        }
+
+        function showToast(message, type = "success") {
+            const toast = document.getElementById('toast');
+            const toastIcon = document.getElementById('toastIcon');
+            const toastMsg = document.getElementById('toastMessage');
+
+            toastMsg.textContent = message;
+            const iconName = type === 'success' ? 'circle-check' : type === 'info' ? 'info' : 'circle-alert';
+            const iconColor = type === 'success' ? 'color-good' : type === 'info' ? 'color-info' : 'color-critical';
+            setLucideIcon(toastIcon, iconName, `icon-14 ${iconColor}`);
+
+            toast.classList.add('is-visible');
+            
+            setTimeout(() => {
+                toast.classList.remove('is-visible');
+            }, 2500);
+        }
+
+        // 初始化加载默认色彩风格
+        if (localStorage.getItem('theme') === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+            changeThemeMode('light');
+        } else {
+            changeThemeMode('dark');
+        }
+    </script>
+</body>
+</html>

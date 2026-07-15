@@ -1,0 +1,5 @@
+Pillow==12.0.0
+PyInstaller==6.16.0
+pystray==0.19.5
+pywebview==6.2.1
+winotify==1.1.0
