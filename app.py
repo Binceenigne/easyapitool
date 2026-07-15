@@ -35,7 +35,7 @@ APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
 APP_VERSION = "1.0.0"
 GITHUB_REPOSITORY = os.environ.get(
-    "API_TOOLS_GITHUB_REPOSITORY", "Binceengine/easyapitool"
+    "API_TOOLS_GITHUB_REPOSITORY", "Binceenigne/easyapitool"
 )
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPOSITORY}"
 RELEASE_ASSET_NAME = "API_TOOLS.exe"
