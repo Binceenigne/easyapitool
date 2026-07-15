@@ -33,7 +33,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 GITHUB_REPOSITORY = os.environ.get(
     "API_TOOLS_GITHUB_REPOSITORY", "Binceenigne/easyapitool"
 )
@@ -47,7 +47,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "14"
+STATIC_UI_VERSION = "15"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -1913,9 +1913,20 @@ class AppController:
         def window_data(name: str) -> dict[str, Any]:
             item = windows.get(name) or {}
             change = (payload.get("_limit_changes") or {}).get(name)
+            window_limit = max(0.0, safe_float(item.get("limit")))
+            window_used = max(0.0, safe_float(item.get("used")))
+            remaining_value = item.get("remaining")
+            if remaining_value is None:
+                window_remaining = max(0.0, window_limit - window_used)
+            else:
+                window_remaining = min(
+                    window_limit,
+                    max(0.0, safe_float(remaining_value)),
+                )
             return {
-                "limit": safe_float(item.get("limit")),
-                "used": safe_float(item.get("used")),
+                "limit": window_limit,
+                "used": window_used,
+                "remaining": window_remaining,
                 "resetTime": item.get("reset_at"),
                 "windowStart": item.get("window_start"),
                 "limitChange": change,

@@ -441,7 +441,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=14">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=15">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -788,6 +788,31 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(normalized["win1d"]["limit"], 0)
         self.assertEqual(normalized["win7d"]["limit"], 0)
         self.assertEqual(normalized["remainingQuota"], 100)
+
+    def test_rate_limit_remaining_never_becomes_negative_when_usage_exceeds_limit(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.store = SimpleNamespace(
+            get_secret=lambda _key_id: "test-secret-value",
+            rates=lambda _key_id: {},
+        )
+        record = {"id": "key-1", "name": "test", "last_error": None}
+        payload = {
+            "status": "active",
+            "rate_limits": [
+                {
+                    "window": "7d",
+                    "limit": 67,
+                    "used": 67.05675485,
+                    "remaining": 0,
+                }
+            ],
+        }
+
+        normalized = controller._normalize(record, payload)
+
+        self.assertEqual(normalized["win7d"]["limit"], 67)
+        self.assertEqual(normalized["win7d"]["used"], 67.05675485)
+        self.assertEqual(normalized["win7d"]["remaining"], 0)
 
     def test_missing_rate_limits_do_not_trigger_alerts(self):
         severity_updates = []

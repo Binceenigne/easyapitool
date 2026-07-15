@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="assets/app.css?v=14">
+    <link rel="stylesheet" href="assets/app.css?v=15">
     <script defer src="vendor/lucide/lucide.min.js"></script>
     <style media="not all" data-legacy-styles-disabled>
         /* 强制无圆角 */
@@ -2063,7 +2063,8 @@
 
         function renderLimitWindow(windowName, data) {
             const configured = data && Number(data.limit) > 0;
-            const percent = configured ? Math.max(0, ((data.limit - data.used) / data.limit) * 100) : 100;
+            const remaining = configured ? Math.max(0, Math.min(data.limit, Number(data.remaining) || 0)) : 0;
+            const percent = configured ? Math.max(0, Math.min(100, remaining / data.limit * 100)) : 100;
             const displayPercent = window.appState.rateLimitProgressMode === 'used'
                 ? 100 - percent
                 : percent;
@@ -2097,7 +2098,7 @@
             percentElement.textContent = window.appState.rateLimitProgressMode === 'used'
                 ? `${(100 - percent).toFixed(2)}% 已用`
                 : `${percent.toFixed(2)}% 剩余`;
-            remainingElement.innerHTML = `${(data.limit - data.used).toFixed(4)} <span class="limit-unit">USD 可用</span>`;
+            remainingElement.innerHTML = `${remaining.toFixed(4)} <span class="limit-unit">USD 可用</span>`;
             totalElement.textContent = formatLimitChange(data.limitChange, `上限 ${data.limit.toFixed(2)} USD`);
             if (usedElement) usedElement.textContent = `${data.used.toFixed(4)} USD`;
             renderProgressBar(bar, displayPercent, percent, { unlimited: false });
@@ -2125,7 +2126,7 @@
             ].map(item => {
                 const limit = Math.max(0, Number(item.data?.limit) || 0);
                 const used = Math.max(0, Number(item.data?.used) || 0);
-                const remaining = Math.max(0, limit - used);
+                const remaining = Math.max(0, Math.min(limit, Number(item.data?.remaining) || 0));
                 return {
                     ...item,
                     limit,
@@ -2147,7 +2148,7 @@
                 const data = activeKey[`win${name}`] || {};
                 const limit = Math.max(0, Number(data.limit) || 0);
                 const used = Math.max(0, Number(data.used) || 0);
-                const remaining = Math.max(0, limit - used);
+                const remaining = Math.max(0, Math.min(limit, Number(data.remaining) || 0));
                 return {
                     name, order, data, limit, remaining,
                     configured: limit > 0,
