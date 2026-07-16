@@ -1616,9 +1616,10 @@ html.dark #avgMinVal {
 }
 
 .update-progress-track {
-  display: block !important;
+  display: flex !important;
+  align-items: center;
   width: 100%;
-  height: 9px;
+  height: 17px;
   overflow: hidden;
   border: 1px solid var(--border-soft);
   background: var(--surface-soft);
@@ -1938,6 +1939,12 @@ html.dark #avgMinVal {
 }
 
 .update-decision-actions button:first-child:not(:disabled) {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+}
+
+.update-decision-actions .primary-action {
   border-color: var(--brand);
   background: var(--brand);
   color: #fff;

@@ -33,7 +33,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 GITHUB_REPOSITORY = os.environ.get(
     "API_TOOLS_GITHUB_REPOSITORY", "Binceenigne/easyapitool"
 )
@@ -47,7 +47,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "17"
+STATIC_UI_VERSION = "18"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -599,10 +599,7 @@ def load_pressure_from_usage_percent(usage_percent: float) -> float:
 def interval_load_components(payload: dict[str, Any], cost: float) -> dict[str, Any]:
     spend = max(0.0, safe_float(cost))
     quota = payload.get("quota") or {}
-    total_usage = ((payload.get("usage") or {}).get("total") or {})
     quota_limit = safe_float(quota.get("limit"))
-    if quota_limit <= 0 and payload.get("balance") is not None:
-        quota_limit = safe_float(payload.get("balance")) + safe_float(total_usage.get("cost"))
     quota_percent = spend / quota_limit * 100 if quota_limit > 0 else 0.0
 
     rate_percent = 0.0
@@ -639,14 +636,9 @@ def interval_load_pressure(payload: dict[str, Any], cost: float, seconds: int) -
 def limit_definitions(payload: dict[str, Any] | None) -> dict[str, float]:
     payload = payload or {}
     quota = payload.get("quota") or {}
-    total_usage = ((payload.get("usage") or {}).get("total") or {})
-    if payload.get("balance") is not None and total_usage.get("cost") is not None:
-        quota_limit = safe_float(payload.get("balance")) + safe_float(total_usage.get("cost"))
-    else:
-        quota_limit = safe_float(quota.get("limit"))
     windows = {str(item.get("window")): item for item in payload.get("rate_limits") or []}
     return {
-        "quota": quota_limit,
+        "quota": safe_float(quota.get("limit")),
         "5h": safe_float((windows.get("5h") or {}).get("limit")),
         "1d": safe_float((windows.get("1d") or {}).get("limit")),
         "7d": safe_float((windows.get("7d") or {}).get("limit")),
@@ -658,6 +650,9 @@ def annotate_limit_changes(
     previous: dict[str, Any] | None,
     changed_at: float | None = None,
 ) -> set[str]:
+    if str(payload.get("mode") or "").lower() == "unrestricted":
+        payload.pop("_limit_changes", None)
+        return set()
     if previous is None:
         payload.pop("_limit_changes", None)
         return set()
@@ -1836,33 +1831,86 @@ class AppController:
                 if expected != actual:
                     target.unlink(missing_ok=True)
                     raise RuntimeError("下载文件 SHA-256 校验失败")
-                self._set_update_state(status="ready", percent=100, message="下载完成，正在重启更新")
-                self._launch_updater(target)
+                self._set_update_state(
+                    status="ready",
+                    percent=100,
+                    message="下载完成，点击重启以应用更新",
+                    downloadedPath=str(target),
+                    showPrompt=True,
+                )
             except Exception as exc:
                 temporary.unlink(missing_ok=True)
                 self._set_update_state(status="failed", percent=0, message=f"更新失败: {exc}")
 
+    def restart_update(self) -> dict[str, Any]:
+        if self.update_lock.locked():
+            return {"ok": False, "error": "更新任务正在进行"}
+        downloaded = Path(str(self.update_state.get("downloadedPath") or ""))
+        if self.update_state.get("status") != "ready" or not downloaded.is_file():
+            return {"ok": False, "error": "没有已下载的更新"}
+        self._set_update_state(message="正在重启并应用更新")
+        self._launch_updater(downloaded)
+        return {"ok": True}
+
+    def defer_update_restart(self) -> dict[str, Any]:
+        downloaded = Path(str(self.update_state.get("downloadedPath") or ""))
+        if self.update_state.get("status") != "ready" or not downloaded.is_file():
+            return {"ok": False, "error": "没有已下载的更新"}
+        self.pending_update_path = downloaded
+        self._set_update_state(showPrompt=False)
+        return {"ok": True, "update": dict(self.update_state)}
+
     def _launch_updater(self, downloaded: Path) -> None:
         current = Path(sys.executable).resolve()
         script = app_data_dir() / "apply-update.ps1"
+        log = app_data_dir() / "update.log"
+        ready = app_data_dir() / "update.ready"
+        ready.unlink(missing_ok=True)
         script.write_text(
-            "param([int]$ProcessId,[string]$Source,[string]$Target)\n"
+            "param([int]$ProcessId,[string]$Source,[string]$Target,[string]$Log,[string]$Ready)\n"
             "$ErrorActionPreference = 'Stop'\n"
-            "Wait-Process -Id $ProcessId\n"
-            "Move-Item -LiteralPath $Source -Destination $Target -Force\n"
-            "Start-Process -FilePath $Target\n"
-            "Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force\n",
+            "try {\n"
+            "  Set-Content -LiteralPath $Ready -Value 'ready' -Encoding ASCII\n"
+            "  $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue\n"
+            "  if ($process) { $process | Wait-Process -ErrorAction SilentlyContinue }\n"
+            "  $updated = $false\n"
+            "  for ($attempt = 1; $attempt -le 60; $attempt++) {\n"
+            "    try {\n"
+            "      Copy-Item -LiteralPath $Source -Destination $Target -Force\n"
+            "      $updated = $true\n"
+            "      break\n"
+            "    } catch {\n"
+            "      if ($attempt -eq 60) { throw }\n"
+            "      [System.Threading.Thread]::Sleep(500)\n"
+            "    }\n"
+            "  }\n"
+            "  if (-not $updated) { throw '无法替换应用文件' }\n"
+            "  Remove-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue\n"
+            "  Start-Process -FilePath $Target\n"
+            "  Remove-Item -LiteralPath $Log -Force -ErrorAction SilentlyContinue\n"
+            "  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force\n"
+            "} catch {\n"
+            "  $_ | Out-String | Set-Content -LiteralPath $Log -Encoding UTF8\n"
+            "  Start-Process -FilePath $Target\n"
+            "  exit 1\n"
+            "}\n",
             encoding="utf-8",
         )
-        subprocess.Popen(
+        updater = subprocess.Popen(
             [
                 "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
                 "-WindowStyle", "Hidden", "-File", str(script),
                 "-ProcessId", str(os.getpid()), "-Source", str(downloaded),
-                "-Target", str(current),
+                "-Target", str(current), "-Log", str(log), "-Ready", str(ready),
             ],
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
+        deadline = time.monotonic() + 5
+        while not ready.exists() and updater.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not ready.exists():
+            raise RuntimeError("更新程序启动失败")
+        ready.unlink(missing_ok=True)
         self.exit_app()
 
     def refresh_all(self, push_ui: bool = False) -> dict[str, Any]:
@@ -2231,6 +2279,11 @@ class AppController:
             pass
 
     def exit_app(self) -> None:
+        pending_update = getattr(self, "pending_update_path", None)
+        if pending_update and Path(pending_update).is_file():
+            self.pending_update_path = None
+            self._launch_updater(Path(pending_update))
+            return
         self.stopping.set()
         self.refresh_wakeup.set()
         if self.tray:
@@ -2292,6 +2345,12 @@ class WebApi:
 
     def download_update(self) -> dict[str, Any]:
         return self._controller.download_update()
+
+    def defer_update_restart(self) -> dict[str, Any]:
+        return self._controller.defer_update_restart()
+
+    def restart_update(self) -> dict[str, Any]:
+        return self._controller.restart_update()
 
     def dismiss_update_prompt(self) -> dict[str, Any]:
         return self._controller.dismiss_update_prompt()

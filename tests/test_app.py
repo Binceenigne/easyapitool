@@ -378,12 +378,12 @@ class UtilityTests(unittest.TestCase):
 
     def test_wallet_spending_does_not_look_like_limit_change(self):
         previous = {
-            "quota": {"limit": 100},
+            "mode": "unrestricted",
             "balance": 100,
             "usage": {"total": {"cost": 25}},
         }
         current = {
-            "quota": {"limit": 95},
+            "mode": "unrestricted",
             "balance": 95,
             "usage": {"total": {"cost": 30}},
         }
@@ -391,6 +391,89 @@ class UtilityTests(unittest.TestCase):
         names = app.annotate_limit_changes(current, previous, changed_at=1000)
 
         self.assertNotIn("quota", names)
+        self.assertEqual(app.limit_definitions(current)["quota"], 0)
+
+    def test_unrestricted_live_response_never_reports_limit_changes(self):
+        previous = {
+            "mode": "unrestricted",
+            "balance": 110333.48824915,
+            "remaining": 110333.48824915,
+            "usage": {"total": {"cost": 3882.69894125}},
+            "_limit_changes": {
+                "quota": {"previous": 114219, "current": 114216, "changedAt": 999}
+            },
+        }
+        current = {
+            "mode": "unrestricted",
+            "balance": 110331.23500065,
+            "remaining": 110331.23500065,
+            "usage": {"total": {"cost": 3884.12541625}},
+        }
+
+        names = app.annotate_limit_changes(current, previous, changed_at=1000)
+
+        self.assertEqual(names, set())
+        self.assertNotIn("_limit_changes", current)
+        self.assertEqual(
+            app.limit_definitions(current),
+            {"quota": 0, "5h": 0, "1d": 0, "7d": 0},
+        )
+
+    def test_quota_limited_live_response_reports_real_limit_increase(self):
+        previous = {
+            "mode": "quota_limited",
+            "quota": {"limit": 200, "remaining": 115.17, "used": 84.83},
+            "rate_limits": [
+                {"window": "5h", "limit": 27},
+                {"window": "1d", "limit": 44},
+                {"window": "7d", "limit": 68},
+            ],
+        }
+        current = {
+            "mode": "quota_limited",
+            "quota": {"limit": 210, "remaining": 125.17, "used": 84.83},
+            "rate_limits": previous["rate_limits"],
+        }
+
+        names = app.annotate_limit_changes(current, previous, changed_at=1000)
+
+        self.assertEqual(names, {"quota"})
+        self.assertEqual(
+            current["_limit_changes"]["quota"],
+            {"previous": 200, "current": 210, "changedAt": 1000},
+        )
+
+    def test_real_response_shape_notifies_only_quota_increase(self):
+        previous = {
+            "mode": "quota_limited",
+            "quota": {"limit": 200, "remaining": 115.17470995, "used": 84.82529005},
+            "rate_limits": [
+                {"window": "5h", "limit": 27, "remaining": 26.04020585},
+                {"window": "1d", "limit": 44, "remaining": 43.04020585},
+                {"window": "7d", "limit": 68, "remaining": 0},
+            ],
+            "usage": {"total": {"cost": 97.99585925}},
+        }
+        current = json.loads(json.dumps(previous))
+        current["quota"] = {
+            "limit": 210,
+            "remaining": 125.17470995,
+            "used": 84.82529005,
+        }
+        changed_names = app.annotate_limit_changes(current, previous, changed_at=1000)
+        notifications = []
+        controller = app.AppController.__new__(app.AppController)
+        controller.notify = lambda title, message, severity=0: notifications.append(
+            (title, message, severity)
+        )
+
+        controller._notify_limit_changes("venus", current, changed_names)
+
+        self.assertEqual(changed_names, {"quota"})
+        self.assertEqual(
+            notifications,
+            [("venus · 限制调整", "您的总额度上限已从 200 USD 提高到 210 USD", 0)],
+        )
 
     def test_client_returns_unique_model_ids(self):
         client = app.EasyClinClient()
@@ -488,7 +571,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=17">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=18">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -574,6 +657,11 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="updateModal"', page)
         self.assertIn('id="downloadUpdateButton"', page)
         self.assertIn('id="declineUpdateButton"', page)
+        self.assertIn('id="restartLaterButton"', page)
+        self.assertIn('id="restartNowButton"', page)
+        self.assertIn("deferUpdateRestart", page)
+        self.assertIn("['downloading', 'ready'].includes(window.appState.update?.status)", page)
+        self.assertIn("stripChecksumNotes", page)
         self.assertIn('id="ignoreUpdateButton"', page)
         self.assertIn("ignoreCurrentUpdate", page)
         self.assertIn('id="closeActionModal"', page)
@@ -582,9 +670,11 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("MODAL_ANIMATION_MS = 260", page)
         self.assertIn("if (barElement.id === 'updateProgress') return 4", page)
         self.assertIn("const filledDots = Math.round(totalDots * fill / 100)", page)
-        self.assertIn("globalFilledIndexes", page)
+        self.assertNotIn("globalFilledIndexes", page)
+        self.assertIn("const blockFill = Math.max(0, Math.min(dotsPerBlock, filledDots - consumed))", page)
         self.assertIn("active: busy", page)
         self.assertIn(".update-progress.is-active", scss_source)
+        self.assertIn(".update-progress-track { display: flex !important; align-items: center; width: 100%; height: 17px", scss_source)
         self.assertIn("opacity: 0", scss_source)
         self.assertIn("renderSimpleMarkdown", page)
         self.assertIn('value="50"', page)
@@ -746,6 +836,169 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(urlopen.call_args_list[1].args[0].full_url, "https://download.example/asset")
         self.assertEqual(urlopen.call_args_list[0].kwargs["timeout"], 20)
 
+    def test_launch_updater_handles_missing_process_and_retries_replacement(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.exit_app = __import__("unittest.mock").mock.Mock()
+        downloaded = Path("downloaded.exe")
+        updater = SimpleNamespace(poll=lambda: None)
+
+        with tempfile.TemporaryDirectory() as temp:
+            def start_updater(arguments, **_kwargs):
+                ready_path = Path(arguments[arguments.index("-Ready") + 1])
+                ready_path.write_text("ready", encoding="ascii")
+                return updater
+
+            with patch("app.app_data_dir", return_value=Path(temp)), patch(
+                "app.subprocess.Popen", side_effect=start_updater
+            ) as popen:
+                controller._launch_updater(downloaded)
+
+            script = (Path(temp) / "apply-update.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Get-Process -Id $ProcessId -ErrorAction SilentlyContinue", script)
+        self.assertIn("Set-Content -LiteralPath $Ready", script)
+        self.assertIn("if ($process)", script)
+        self.assertIn("for ($attempt = 1; $attempt -le 60; $attempt++)", script)
+        self.assertIn("Copy-Item -LiteralPath $Source -Destination $Target -Force", script)
+        self.assertIn("Start-Process -FilePath $Target", script)
+        self.assertIn("-Log", popen.call_args.args[0])
+        controller.exit_app.assert_called_once_with()
+
+    def test_download_completion_waits_for_restart_confirmation(self):
+        class DownloadResponse:
+            headers = {"Content-Length": "10"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _size=-1):
+                if hasattr(self, "consumed"):
+                    return b""
+                self.consumed = True
+                return b"new-binary"
+
+        controller = app.AppController.__new__(app.AppController)
+        controller.update_lock = __import__("threading").Lock()
+        controller.update_state = {
+            "release": {
+                "version": "9.9.9",
+                "downloadApiUrl": "download-api",
+                "downloadUrl": "download-web",
+                "checksumApiUrl": "checksum-api",
+                "checksumUrl": "checksum-web",
+            }
+        }
+        controller.window = None
+        controller.visible = False
+
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "app.app_data_dir", return_value=Path(temp)
+        ), patch.object(
+            controller, "_open_release_asset", return_value=DownloadResponse()
+        ), patch.object(
+            controller, "_download_text", return_value=app.sha256_bytes(b"new-binary")
+        ), patch.object(controller, "_launch_updater") as launch_updater:
+            controller._download_update_worker()
+
+            downloaded = Path(controller.update_state["downloadedPath"])
+            self.assertTrue(downloaded.is_file())
+
+        self.assertEqual(controller.update_state["status"], "ready")
+        self.assertEqual(controller.update_state["percent"], 100)
+        self.assertEqual(
+            controller.update_state["message"],
+            "下载完成，点击重启以应用更新",
+        )
+        launch_updater.assert_not_called()
+
+    def test_restart_update_launches_verified_download(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.update_lock = __import__("threading").Lock()
+        controller.window = None
+        controller.visible = False
+
+        with tempfile.TemporaryDirectory() as temp:
+            downloaded = Path(temp) / "API_TOOLS-9.9.9.exe"
+            downloaded.write_bytes(b"verified")
+            controller.update_state = {
+                "status": "ready",
+                "downloadedPath": str(downloaded),
+            }
+            with patch.object(controller, "_launch_updater") as launch_updater:
+                result = controller.restart_update()
+
+        self.assertEqual(result, {"ok": True})
+        launch_updater.assert_called_once_with(downloaded)
+
+    def test_deferred_update_is_applied_on_later_exit(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.window = None
+        controller.visible = False
+
+        with tempfile.TemporaryDirectory() as temp:
+            downloaded = Path(temp) / "API_TOOLS-9.9.9.exe"
+            downloaded.write_bytes(b"verified")
+            controller.update_state = {
+                "status": "ready",
+                "downloadedPath": str(downloaded),
+            }
+            controller._push_update_state = lambda: None
+            result = controller.defer_update_restart()
+
+            with patch.object(controller, "_launch_updater") as launch_updater:
+                controller.exit_app()
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["update"]["showPrompt"])
+        launch_updater.assert_called_once_with(downloaded)
+
+    def test_launch_updater_keeps_app_open_when_updater_fails_to_start(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.exit_app = __import__("unittest.mock").mock.Mock()
+        updater = SimpleNamespace(poll=lambda: 1)
+
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "app.app_data_dir", return_value=Path(temp)
+        ), patch("app.subprocess.Popen", return_value=updater):
+            with self.assertRaisesRegex(RuntimeError, "更新程序启动失败"):
+                controller._launch_updater(Path("downloaded.exe"))
+
+        controller.exit_app.assert_not_called()
+
+    def test_updater_replaces_target_when_original_process_is_already_gone(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.exit_app = __import__("unittest.mock").mock.Mock()
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            target = root / "API_TOOLS.cmd"
+            downloaded = root / "API_TOOLS-new.cmd"
+            target.write_text("@echo off\r\nrem old-version\r\n", encoding="ascii")
+            downloaded.write_text("@echo off\r\nrem new-version\r\n", encoding="ascii")
+            processes = []
+            real_popen = __import__("subprocess").Popen
+
+            def start_updater(arguments, **kwargs):
+                process = real_popen(arguments, **kwargs)
+                processes.append(process)
+                return process
+
+            with patch("app.app_data_dir", return_value=root), patch(
+                "app.sys.executable", str(target)
+            ), patch("app.os.getpid", return_value=2147483000), patch(
+                "app.subprocess.Popen", side_effect=start_updater
+            ):
+                controller._launch_updater(downloaded)
+
+            self.assertEqual(processes[0].wait(timeout=15), 0)
+            self.assertIn("new-version", target.read_text(encoding="ascii"))
+            self.assertFalse(downloaded.exists())
+            self.assertFalse((root / "update.log").exists())
+            controller.exit_app.assert_called_once_with()
+
     def test_custom_threshold_is_used_in_notification_title(self):
         notifications = []
         controller = app.AppController.__new__(app.AppController)
@@ -808,6 +1061,7 @@ class ControllerTests(unittest.TestCase):
                 "check_for_updates",
                 "complete_initialization",
                 "delete_key",
+                "defer_update_restart",
                 "dismiss_update_prompt",
                 "download_update",
                 "get_asset_status",
@@ -818,6 +1072,7 @@ class ControllerTests(unittest.TestCase):
                 "open_devtools",
                 "refresh_now",
                 "report_startup",
+                "restart_update",
                 "resolve_close_action",
                 "update_app_preferences",
                 "update_refresh_intervals",
