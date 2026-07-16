@@ -526,10 +526,16 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("openAnimatedModal", page)
         self.assertIn("closeAnimatedModal", page)
         self.assertIn("MODAL_ANIMATION_MS = 260", page)
-        self.assertIn("options.update ? totalDots", page)
-        self.assertIn("--update-progress-clip", page)
-        self.assertIn("transition: clip-path 6s", scss_source)
-        self.assertIn("will-change: clip-path", scss_source)
+        self.assertIn("if (barElement.id === 'updateProgress') return 4", page)
+        self.assertIn("const filledDots = Math.round(totalDots * fill / 100)", page)
+        self.assertIn("globalFilledIndexes", page)
+        self.assertIn("active: busy", page)
+        self.assertIn(".update-progress.is-active", scss_source)
+        self.assertIn("opacity: 0", scss_source)
+        self.assertIn("renderSimpleMarkdown", page)
+        self.assertIn('value="50"', page)
+        self.assertIn('value="25"', page)
+        self.assertIn('value="10"', page)
         self.assertIn("translate3d(0, 14px, 0)", scss_source)
         self.assertIn("prefers-reduced-motion", scss_source)
         self.assertIn("bar-unlimited", scss_source)
@@ -571,6 +577,18 @@ class StaticAssetCacheTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    @patch("app.Notification")
+    def test_notify_uses_severity_icon(self, notification):
+        controller = app.AppController.__new__(app.AppController)
+
+        controller.notify("额度告警", "仅剩 8%", severity=3)
+
+        self.assertTrue(
+            notification.call_args.kwargs["icon"].endswith(
+                "assets\\icons\\api_tools_critical.ico"
+            )
+        )
+
     def test_refresh_all_attempts_every_key_and_reports_each_result(self):
         controller = app.AppController.__new__(app.AppController)
         controller.refresh_lock = __import__("threading").Lock()
@@ -852,7 +870,9 @@ class ControllerTests(unittest.TestCase):
             rates=lambda _key_id: {"intervals": {"10m": interval}},
         )
         payload = {"rate_limits": [{"window": "5h", "limit": 27, "remaining": 27}]}
-        controller.notify = lambda title, message: notifications.append((title, message))
+        controller.notify = lambda title, message, severity=0: notifications.append(
+            (title, message, severity)
+        )
 
         controller._check_alerts("key-1", "test", payload)
         controller._check_alerts("key-1", "test", payload)
@@ -864,6 +884,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(notifications), 2)
         self.assertIn("速率高负载", notifications[0][0])
         self.assertIn("速率极高负载", notifications[1][0])
+        self.assertEqual([item[2] for item in notifications], [1, 2])
         self.assertEqual(severities[("key-1", "10m 负载")], 0)
 
     def test_estimated_load_does_not_notify(self):
@@ -901,13 +922,16 @@ class ControllerTests(unittest.TestCase):
             "quota": {"limit": 10, "remaining": 10},
             "rate_limits": [{"window": "5h", "limit": 1000, "remaining": 1000}],
         }
-        controller.notify = lambda title, message: notifications.append((title, message))
+        controller.notify = lambda title, message, severity=0: notifications.append(
+            (title, message, severity)
+        )
 
         controller._check_alerts("key-1", "test", payload)
 
         self.assertEqual(len(notifications), 1)
         self.assertIn("额度高负载", notifications[0][0])
         self.assertIn("额度 25.00% / 速率 0.25%", notifications[0][1])
+        self.assertEqual(notifications[0][2], 1)
 
 
 if __name__ == "__main__":

@@ -1626,19 +1626,15 @@ html.dark #avgMinVal {
 .update-progress-track:has(> .matrix-progress) {
   border-color: transparent;
   background-color: transparent;
-  background-image: radial-gradient(circle, rgba(var(--progress-rgb, 16, 185, 129), 0.2) 0 1px, transparent 1.25px);
-  background-position: 2px center;
-  background-size: 3px 3px;
 }
 
 .update-progress {
-  clip-path: inset(0 var(--update-progress-clip, 100%) 0 0);
-  will-change: clip-path;
-  transition: clip-path 6s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  opacity: 0;
+  transition: opacity 0.2s ease !important;
 }
 
-.update-progress.is-resetting {
-  transition: none !important;
+.update-progress.is-active {
+  opacity: 1;
 }
 
 .update-actions {
@@ -1854,12 +1850,52 @@ html.dark #avgMinVal {
 #changelogContent {
   min-height: 160px;
   margin: 0;
-  padding: 14px;
+  padding: 18px;
   overflow: auto;
   color: var(--text-soft);
-  font: 10px/1.65 var(--font-mono);
-  white-space: pre-wrap;
+  font: 13px/1.75 var(--font-mono);
   overflow-wrap: anywhere;
+}
+
+#changelogContent h1 {
+  margin: 0 0 14px;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+#changelogContent h2 {
+  margin: 18px 0 8px;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+#changelogContent h3 {
+  margin: 14px 0 6px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+#changelogContent p {
+  margin: 8px 0;
+}
+
+#changelogContent ul {
+  margin: 6px 0 14px;
+  padding-left: 22px;
+}
+
+#changelogContent li {
+  margin: 5px 0;
+}
+
+#changelogContent code {
+  padding: 1px 4px;
+  background: var(--surface-strong);
+  color: var(--brand);
+  font-family: var(--font-mono);
 }
 
 .close-action-panel {

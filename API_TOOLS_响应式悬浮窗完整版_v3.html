@@ -1228,21 +1228,21 @@
                         <div>
                             <span>一级预警 (黄色)</span>
                             <div>
-                                <input type="number" id="thWarn" onchange="updateThresholds()" value="25">
+                                <input type="number" id="thWarn" onchange="updateThresholds()" value="50">
                                 <span>%</span>
                             </div>
                         </div>
                         <div>
                             <span>二级预警 (橙色)</span>
                             <div>
-                                <input type="number" id="thDanger" onchange="updateThresholds()" value="10">
+                                <input type="number" id="thDanger" onchange="updateThresholds()" value="25">
                                 <span>%</span>
                             </div>
                         </div>
                         <div>
                             <span>极端预警 (红/闪)</span>
                             <div>
-                                <input type="number" id="thCritical" onchange="updateThresholds()" value="5">
+                                <input type="number" id="thCritical" onchange="updateThresholds()" value="10">
                                 <span>%</span>
                             </div>
                         </div>
@@ -1370,7 +1370,7 @@
                         <i data-lucide="x" class="icon-14" aria-hidden="true"></i>
                     </button>
                 </div>
-                <pre id="changelogContent">暂无更新日志。</pre>
+                <div id="changelogContent" class="markdown-content">暂无更新日志。</div>
             </div>
         </div>
 
@@ -1468,9 +1468,9 @@
             firebaseInitialized: false,
             // 默认警报阈值配置
             thresholds: {
-                warn: 25,
-                danger: 10,
-                critical: 5
+                warn: 50,
+                danger: 25,
+                critical: 10
             },
             // 自适应后台刷新参数
             refreshCounter: 60,
@@ -1489,9 +1489,9 @@
             const savedThresholds = JSON.parse(localStorage.getItem('api-tools-thresholds') || 'null');
             if (savedThresholds) {
                 window.appState.thresholds = {
-                    warn: Number(savedThresholds.warn) || 25,
-                    danger: Number(savedThresholds.danger) || 10,
-                    critical: Number(savedThresholds.critical) || 5
+                    warn: Number(savedThresholds.warn) || 50,
+                    danger: Number(savedThresholds.danger) || 25,
+                    critical: Number(savedThresholds.critical) || 10
                 };
             }
         } catch (error) {
@@ -1847,9 +1847,9 @@
 
         // 更新用户设置的警报阈值
         function updateThresholds() {
-            const warnVal = parseFloat(document.getElementById('thWarn').value) || 25;
-            const dangerVal = parseFloat(document.getElementById('thDanger').value) || 10;
-            const criticalVal = parseFloat(document.getElementById('thCritical').value) || 5;
+            const warnVal = parseFloat(document.getElementById('thWarn').value) || 50;
+            const dangerVal = parseFloat(document.getElementById('thDanger').value) || 25;
+            const criticalVal = parseFloat(document.getElementById('thCritical').value) || 10;
 
             window.appState.thresholds.warn = warnVal;
             window.appState.thresholds.danger = dangerVal;
@@ -1912,7 +1912,10 @@
             document.getElementById('checkUpdateButton').disabled = busy;
             document.getElementById('downloadUpdateButton').disabled = !current.available || busy;
             const progress = document.getElementById('updateProgress');
-            renderProgressBar(progress, Number(current.percent) || 0, 100, { update: true });
+            renderProgressBar(progress, busy ? Number(current.percent) || 0 : 0, 100, {
+                update: true,
+                active: busy
+            });
             progress.classList.remove('bar-good', 'bar-warn', 'bar-danger', 'bar-critical');
             progress.classList.add(current.status === 'failed' ? 'bar-critical' : 'bar-good');
         };
@@ -1965,12 +1968,58 @@
             });
         }
 
+        function appendInlineMarkdown(container, text) {
+            const parts = String(text).split(/(`[^`]+`)/g);
+            parts.forEach(part => {
+                if (part.startsWith('`') && part.endsWith('`')) {
+                    const code = document.createElement('code');
+                    code.textContent = part.slice(1, -1);
+                    container.append(code);
+                } else {
+                    container.append(document.createTextNode(part));
+                }
+            });
+        }
+
+        function renderSimpleMarkdown(container, markdown) {
+            container.replaceChildren();
+            let list = null;
+            String(markdown || '暂无更新日志。').split(/\r?\n/).forEach(line => {
+                const heading = line.match(/^(#{1,3})\s+(.+)$/);
+                const item = line.match(/^\s*[-*]\s+(.+)$/);
+                if (heading) {
+                    list = null;
+                    const element = document.createElement(`h${heading[1].length}`);
+                    appendInlineMarkdown(element, heading[2]);
+                    container.append(element);
+                } else if (item) {
+                    if (!list) {
+                        list = document.createElement('ul');
+                        container.append(list);
+                    }
+                    const element = document.createElement('li');
+                    appendInlineMarkdown(element, item[1]);
+                    list.append(element);
+                } else if (line.trim()) {
+                    list = null;
+                    const element = document.createElement('p');
+                    appendInlineMarkdown(element, line.trim());
+                    container.append(element);
+                } else {
+                    list = null;
+                }
+            });
+        }
+
         function openChangelogModal() {
             const update = window.appState.update || {};
             document.getElementById('changelogModalVersion').textContent = update.available
                 ? `v${update.latestVersion}`
                 : `v${window.appState.appVersion}`;
-            document.getElementById('changelogContent').textContent = update.releaseNotes || '暂无更新日志。';
+            renderSimpleMarkdown(
+                document.getElementById('changelogContent'),
+                update.releaseNotes || '暂无更新日志。'
+            );
             openAnimatedModal(document.getElementById('changelogModal'));
             renderLucideIcons();
         }
@@ -2703,7 +2752,7 @@
 
         function progressMatrixSize(barElement) {
             const root = document.getElementById('widget-root');
-            if (barElement.id === 'updateProgress') return 2;
+            if (barElement.id === 'updateProgress') return 4;
             if (barElement.id.startsWith('micro') || root?.className.includes('height-summary-')) return 2;
             return barElement.id === 'bigProgressBar' ? 4 : 3;
         }
@@ -2739,9 +2788,12 @@
             barElement.dataset.fill = String(fill);
             barElement.dataset.remaining = String(remaining);
             barElement.dataset.unlimited = options.unlimited ? 'true' : 'false';
+            barElement.dataset.update = options.update ? 'true' : 'false';
+            barElement.dataset.active = options.active ? 'true' : 'false';
             barElement.className = useMatrix ? 'matrix-progress' : 'linear-progress';
             barElement.classList.toggle('bar-unlimited', options.unlimited === true);
             barElement.classList.toggle('update-progress', options.update === true);
+            barElement.classList.toggle('is-active', options.active === true);
             if (!options.unlimited) setFlexibleBarColor(barElement, remaining);
 
             if (!useMatrix) {
@@ -2763,30 +2815,35 @@
             barElement.style.setProperty('--matrix-block-count', blockCount);
             const dotsPerBlock = matrix * matrix;
             const totalDots = blockCount * dotsPerBlock;
-            const filledDots = options.update ? totalDots : Math.round(totalDots * fill / 100);
-            if (options.update) {
-                const previousFill = Number(barElement.dataset.visualFill);
-                if (Number.isFinite(previousFill) && fill < previousFill) {
-                    barElement.classList.add('is-resetting');
-                    requestAnimationFrame(() => barElement.classList.remove('is-resetting'));
-                }
-                barElement.dataset.visualFill = String(fill);
-                barElement.style.setProperty('--update-progress-clip', `${100 - fill}%`);
-            }
+            const filledDots = Math.round(totalDots * fill / 100);
             const renderSignature = `matrix:${matrix}:${blockCount}:${filledDots}`;
             if (barElement.dataset.renderSignature === renderSignature) return;
             barElement.dataset.renderSignature = renderSignature;
             const fragment = document.createDocumentFragment();
+            const globalFillSequence = options.update
+                ? stableProgressSequence(totalDots, `${barElement.id}:${matrix}:${blockCount}`)
+                : null;
+            const globalFilledIndexes = globalFillSequence
+                ? new Set(globalFillSequence.slice(0, filledDots))
+                : null;
             let consumed = 0;
 
             for (let blockIndex = 0; blockIndex < blockCount; blockIndex++) {
                 const block = document.createElement('span');
                 block.className = 'matrix-block';
-                const blockFill = Math.max(0, Math.min(dotsPerBlock, filledDots - consumed));
+                const blockFill = globalFilledIndexes
+                    ? Array.from({ length: dotsPerBlock }, (_, dotIndex) => blockIndex * dotsPerBlock + dotIndex)
+                        .filter(index => globalFilledIndexes.has(index)).length
+                    : Math.max(0, Math.min(dotsPerBlock, filledDots - consumed));
                 if (blockFill === dotsPerBlock) block.classList.add('is-complete');
                 else if (blockFill > 0) block.classList.add('is-active');
                 const sequence = stableProgressSequence(dotsPerBlock, `${barElement.id}:${matrix}:${blockIndex}`);
-                const filledIndexes = new Set(sequence.slice(0, blockFill));
+                const filledIndexes = globalFilledIndexes
+                    ? new Set(
+                        Array.from({ length: dotsPerBlock }, (_, dotIndex) => dotIndex)
+                            .filter(dotIndex => globalFilledIndexes.has(blockIndex * dotsPerBlock + dotIndex))
+                    )
+                    : new Set(sequence.slice(0, blockFill));
                 for (let dotIndex = 0; dotIndex < dotsPerBlock; dotIndex++) {
                     const dot = document.createElement('i');
                     dot.className = filledIndexes.has(dotIndex) ? 'matrix-dot is-filled' : 'matrix-dot';
@@ -2803,7 +2860,9 @@
                 const bar = document.getElementById(id);
                 if (!bar || bar.dataset.fill === undefined) return;
                 renderProgressBar(bar, bar.dataset.fill, bar.dataset.remaining, {
-                    unlimited: bar.dataset.unlimited === 'true'
+                    unlimited: bar.dataset.unlimited === 'true',
+                    update: bar.dataset.update === 'true',
+                    active: bar.dataset.active === 'true'
                 });
             });
         }
@@ -2828,7 +2887,9 @@
                     pendingBars.forEach(bar => {
                         if (bar.dataset.fill === undefined) return;
                         renderProgressBar(bar, bar.dataset.fill, bar.dataset.remaining, {
-                            unlimited: bar.dataset.unlimited === 'true'
+                            unlimited: bar.dataset.unlimited === 'true',
+                            update: bar.dataset.update === 'true',
+                            active: bar.dataset.active === 'true'
                         });
                     });
                     pendingBars.clear();

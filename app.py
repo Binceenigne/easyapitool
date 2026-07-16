@@ -33,7 +33,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 GITHUB_REPOSITORY = os.environ.get(
     "API_TOOLS_GITHUB_REPOSITORY", "Binceenigne/easyapitool"
 )
@@ -1105,7 +1105,7 @@ class Store:
         }
 
     def get_thresholds(self) -> dict[str, float]:
-        defaults = {"warn": 25.0, "danger": 10.0, "critical": 5.0}
+        defaults = {"warn": 50.0, "danger": 25.0, "critical": 10.0}
         with self.lock, self.connect() as db:
             row = db.execute("SELECT value FROM settings WHERE name='thresholds'").fetchone()
         if not row:
@@ -1118,9 +1118,9 @@ class Store:
 
     def set_thresholds(self, thresholds: dict[str, Any]) -> dict[str, float]:
         clean = {
-            "warn": min(100.0, max(0.0, safe_float(thresholds.get("warn"), 25))),
-            "danger": min(100.0, max(0.0, safe_float(thresholds.get("danger"), 10))),
-            "critical": min(100.0, max(0.0, safe_float(thresholds.get("critical"), 5))),
+            "warn": min(100.0, max(0.0, safe_float(thresholds.get("warn"), 50))),
+            "danger": min(100.0, max(0.0, safe_float(thresholds.get("danger"), 25))),
+            "critical": min(100.0, max(0.0, safe_float(thresholds.get("critical"), 10))),
         }
         with self.lock, self.connect() as db:
             db.execute(
@@ -1844,10 +1844,15 @@ class AppController:
                 severity = 0
             previous = self.store.alert_severity(key_id, metric)
             if severity > previous:
-                labels = {1: "25% 预警", 2: "10% 危险", 3: "5% 严重"}
+                labels = {
+                    1: f"{thresholds['warn']:g}% 预警",
+                    2: f"{thresholds['danger']:g}% 危险",
+                    3: f"{thresholds['critical']:g}% 严重",
+                }
                 self.notify(
                     f"{name} · {labels[severity]}",
                     f"{metric}仅剩 {percentage:.2f}%，请及时检查额度。",
+                    severity=severity,
                 )
             if severity != previous:
                 self.store.set_alert_severity(key_id, metric, severity)
@@ -1872,17 +1877,24 @@ class AppController:
                     f"{name} · {load['source']}{level}",
                     f"最近 {interval_name} 用量 ${safe_float(interval.get('value')):.4f}，综合负载 {pressure:.0f}%"
                     f"（额度 {load['quotaPercent']:.2f}% / 速率 {load['ratePercent']:.2f}%）。",
+                    severity=severity,
                 )
             if severity != previous:
                 self.store.set_alert_severity(key_id, metric, severity)
 
-    def notify(self, title: str, message: str) -> None:
+    def notify(self, title: str, message: str, severity: int = 0) -> None:
         try:
+            icon_names = {
+                1: "api_tools_warn.ico",
+                2: "api_tools_danger.ico",
+                3: "api_tools_critical.ico",
+            }
+            icon_name = icon_names.get(int(severity), "api_tools_normal.ico")
             notification = Notification(
                 app_id="API_TOOLS 密钥监控",
                 title=title,
                 msg=message,
-                icon=str(resource_path("assets/api_tools_icon.ico")),
+                icon=str(resource_path(f"assets/icons/{icon_name}")),
                 duration="long",
             )
             notification.set_audio(audio.Default, loop=False)

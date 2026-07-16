@@ -11,6 +11,7 @@ datas = [
     (str(project_root / 'assets' / 'title_logo.png'), 'assets'),
     (str(project_root / 'assets' / 'api_tools_icon.ico'), 'assets'),
     (str(project_root / 'assets' / 'api_tools_icon.png'), 'assets'),
+    (str(project_root / 'assets' / 'icons'), 'assets/icons'),
 ]
 binaries = []
 hiddenimports = ['pystray._win32', 'winotify']
