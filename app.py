@@ -33,7 +33,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 GITHUB_REPOSITORY = os.environ.get(
     "API_TOOLS_GITHUB_REPOSITORY", "Binceenigne/easyapitool"
 )
@@ -47,7 +47,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "16"
+STATIC_UI_VERSION = "17"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -640,9 +640,10 @@ def limit_definitions(payload: dict[str, Any] | None) -> dict[str, float]:
     payload = payload or {}
     quota = payload.get("quota") or {}
     total_usage = ((payload.get("usage") or {}).get("total") or {})
-    quota_limit = safe_float(quota.get("limit"))
-    if quota_limit <= 0 and payload.get("balance") is not None:
+    if payload.get("balance") is not None and total_usage.get("cost") is not None:
         quota_limit = safe_float(payload.get("balance")) + safe_float(total_usage.get("cost"))
+    else:
+        quota_limit = safe_float(quota.get("limit"))
     windows = {str(item.get("window")): item for item in payload.get("rate_limits") or []}
     return {
         "quota": quota_limit,
@@ -939,6 +940,7 @@ class Store:
                         "week": {"cost": 0, "avgMin": 0, "avgHour": 0, "label": ""},
                     },
                     "hourly12h": [],
+                    "tenMinute2h": [],
                     "timezone": "UTC+8",
                 }
 
@@ -1017,59 +1019,89 @@ class Store:
             daily_costs[today_key] = today_cost
             week_cost = sum(daily_costs.values())
 
-            current_hour = now_local.replace(minute=0, second=0, microsecond=0)
-            hourly_usage: list[dict[str, Any]] = []
-            for offset in range(12, 0, -1):
-                start = current_hour - timedelta(hours=offset)
-                end = start + timedelta(hours=1)
-                start_timestamp = start.timestamp()
-                end_timestamp = end.timestamp()
-                before = db.execute(
-                    """SELECT sampled_at,total_cost FROM usage_snapshots
-                    WHERE key_id=? AND sampled_at<=? ORDER BY sampled_at DESC,id DESC LIMIT 1""",
-                    (key_id, start_timestamp),
-                ).fetchone()
-                after = db.execute(
-                    """SELECT sampled_at,total_cost FROM usage_snapshots
-                    WHERE key_id=? AND sampled_at<=? ORDER BY sampled_at DESC,id DESC LIMIT 1""",
-                    (key_id, end_timestamp),
-                ).fetchone()
-                boundary_tolerance = min(600, max(90, self._snapshot_interval_hint(db, key_id)))
-                if before and start_timestamp - before["sampled_at"] > boundary_tolerance:
-                    before = db.execute(
-                        """SELECT sampled_at,total_cost FROM usage_snapshots
-                        WHERE key_id=? AND sampled_at>? AND sampled_at<=?
-                        ORDER BY sampled_at ASC,id ASC LIMIT 1""",
-                        (key_id, start_timestamp, end_timestamp),
-                    ).fetchone()
-                elif before is None:
-                    before = db.execute(
-                        """SELECT sampled_at,total_cost FROM usage_snapshots
-                        WHERE key_id=? AND sampled_at>? AND sampled_at<=?
-                        ORDER BY sampled_at ASC,id ASC LIMIT 1""",
-                        (key_id, start_timestamp, end_timestamp),
-                    ).fetchone()
-                if after and after["sampled_at"] <= start_timestamp:
-                    after = None
-                elapsed = (after["sampled_at"] - before["sampled_at"]) if before and after else 0
-                delta = (after["total_cost"] - before["total_cost"]) if before and after else -1
-                if elapsed > 0 and delta >= 0:
-                    covers_start = abs(start_timestamp - before["sampled_at"]) <= boundary_tolerance
-                    covers_end = end_timestamp - after["sampled_at"] <= boundary_tolerance
-                    status = "recorded" if covers_start and covers_end else "estimated"
-                    cost = delta * 3600 / elapsed
-                else:
-                    status = "unrecorded"
-                    cost = None
-                hourly_usage.append(
-                    {
-                        "startTimestamp": int(start_timestamp * 1000),
-                        "endTimestamp": int(end_timestamp * 1000),
-                        "cost": cost,
-                        "status": status,
-                        "observedSeconds": round(max(0, elapsed)),
-                    }
+            def usage_buckets(
+                bucket_seconds: int, count: int, boundary: datetime
+            ) -> list[dict[str, Any]]:
+                buckets: list[dict[str, Any]] = []
+                boundary_tolerance = min(
+                    600,
+                    max(90, self._snapshot_interval_hint(db, key_id)),
                 )
+                for offset in range(count, 0, -1):
+                    start = boundary - timedelta(seconds=bucket_seconds * offset)
+                    end = start + timedelta(seconds=bucket_seconds)
+                    start_timestamp = start.timestamp()
+                    end_timestamp = end.timestamp()
+                    before = db.execute(
+                        """SELECT sampled_at,total_cost FROM usage_snapshots
+                        WHERE key_id=? AND sampled_at<=? ORDER BY sampled_at DESC,id DESC LIMIT 1""",
+                        (key_id, start_timestamp),
+                    ).fetchone()
+                    after = db.execute(
+                        """SELECT sampled_at,total_cost FROM usage_snapshots
+                        WHERE key_id=? AND sampled_at<=? ORDER BY sampled_at DESC,id DESC LIMIT 1""",
+                        (key_id, end_timestamp),
+                    ).fetchone()
+                    if before and start_timestamp - before["sampled_at"] > boundary_tolerance:
+                        before = db.execute(
+                            """SELECT sampled_at,total_cost FROM usage_snapshots
+                            WHERE key_id=? AND sampled_at>? AND sampled_at<=?
+                            ORDER BY sampled_at ASC,id ASC LIMIT 1""",
+                            (key_id, start_timestamp, end_timestamp),
+                        ).fetchone()
+                    elif before is None:
+                        before = db.execute(
+                            """SELECT sampled_at,total_cost FROM usage_snapshots
+                            WHERE key_id=? AND sampled_at>? AND sampled_at<=?
+                            ORDER BY sampled_at ASC,id ASC LIMIT 1""",
+                            (key_id, start_timestamp, end_timestamp),
+                        ).fetchone()
+                    if after and after["sampled_at"] <= start_timestamp:
+                        after = None
+                    elapsed = (
+                        after["sampled_at"] - before["sampled_at"]
+                        if before and after
+                        else 0
+                    )
+                    delta = (
+                        after["total_cost"] - before["total_cost"]
+                        if before and after
+                        else -1
+                    )
+                    if elapsed > 0 and delta >= 0:
+                        covers_start = (
+                            abs(start_timestamp - before["sampled_at"])
+                            <= boundary_tolerance
+                        )
+                        covers_end = (
+                            end_timestamp - after["sampled_at"] <= boundary_tolerance
+                        )
+                        status = (
+                            "recorded" if covers_start and covers_end else "estimated"
+                        )
+                        cost = delta * bucket_seconds / elapsed
+                    else:
+                        status = "unrecorded"
+                        cost = None
+                    buckets.append(
+                        {
+                            "startTimestamp": int(start_timestamp * 1000),
+                            "endTimestamp": int(end_timestamp * 1000),
+                            "cost": cost,
+                            "status": status,
+                            "observedSeconds": round(max(0, elapsed)),
+                        }
+                    )
+                return buckets
+
+            current_hour = now_local.replace(minute=0, second=0, microsecond=0)
+            current_ten_minutes = now_local.replace(
+                minute=(now_local.minute // 10) * 10,
+                second=0,
+                microsecond=0,
+            )
+            hourly_usage = usage_buckets(3600, 12, current_hour)
+            ten_minute_usage = usage_buckets(600, 12, current_ten_minutes)
 
         today_elapsed_minutes = max(1.0, (now_local - today_start).total_seconds() / 60)
         week_elapsed_minutes = max(1.0, (now_local - week_start).total_seconds() / 60)
@@ -1101,6 +1133,7 @@ class Store:
             "avgDay": today_cost,
             "averages": {"today": today_average, "week": week_average},
             "hourly12h": hourly_usage,
+            "tenMinute2h": ten_minute_usage,
             "timezone": "UTC+8",
         }
 
@@ -1207,6 +1240,23 @@ class Store:
         with self.lock, self.connect() as db:
             db.execute(
                 """INSERT INTO settings(name,value) VALUES('update_frequency',?)
+                ON CONFLICT(name) DO UPDATE SET value=excluded.value""",
+                (clean,),
+            )
+        return clean
+
+    def get_ignored_update_version(self) -> str:
+        with self.lock, self.connect() as db:
+            row = db.execute(
+                "SELECT value FROM settings WHERE name='ignored_update_version'"
+            ).fetchone()
+        return str(row["value"]).strip() if row else ""
+
+    def set_ignored_update_version(self, version: Any) -> str:
+        clean = str(version or "").strip().lstrip("v")
+        with self.lock, self.connect() as db:
+            db.execute(
+                """INSERT INTO settings(name,value) VALUES('ignored_update_version',?)
                 ON CONFLICT(name) DO UPDATE SET value=excluded.value""",
                 (clean,),
             )
@@ -1342,6 +1392,7 @@ class AppController:
             "latestVersion": APP_VERSION,
             "releaseNotes": bundled_changelog(),
             "available": False,
+            "showPrompt": False,
         }
         intervals = self.store.get_refresh_intervals()
         self.foreground_interval = intervals["foreground"]
@@ -1371,16 +1422,10 @@ class AppController:
             name="initial-refresh",
             daemon=True,
         ).start()
-        if self._should_check_for_updates():
-            self.check_for_updates(manual=False)
+        self.check_for_updates(manual=False)
         trace_startup("startup_workers_scheduled")
 
     def _should_check_for_updates(self) -> bool:
-        frequency = self.store.get_update_frequency()
-        if frequency == "manual":
-            return False
-        if frequency == "weekly":
-            return time.time() - self.store.get_last_update_check() >= UPDATE_CHECK_INTERVAL
         return True
 
     def _initial_refresh(self) -> None:
@@ -1652,7 +1697,10 @@ class AppController:
     def _check_for_updates_worker(self, manual: bool) -> None:
         with self.update_lock:
             self._set_update_state(
-                status="checking", percent=8, message="正在检查 GitHub Release"
+                status="checking",
+                percent=8,
+                message="正在检查 GitHub Release",
+                showPrompt=manual,
             )
             try:
                 release = self._github_json("/releases/latest")
@@ -1689,6 +1737,9 @@ class AppController:
                     latestVersion=latest or APP_VERSION,
                     releaseNotes=str(release.get("body") or ""),
                     available=available,
+                    showPrompt=available and (
+                        manual or self.store.get_ignored_update_version() != latest
+                    ),
                 )
                 if manual and not available:
                     self.notify("API_TOOLS 更新", "当前已是最新版本。")
@@ -1697,7 +1748,18 @@ class AppController:
                     status="failed",
                     percent=0,
                     message=f"检查更新失败: {exc}",
+                    showPrompt=manual,
                 )
+
+    def ignore_update_version(self, version: Any) -> dict[str, Any]:
+        clean = self.store.set_ignored_update_version(version)
+        if clean and clean == str(self.update_state.get("latestVersion") or ""):
+            self._set_update_state(showPrompt=False)
+        return {"ok": True, "ignoredVersion": clean, "update": dict(self.update_state)}
+
+    def dismiss_update_prompt(self) -> dict[str, Any]:
+        self._set_update_state(showPrompt=False)
+        return {"ok": True, "update": dict(self.update_state)}
 
     def download_update(self) -> dict[str, Any]:
         release = self.update_state.get("release") or {}
@@ -1949,11 +2011,11 @@ class AppController:
     def notify(self, title: str, message: str, severity: int = 0) -> None:
         try:
             icon_names = {
-                1: "api_tools_warn.ico",
-                2: "api_tools_danger.ico",
-                3: "api_tools_critical.ico",
+                1: "api_tools_warn.png",
+                2: "api_tools_danger.png",
+                3: "api_tools_critical.png",
             }
-            icon_name = icon_names.get(int(severity), "api_tools_normal.ico")
+            icon_name = icon_names.get(int(severity), "api_tools_normal.png")
             notification = Notification(
                 app_id="API_TOOLS 密钥监控",
                 title=title,
@@ -2044,6 +2106,11 @@ class AppController:
             "appVersion": APP_VERSION,
             "githubRepository": GITHUB_REPOSITORY,
             "updateFrequency": self.store.get_update_frequency(),
+            "ignoredUpdateVersion": (
+                self.store.get_ignored_update_version()
+                if hasattr(self.store, "get_ignored_update_version")
+                else ""
+            ),
             "closeAction": self.store.get_close_action(),
             "startupEnabled": startup_is_enabled(),
             "update": dict(self.update_state),
@@ -2225,6 +2292,12 @@ class WebApi:
 
     def download_update(self) -> dict[str, Any]:
         return self._controller.download_update()
+
+    def dismiss_update_prompt(self) -> dict[str, Any]:
+        return self._controller.dismiss_update_prompt()
+
+    def ignore_update_version(self, version: Any) -> dict[str, Any]:
+        return self._controller.ignore_update_version(version)
 
     def resolve_close_action(self, action: Any) -> dict[str, Any]:
         return self._controller.resolve_close_action(action)

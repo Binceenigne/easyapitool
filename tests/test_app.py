@@ -2,7 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -172,6 +172,11 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.set_update_frequency("invalid"), "startup")
         self.assertEqual(self.store.set_close_action("invalid"), "ask")
 
+    def test_ignored_update_version_is_normalized_and_persisted(self):
+        self.assertEqual(self.store.get_ignored_update_version(), "")
+        self.assertEqual(self.store.set_ignored_update_version("v1.2.3"), "1.2.3")
+        self.assertEqual(self.store.get_ignored_update_version(), "1.2.3")
+
     def test_last_update_check_is_persisted(self):
         self.assertEqual(self.store.get_last_update_check(), 0)
         self.assertEqual(self.store.set_last_update_check(123.5), 123.5)
@@ -235,6 +240,34 @@ class StoreTests(unittest.TestCase):
             self.assertEqual((start.minute, start.second, start.microsecond), (0, 0, 0))
             self.assertEqual((end.minute, end.second, end.microsecond), (0, 0, 0))
             self.assertEqual((end - start).total_seconds(), 3600)
+
+    @patch("app.protect_secret", side_effect=lambda value: value)
+    @patch("app.unprotect_secret", side_effect=lambda value: value)
+    def test_rates_return_twelve_ten_minute_buckets(self, _unprotect, _protect):
+        key_id = self.store.add_key("test", "secret", "https://example.test/v1")
+        start = datetime(2026, 7, 15, 10, 0, tzinfo=app.BUSINESS_TIMEZONE)
+        for index in range(13):
+            sampled_at = start + timedelta(minutes=index * 10)
+            payload = {
+                "usage": {
+                    "today": {"cost": index * 0.25, "requests": index},
+                    "total": {"cost": 100 + index * 0.25, "requests": index},
+                }
+            }
+            with patch("app.time.time", return_value=sampled_at.timestamp()):
+                self.store.save_snapshot(key_id, payload)
+
+        with patch("app.time.time", return_value=(start + timedelta(hours=2, minutes=5)).timestamp()):
+            rates = self.store.rates(key_id)
+
+        self.assertEqual(len(rates["tenMinute2h"]), 12)
+        self.assertTrue(all(item["status"] == "recorded" for item in rates["tenMinute2h"]))
+        self.assertTrue(all(abs(item["cost"] - 0.25) < 1e-9 for item in rates["tenMinute2h"]))
+        for item in rates["tenMinute2h"]:
+            start_at = datetime.fromtimestamp(item["startTimestamp"] / 1000, app.BUSINESS_TIMEZONE)
+            end_at = datetime.fromtimestamp(item["endTimestamp"] / 1000, app.BUSINESS_TIMEZONE)
+            self.assertEqual(start_at.minute % 10, 0)
+            self.assertEqual((end_at - start_at).total_seconds(), 600)
 
 
 class UtilityTests(unittest.TestCase):
@@ -345,10 +378,12 @@ class UtilityTests(unittest.TestCase):
 
     def test_wallet_spending_does_not_look_like_limit_change(self):
         previous = {
+            "quota": {"limit": 100},
             "balance": 100,
             "usage": {"total": {"cost": 25}},
         }
         current = {
+            "quota": {"limit": 95},
             "balance": 95,
             "usage": {"total": {"cost": 30}},
         }
@@ -453,10 +488,13 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=16">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=17">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
+        self.assertIn('id="trend1hButton"', page)
+        self.assertIn('id="trend10mButton"', page)
+        self.assertIn("rates?.tenMinute2h", page)
         self.assertIn("openModelModal", page)
         self.assertIn('id="keyToolbar"', page)
         self.assertIn("#keySelector", stylesheet)
@@ -528,12 +566,16 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("background: transparent", scss_source)
         self.assertIn("rateLimitProgressMode", page)
         self.assertIn("changeRateLimitProgressMode('used')", page)
-        self.assertIn('id="updateFrequency"', page)
+        self.assertNotIn('id="updateFrequency"', page)
         self.assertIn('id="closeAction"', page)
         self.assertIn('id="startupEnabled"', page)
         self.assertIn('id="updateProgress"', page)
         self.assertIn("window.applyUpdateState", page)
-        self.assertIn('id="changelogModal"', page)
+        self.assertIn('id="updateModal"', page)
+        self.assertIn('id="downloadUpdateButton"', page)
+        self.assertIn('id="declineUpdateButton"', page)
+        self.assertIn('id="ignoreUpdateButton"', page)
+        self.assertIn("ignoreCurrentUpdate", page)
         self.assertIn('id="closeActionModal"', page)
         self.assertIn("openAnimatedModal", page)
         self.assertIn("closeAnimatedModal", page)
@@ -589,6 +631,46 @@ class StaticAssetCacheTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_automatic_update_check_respects_ignored_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            controller = app.AppController.__new__(app.AppController)
+            controller.store = app.Store(Path(temp) / "test.db")
+            controller.store.set_ignored_update_version("9.9.9")
+            controller.update_lock = __import__("threading").Lock()
+            controller.update_state = {}
+            controller.window = None
+            controller.visible = False
+            controller._github_json = lambda _path: {
+                "tag_name": "v9.9.9",
+                "body": "## 更新日志",
+                "assets": [{"name": app.RELEASE_ASSET_NAME, "url": "api", "browser_download_url": "web"}],
+            }
+
+            controller._check_for_updates_worker(manual=False)
+
+            self.assertTrue(controller.update_state["available"])
+            self.assertFalse(controller.update_state["showPrompt"])
+
+    def test_manual_update_check_overrides_ignored_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            controller = app.AppController.__new__(app.AppController)
+            controller.store = app.Store(Path(temp) / "test.db")
+            controller.store.set_ignored_update_version("9.9.9")
+            controller.update_lock = __import__("threading").Lock()
+            controller.update_state = {}
+            controller.window = None
+            controller.visible = False
+            controller._github_json = lambda _path: {
+                "tag_name": "v9.9.9",
+                "body": "## 更新日志",
+                "assets": [{"name": app.RELEASE_ASSET_NAME, "url": "api", "browser_download_url": "web"}],
+            }
+
+            controller._check_for_updates_worker(manual=True)
+
+            self.assertTrue(controller.update_state["available"])
+            self.assertTrue(controller.update_state["showPrompt"])
+
     def test_limit_change_notifications_report_increase_and_decrease_once(self):
         notifications = []
         controller = app.AppController.__new__(app.AppController)
@@ -695,7 +777,7 @@ class ControllerTests(unittest.TestCase):
 
         self.assertTrue(
             notification.call_args.kwargs["icon"].endswith(
-                "assets\\icons\\api_tools_critical.ico"
+                "assets\\icons\\api_tools_critical.png"
             )
         )
 
@@ -726,10 +808,12 @@ class ControllerTests(unittest.TestCase):
                 "check_for_updates",
                 "complete_initialization",
                 "delete_key",
+                "dismiss_update_prompt",
                 "download_update",
                 "get_asset_status",
                 "get_state",
                 "initialize_assets",
+                "ignore_update_version",
                 "native_drag",
                 "open_devtools",
                 "refresh_now",

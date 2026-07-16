@@ -1134,6 +1134,17 @@ html.dark #avgMinVal {
   font-size: var(--fs-8, 8px);
 }
 
+.trend-header > [role=group] {
+  display: flex;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+}
+
+.trend-header .period-button {
+  min-width: 34px;
+  padding: 1px 6px;
+}
+
 #usageTrendWrap {
   position: relative;
   flex: 0 0 auto;
@@ -1600,18 +1611,8 @@ html.dark #avgMinVal {
   accent-color: var(--brand);
 }
 
-.update-heading {
-  display: flex !important;
-  grid-template-columns: none !important;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: var(--fs-8, 8px);
-}
-
-.update-heading b {
-  color: var(--brand);
-  font-family: var(--font-mono);
+.settings-update > button {
+  width: 100%;
 }
 
 .update-progress-track {
@@ -1635,10 +1636,6 @@ html.dark #avgMinVal {
 
 .update-progress.is-active {
   opacity: 1;
-}
-
-.update-actions {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 #settingsFooter {
@@ -1847,55 +1844,121 @@ html.dark #avgMinVal {
   color: var(--muted);
 }
 
-#changelogContent {
-  min-height: 160px;
+.update-modal-panel {
+  width: min(560px, 100% - 16px);
+}
+
+.update-modal-status {
+  display: grid;
+  padding: 12px 16px;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.update-notes-heading {
+  padding: 10px 16px 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+#updateChangelogContent {
+  min-height: 150px;
   margin: 0;
-  padding: 18px;
+  padding: 10px 16px 16px;
   overflow: auto;
   color: var(--text-soft);
   font: 13px/1.75 var(--font-mono);
   overflow-wrap: anywhere;
 }
 
-#changelogContent h1 {
+#updateChangelogContent h1 {
   margin: 0 0 14px;
   color: var(--text);
   font-size: 20px;
   line-height: 1.35;
 }
 
-#changelogContent h2 {
+#updateChangelogContent h2 {
   margin: 18px 0 8px;
   color: var(--text);
   font-size: 16px;
   line-height: 1.4;
 }
 
-#changelogContent h3 {
+#updateChangelogContent h3 {
   margin: 14px 0 6px;
   color: var(--text);
   font-size: 14px;
   line-height: 1.4;
 }
 
-#changelogContent p {
+#updateChangelogContent p {
   margin: 8px 0;
 }
 
-#changelogContent ul {
+#updateChangelogContent ul {
   margin: 6px 0 14px;
   padding-left: 22px;
 }
 
-#changelogContent li {
+#updateChangelogContent li {
   margin: 5px 0;
 }
 
-#changelogContent code {
+#updateChangelogContent code {
   padding: 1px 4px;
   background: var(--surface-strong);
   color: var(--brand);
   font-family: var(--font-mono);
+}
+
+.update-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  gap: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.update-decision-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.update-decision-actions button {
+  min-width: 72px;
+  min-height: 32px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.update-decision-actions button:first-child:not(:disabled) {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+}
+
+.update-decision-actions button:disabled {
+  opacity: 0.45;
+}
+
+.ignore-update-button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 9px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ignore-update-button:disabled {
+  opacity: 0.35;
+  text-decoration: none;
 }
 
 .close-action-panel {

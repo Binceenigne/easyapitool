@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="assets/app.css?v=16">
+    <link rel="stylesheet" href="assets/app.css?v=17">
     <script defer src="vendor/lucide/lucide.min.js"></script>
     <style media="not all" data-legacy-styles-disabled>
         /* 强制无圆角 */
@@ -1133,9 +1133,12 @@
                         </div>
 
                         <div id="usageTrendSection">
-                            <div>
-                                <span>最近 12h · 每 1h 用量</span>
-                                <span>颜色表示负载</span>
+                            <div class="trend-header">
+                                <span id="usageTrendTitle">最近 12h · 每 1h 用量</span>
+                                <div role="group" aria-label="趋势图用量区间">
+                                    <button id="trend1hButton" type="button" onclick="setTrendPeriod('1h')" class="period-button is-active">1h</button>
+                                    <button id="trend10mButton" type="button" onclick="setTrendPeriod('10m')" class="period-button">10min</button>
+                                </div>
                             </div>
                             <div id="usageTrendWrap">
                                 <div id="usageTrendPlot">
@@ -1282,14 +1285,6 @@
                     <label>应用行为 (APP BEHAVIOR)</label>
                     <div class="settings-fields">
                         <label>
-                            <span>检测更新频率</span>
-                            <select id="updateFrequency" onchange="updateAppPreferences()">
-                                <option value="startup">每次启动时</option>
-                                <option value="weekly">每周</option>
-                                <option value="manual">仅手动检测</option>
-                            </select>
-                        </label>
-                        <label>
                             <span>点击关闭按钮时</span>
                             <select id="closeAction" onchange="updateAppPreferences()">
                                 <option value="ask">每次询问</option>
@@ -1306,25 +1301,9 @@
 
                 <div class="settings-group settings-update">
                     <label>应用更新 (APPLICATION UPDATE)</label>
-                    <div class="update-heading">
-                        <span>当前版本 <b id="appVersionValue">v—</b></span>
-                        <span id="updateVersionValue">尚未检查</span>
-                    </div>
-                    <div class="update-progress-track">
-                        <div id="updateProgress"></div>
-                    </div>
-                    <span class="settings-help" id="updateStatusText">尚未检查更新</span>
-                    <div class="update-actions">
-                        <button type="button" onclick="checkForUpdates()" id="checkUpdateButton">
-                            <i data-lucide="refresh-cw" aria-hidden="true"></i> 检查更新
-                        </button>
-                        <button type="button" onclick="downloadUpdate()" id="downloadUpdateButton" disabled>
-                            <i data-lucide="download" aria-hidden="true"></i> 下载并安装
-                        </button>
-                        <button type="button" onclick="openChangelogModal()">
-                            <i data-lucide="scroll-text" aria-hidden="true"></i> 更新日志
-                        </button>
-                    </div>
+                    <button type="button" onclick="checkForUpdates()" id="checkUpdateButton">
+                        <i data-lucide="refresh-cw" aria-hidden="true"></i> 检查更新
+                    </button>
                 </div>
             </div>
 
@@ -1356,21 +1335,30 @@
             </div>
         </div>
 
-        <div id="changelogModal" class="app-modal animated-modal" hidden role="dialog" aria-modal="true" aria-labelledby="changelogModalTitle" onclick="handleAppModalBackdrop(event)">
-            <div class="app-modal-panel changelog-panel">
+        <div id="updateModal" class="app-modal animated-modal" hidden role="dialog" aria-modal="true" aria-labelledby="updateModalTitle" onclick="handleAppModalBackdrop(event)">
+            <div class="app-modal-panel update-modal-panel">
                 <div class="app-modal-header">
                     <div>
-                        <i data-lucide="scroll-text" class="icon-14 color-brand" aria-hidden="true"></i>
+                        <i data-lucide="download" class="icon-14 color-brand" aria-hidden="true"></i>
                         <div>
-                            <h2 id="changelogModalTitle">更新日志</h2>
-                            <p id="changelogModalVersion">当前版本</p>
+                            <h2 id="updateModalTitle">正在检查更新</h2>
+                            <p id="updateModalVersion">当前版本 v—</p>
                         </div>
                     </div>
-                    <button type="button" onclick="closeChangelogModal()" title="关闭更新日志" aria-label="关闭更新日志">
-                        <i data-lucide="x" class="icon-14" aria-hidden="true"></i>
-                    </button>
                 </div>
-                <div id="changelogContent" class="markdown-content">暂无更新日志。</div>
+                <div class="update-modal-status">
+                    <span id="updateStatusText">正在检查更新</span>
+                    <div class="update-progress-track"><div id="updateProgress"></div></div>
+                </div>
+                <div class="update-notes-heading">更新日志</div>
+                <div id="updateChangelogContent" class="markdown-content">正在获取更新日志。</div>
+                <div class="update-modal-footer">
+                    <div class="update-decision-actions">
+                        <button type="button" onclick="downloadUpdate()" id="downloadUpdateButton" disabled>是</button>
+                        <button type="button" id="declineUpdateButton" onclick="closeUpdateModal()">否</button>
+                    </div>
+                    <button type="button" id="ignoreUpdateButton" class="ignore-update-button" onclick="ignoreCurrentUpdate()" disabled>忽略此版本</button>
+                </div>
             </div>
         </div>
 
@@ -1477,12 +1465,12 @@
             refreshIntervals: { foreground: 60, background: 300 },
             rateLimitProgressMode: 'remaining',
             appVersion: '',
-            updateFrequency: 'startup',
             closeAction: 'ask',
             startupEnabled: false,
             update: { status: 'idle', percent: 0, message: '尚未检查更新', releaseNotes: '' },
             isTabActive: true,
-            averagePeriod: 'today'
+            averagePeriod: 'today',
+            trendPeriod: '1h'
         };
 
         try {
@@ -1521,7 +1509,6 @@
             window.appState.thresholds = state.thresholds || window.appState.thresholds;
             window.appState.rateLimitProgressMode = state.rateLimitProgressMode === 'used' ? 'used' : 'remaining';
             window.appState.appVersion = state.appVersion || window.appState.appVersion;
-            window.appState.updateFrequency = state.updateFrequency || 'startup';
             window.appState.closeAction = state.closeAction || 'ask';
             window.appState.startupEnabled = state.startupEnabled === true;
             window.appState.update = state.update || window.appState.update;
@@ -1549,10 +1536,8 @@
             document.getElementById('backgroundRefreshMinutes').value = Math.max(
                 5, Math.round(window.appState.refreshIntervals.background / 60)
             );
-            document.getElementById('updateFrequency').value = window.appState.updateFrequency;
             document.getElementById('closeAction').value = window.appState.closeAction;
             document.getElementById('startupEnabled').checked = window.appState.startupEnabled;
-            document.getElementById('appVersionValue').textContent = `v${window.appState.appVersion}`;
             document.getElementById('settingsVersionValue').textContent = `v${window.appState.appVersion}`;
             window.applyUpdateState(window.appState.update);
             updateRefreshBadge();
@@ -1650,7 +1635,7 @@
             document.addEventListener('keydown', event => {
                 if (event.key === 'Escape') {
                     closeModelModal();
-                    closeChangelogModal();
+                    closeUpdateModal();
                 }
                 handleDevToolsSequence(event);
             });
@@ -1904,13 +1889,12 @@
         }
 
         async function updateAppPreferences() {
-            const updateFrequency = document.getElementById('updateFrequency').value;
             const closeAction = document.getElementById('closeAction').value;
             const startupEnabled = document.getElementById('startupEnabled').checked;
             if (!window.pywebview?.api?.update_app_preferences) return;
             try {
                 const result = await window.pywebview.api.update_app_preferences(
-                    updateFrequency, closeAction, startupEnabled
+                    'startup', closeAction, startupEnabled
                 );
                 if (!result?.ok) throw new Error(result?.error || '保存应用设置失败');
                 if (result.state) window.applyBackendState(result.state);
@@ -1926,13 +1910,28 @@
             const current = window.appState.update;
             const busy = current.status === 'checking' || current.status === 'downloading';
             document.getElementById('updateStatusText').textContent = current.message || '尚未检查更新';
-            document.getElementById('updateVersionValue').textContent = current.available
-                ? `最新 v${current.latestVersion}`
-                : current.status === 'current'
-                    ? '已是最新版本'
-                    : '尚未发现新版本';
             document.getElementById('checkUpdateButton').disabled = busy;
             document.getElementById('downloadUpdateButton').disabled = !current.available || busy;
+            document.getElementById('declineUpdateButton').disabled = busy;
+            document.getElementById('ignoreUpdateButton').disabled = !current.available || busy;
+            document.getElementById('updateModalTitle').textContent = current.status === 'downloading'
+                ? '正在下载更新'
+                : current.status === 'checking'
+                    ? '正在检查更新'
+                    : current.status === 'current'
+                    ? '已是最新版本'
+                    : current.status === 'failed'
+                        ? '检查更新失败'
+                        : current.available
+                            ? '检测到更新'
+                            : '更新';
+            document.getElementById('updateModalVersion').textContent = current.available
+                ? `当前 v${window.appState.appVersion} · 最新 v${current.latestVersion}`
+                : `当前版本 v${window.appState.appVersion}`;
+            renderSimpleMarkdown(
+                document.getElementById('updateChangelogContent'),
+                current.releaseNotes || (busy ? '正在获取更新日志。' : '暂无更新日志。')
+            );
             const progress = document.getElementById('updateProgress');
             renderProgressBar(progress, busy ? Number(current.percent) || 0 : 0, 100, {
                 update: true,
@@ -1940,10 +1939,14 @@
             });
             progress.classList.remove('bar-good', 'bar-warn', 'bar-danger', 'bar-critical');
             progress.classList.add(current.status === 'failed' ? 'bar-critical' : 'bar-good');
+            if (current.showPrompt) openUpdateModal();
         };
 
         async function checkForUpdates() {
             if (!window.pywebview?.api?.check_for_updates) return;
+            window.applyUpdateState({
+                status: 'checking', percent: 8, message: '正在检查 GitHub Release', showPrompt: true
+            });
             try {
                 const result = await window.pywebview.api.check_for_updates();
                 if (!result?.ok) throw new Error(result?.error || '无法检查更新');
@@ -2033,21 +2036,34 @@
             });
         }
 
-        function openChangelogModal() {
-            const update = window.appState.update || {};
-            document.getElementById('changelogModalVersion').textContent = update.available
-                ? `v${update.latestVersion}`
-                : `v${window.appState.appVersion}`;
-            renderSimpleMarkdown(
-                document.getElementById('changelogContent'),
-                update.releaseNotes || '暂无更新日志。'
-            );
-            openAnimatedModal(document.getElementById('changelogModal'));
+        function openUpdateModal() {
+            openAnimatedModal(document.getElementById('updateModal'));
             renderLucideIcons();
         }
 
-        function closeChangelogModal() {
-            return closeAnimatedModal(document.getElementById('changelogModal'));
+        async function closeUpdateModal() {
+            if (window.appState.update?.status === 'downloading') return;
+            window.appState.update.showPrompt = false;
+            await closeAnimatedModal(document.getElementById('updateModal'));
+            try {
+                const result = await window.pywebview?.api?.dismiss_update_prompt?.();
+                if (result?.update) window.appState.update = { ...window.appState.update, ...result.update };
+            } catch (error) {
+                console.error('关闭更新提示失败:', error);
+            }
+        }
+
+        async function ignoreCurrentUpdate() {
+            const version = window.appState.update?.latestVersion;
+            if (!version || !window.pywebview?.api?.ignore_update_version) return;
+            try {
+                const result = await window.pywebview.api.ignore_update_version(version);
+                if (!result?.ok) throw new Error(result?.error || '忽略版本失败');
+                if (result.update) window.applyUpdateState(result.update);
+                await closeUpdateModal();
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+            }
         }
 
         window.openCloseActionModal = function() {
@@ -2062,7 +2078,7 @@
 
         function handleAppModalBackdrop(event) {
             if (event.target !== event.currentTarget) return;
-            if (event.currentTarget.id === 'changelogModal') closeChangelogModal();
+            if (event.currentTarget.id === 'updateModal') closeUpdateModal();
         }
 
         async function manualRefresh() {
@@ -2382,6 +2398,11 @@
             if (activeKey) renderAverageMetrics(activeKey);
         }
 
+        function setTrendPeriod(period) {
+            window.appState.trendPeriod = period === '10m' ? '10m' : '1h';
+            renderUsageTrend(getActiveKey());
+        }
+
         function renderAverageMetrics(activeKey) {
             const period = window.appState.averagePeriod === 'week' ? 'week' : 'today';
             const rates = activeKey?.rates || {};
@@ -2490,9 +2511,20 @@
             nodeLayer.replaceChildren();
             tooltip.classList.add('hidden');
 
-            const buckets = Array.isArray(activeKey?.rates?.hourly12h)
-                ? activeKey.rates.hourly12h.slice(-12)
+            const period = window.appState.trendPeriod === '10m' ? '10m' : '1h';
+            const periodSeconds = period === '10m' ? 600 : 3600;
+            const source = period === '10m' ? activeKey?.rates?.tenMinute2h : activeKey?.rates?.hourly12h;
+            const buckets = Array.isArray(source)
+                ? source.slice(-12)
                 : [];
+            document.getElementById('usageTrendTitle').textContent = period === '10m'
+                ? '最近 2h · 每 10min 用量'
+                : '最近 12h · 每 1h 用量';
+            document.getElementById('trend1hButton').classList.toggle('is-active', period === '1h');
+            document.getElementById('trend10mButton').classList.toggle('is-active', period === '10m');
+            svg.setAttribute('aria-label', period === '10m'
+                ? '最近 2 小时逐 10 分钟用量曲线'
+                : '最近 12 小时逐小时用量曲线');
             const validBuckets = buckets.filter(item => item.status !== 'unrecorded' && Number.isFinite(Number(item.cost)));
             if (!validBuckets.length) {
                 const emptyText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -2501,7 +2533,7 @@
                 emptyText.setAttribute('text-anchor', 'middle');
                 emptyText.setAttribute('fill', '#94a3b8');
                 emptyText.setAttribute('font-size', '11');
-                emptyText.textContent = '暂无可用小时记录';
+                emptyText.textContent = period === '10m' ? '暂无可用 10 分钟记录' : '暂无可用小时记录';
                 svg.append(emptyText);
                 return;
             }
@@ -2520,7 +2552,7 @@
                 const y = recorded
                     ? height - paddingY - (cost / maxCost) * (height - paddingY * 2)
                     : height - paddingY;
-                const pressure = recorded ? calculateLoadPressure(activeKey, cost, 3600) : null;
+                const pressure = recorded ? calculateLoadPressure(activeKey, cost, periodSeconds) : null;
                 return { x, y, cost, pressure, recorded, bucket };
             });
 
