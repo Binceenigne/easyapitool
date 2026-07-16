@@ -33,7 +33,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 GITHUB_REPOSITORY = os.environ.get(
     "API_TOOLS_GITHUB_REPOSITORY", "Binceenigne/easyapitool"
 )
@@ -47,7 +47,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "15"
+STATIC_UI_VERSION = "16"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -1272,6 +1272,10 @@ class Store:
                 ((key_id, metric) for metric in metrics),
             )
 
+    def reset_limit_alerts(self) -> None:
+        with self.lock, self.connect() as db:
+            db.execute("DELETE FROM alert_state WHERE metric NOT LIKE '%负载'")
+
 
 class EasyClinClient:
     @staticmethod
@@ -1662,8 +1666,14 @@ class AppController:
                 self.update_state["release"] = {
                     "version": latest,
                     "notes": str(release.get("body") or ""),
+                    "downloadApiUrl": str(
+                        (assets.get(RELEASE_ASSET_NAME) or {}).get("url") or ""
+                    ),
                     "downloadUrl": str(
                         (assets.get(RELEASE_ASSET_NAME) or {}).get("browser_download_url") or ""
+                    ),
+                    "checksumApiUrl": str(
+                        (assets.get(f"{RELEASE_ASSET_NAME}.sha256") or {}).get("url") or ""
                     ),
                     "checksumUrl": str(
                         (assets.get(f"{RELEASE_ASSET_NAME}.sha256") or {}).get(
@@ -1693,7 +1703,9 @@ class AppController:
         release = self.update_state.get("release") or {}
         if self.update_lock.locked():
             return {"ok": False, "error": "更新任务正在进行"}
-        if not self.update_state.get("available") or not release.get("downloadUrl"):
+        if not self.update_state.get("available") or not (
+            release.get("downloadApiUrl") or release.get("downloadUrl")
+        ):
             return {"ok": False, "error": "没有可下载的新版本"}
         if not getattr(sys, "frozen", False):
             return {"ok": False, "error": "开发模式不能覆盖安装，请先构建 EXE"}
@@ -1704,12 +1716,30 @@ class AppController:
         ).start()
         return {"ok": True}
 
-    @staticmethod
-    def _download_text(url: str) -> str:
-        request = urllib.request.Request(
-            url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"}
-        )
-        with urllib.request.urlopen(request, timeout=30) as response:
+    def _open_release_asset(
+        self, urls: list[str], message: str, timeout: int = 20
+    ) -> Any:
+        candidates = list(dict.fromkeys(url for url in urls if url))
+        errors: list[str] = []
+        for index, url in enumerate(candidates, start=1):
+            self._set_update_state(message=f"{message} · 下载源 {index}/{len(candidates)}")
+            request = urllib.request.Request(
+                url,
+                headers={
+                    "Accept": "application/octet-stream",
+                    "User-Agent": f"{APP_NAME}/{APP_VERSION}",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+            try:
+                return urllib.request.urlopen(request, timeout=timeout)
+            except Exception as exc:
+                errors.append(str(exc))
+        detail = errors[-1] if errors else "没有可用下载地址"
+        raise RuntimeError(f"{message}失败: {detail}")
+
+    def _download_text(self, urls: list[str]) -> str:
+        with self._open_release_asset(urls, "正在获取校验文件") as response:
             return response.read().decode("utf-8").strip()
 
     def _download_update_worker(self) -> None:
@@ -1719,12 +1749,9 @@ class AppController:
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_suffix(".download")
             try:
-                self._set_update_state(status="downloading", percent=0, message="正在下载更新")
-                request = urllib.request.Request(
-                    release["downloadUrl"],
-                    headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"},
-                )
-                with urllib.request.urlopen(request, timeout=60) as response, temporary.open("wb") as output:
+                self._set_update_state(status="downloading", percent=0, message="正在连接下载源")
+                download_urls = [release.get("downloadApiUrl"), release.get("downloadUrl")]
+                with self._open_release_asset(download_urls, "正在连接下载源") as response, temporary.open("wb") as output:
                     total = int(response.headers.get("Content-Length") or 0)
                     downloaded = 0
                     while True:
@@ -1739,10 +1766,10 @@ class AppController:
                             message=f"正在下载更新 · {downloaded / 1048576:.1f} MB",
                         )
                 os.replace(temporary, target)
-                checksum_url = release.get("checksumUrl")
-                if not checksum_url:
+                checksum_urls = [release.get("checksumApiUrl"), release.get("checksumUrl")]
+                if not any(checksum_urls):
                     raise RuntimeError("Release 缺少 SHA-256 校验文件")
-                expected = self._download_text(checksum_url).split()[0].lower()
+                expected = self._download_text(checksum_urls).split()[0].lower()
                 actual = sha256_file(target)
                 if expected != actual:
                     target.unlink(missing_ok=True)
@@ -1817,11 +1844,48 @@ class AppController:
                 },
             )
             self.store.save_snapshot(key_id, payload)
+            self._notify_limit_changes(record["name"], payload, changed_names)
             self._check_alerts(key_id, record["name"], payload)
             return True
         except Exception as exc:
             self.store.set_error(key_id, str(exc))
             return False
+
+    def _notify_limit_changes(
+        self, key_name: str, payload: dict[str, Any], changed_names: set[str]
+    ) -> None:
+        labels = {
+            "quota": "总额度上限",
+            "5h": "5h 速率限制",
+            "1d": "1d 速率限制",
+            "7d": "7d 速率限制",
+        }
+        changes = payload.get("_limit_changes") or {}
+        for limit_name in ("quota", "5h", "1d", "7d"):
+            if limit_name not in changed_names:
+                continue
+            change = changes.get(limit_name) or {}
+            previous = safe_float(change.get("previous"))
+            current = safe_float(change.get("current"))
+            previous_text = f"{previous:g} USD"
+            current_text = f"{current:g} USD"
+            if previous <= 0 < current:
+                message = f"您的{labels[limit_name]}已新增为 {current_text}"
+                severity = 1
+            elif current <= 0 < previous:
+                message = f"您的{labels[limit_name]}已取消，原限制为 {previous_text}"
+                severity = 2
+            elif current > previous:
+                message = (
+                    f"您的{labels[limit_name]}已从 {previous_text} 提高到 {current_text}"
+                )
+                severity = 0
+            else:
+                message = (
+                    f"您的{labels[limit_name]}已从 {previous_text} 降低到 {current_text}"
+                )
+                severity = 2
+            self.notify(f"{key_name} · 限制调整", message, severity=severity)
 
     def _check_alerts(self, key_id: str, name: str, payload: dict[str, Any]) -> None:
         thresholds = self.store.get_thresholds()
@@ -2017,7 +2081,9 @@ class AppController:
         return {"ok": not result["failed"], **result, "state": self.get_state()}
 
     def update_thresholds(self, thresholds: dict[str, Any]) -> dict[str, Any]:
-        return {"ok": True, "thresholds": self.store.set_thresholds(thresholds)}
+        clean = self.store.set_thresholds(thresholds)
+        self.store.reset_limit_alerts()
+        return {"ok": True, "thresholds": clean}
 
     def update_rate_limit_progress_mode(self, mode: Any) -> dict[str, Any]:
         clean = self.store.set_rate_limit_progress_mode(mode)

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="assets/app.css?v=15">
+    <link rel="stylesheet" href="assets/app.css?v=16">
     <script defer src="vendor/lucide/lucide.min.js"></script>
     <style media="not all" data-legacy-styles-disabled>
         /* 强制无圆角 */
@@ -1846,20 +1846,42 @@
         }
 
         // 更新用户设置的警报阈值
-        function updateThresholds() {
+        async function updateThresholds() {
+            const previous = { ...window.appState.thresholds };
             const warnVal = parseFloat(document.getElementById('thWarn').value) || 50;
             const dangerVal = parseFloat(document.getElementById('thDanger').value) || 25;
             const criticalVal = parseFloat(document.getElementById('thCritical').value) || 10;
 
-            window.appState.thresholds.warn = warnVal;
-            window.appState.thresholds.danger = dangerVal;
-            window.appState.thresholds.critical = criticalVal;
-            localStorage.setItem('api-tools-thresholds', JSON.stringify(window.appState.thresholds));
-            if (window.pywebview && window.pywebview.api) {
-                window.pywebview.api.update_thresholds(window.appState.thresholds);
+            window.appState.thresholds = {
+                warn: warnVal,
+                danger: dangerVal,
+                critical: criticalVal
+            };
+            updateUI();
+            if (!window.pywebview?.api?.update_thresholds) {
+                localStorage.setItem('api-tools-thresholds', JSON.stringify(window.appState.thresholds));
+                return;
             }
-
-            updateUI(); // 实时应用色彩转换
+            try {
+                const result = await window.pywebview.api.update_thresholds(window.appState.thresholds);
+                if (!result?.ok || !result.thresholds) {
+                    throw new Error(result?.error || '保存提醒阈值失败');
+                }
+                window.appState.thresholds = result.thresholds;
+                document.getElementById('thWarn').value = result.thresholds.warn;
+                document.getElementById('thDanger').value = result.thresholds.danger;
+                document.getElementById('thCritical').value = result.thresholds.critical;
+                localStorage.setItem('api-tools-thresholds', JSON.stringify(result.thresholds));
+                updateUI();
+                showToast('提醒阈值已保存');
+            } catch (error) {
+                window.appState.thresholds = previous;
+                document.getElementById('thWarn').value = previous.warn;
+                document.getElementById('thDanger').value = previous.danger;
+                document.getElementById('thCritical').value = previous.critical;
+                updateUI();
+                showToast(error.message || String(error), 'error');
+            }
         }
 
         async function updateRefreshIntervals() {

@@ -132,6 +132,18 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(result, {"warn": 30.0, "danger": 12.0, "critical": 4.0})
         self.assertEqual(self.store.get_thresholds(), result)
 
+    def test_reset_limit_alerts_preserves_load_alerts(self):
+        key_id = self.store.add_key("alerts", "secret", "https://example.test/v1")
+        self.store.set_alert_severity(key_id, "总额度", 3)
+        self.store.set_alert_severity(key_id, "5h 限额", 2)
+        self.store.set_alert_severity(key_id, "10m 负载", 1)
+
+        self.store.reset_limit_alerts()
+
+        self.assertEqual(self.store.alert_severity(key_id, "总额度"), 0)
+        self.assertEqual(self.store.alert_severity(key_id, "5h 限额"), 0)
+        self.assertEqual(self.store.alert_severity(key_id, "10m 负载"), 1)
+
     def test_refresh_intervals_are_clamped_and_persisted(self):
         minimums = self.store.set_refresh_intervals(10, 120)
         self.assertEqual(
@@ -441,7 +453,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=15">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=16">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -577,6 +589,104 @@ class StaticAssetCacheTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_limit_change_notifications_report_increase_and_decrease_once(self):
+        notifications = []
+        controller = app.AppController.__new__(app.AppController)
+        controller.notify = lambda title, message, severity=0: notifications.append(
+            (title, message, severity)
+        )
+        payload = {
+            "_limit_changes": {
+                "quota": {"previous": 100, "current": 150},
+                "7d": {"previous": 77, "current": 67},
+                "5h": {"previous": 27, "current": 44},
+            }
+        }
+
+        controller._notify_limit_changes("生产密钥", payload, {"quota", "7d"})
+
+        self.assertEqual(len(notifications), 2)
+        self.assertEqual(notifications[0][0], "生产密钥 · 限制调整")
+        self.assertEqual(
+            notifications[0][1],
+            "您的总额度上限已从 100 USD 提高到 150 USD",
+        )
+        self.assertEqual(notifications[0][2], 0)
+        self.assertEqual(
+            notifications[1][1],
+            "您的7d 速率限制已从 77 USD 降低到 67 USD",
+        )
+        self.assertEqual(notifications[1][2], 2)
+
+    def test_limit_change_notifications_report_added_and_removed_limits(self):
+        notifications = []
+        controller = app.AppController.__new__(app.AppController)
+        controller.notify = lambda title, message, severity=0: notifications.append(
+            (title, message, severity)
+        )
+        payload = {
+            "_limit_changes": {
+                "5h": {"previous": 0, "current": 27},
+                "1d": {"previous": 44, "current": 0},
+            }
+        }
+
+        controller._notify_limit_changes("生产密钥", payload, {"5h", "1d"})
+
+        self.assertEqual(
+            [item[1] for item in notifications],
+            [
+                "您的5h 速率限制已新增为 27 USD",
+                "您的1d 速率限制已取消，原限制为 44 USD",
+            ],
+        )
+        self.assertEqual([item[2] for item in notifications], [1, 2])
+
+    def test_release_asset_download_falls_back_to_browser_url(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.update_state = {}
+        controller.window = None
+        controller.visible = False
+        fallback_response = object()
+
+        with patch(
+            "app.urllib.request.urlopen",
+            side_effect=[TimeoutError("API timeout"), fallback_response],
+        ) as urlopen:
+            response = controller._open_release_asset(
+                ["https://api.example/asset", "https://download.example/asset"],
+                "正在连接下载源",
+            )
+
+        self.assertIs(response, fallback_response)
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(urlopen.call_args_list[0].args[0].full_url, "https://api.example/asset")
+        self.assertEqual(urlopen.call_args_list[1].args[0].full_url, "https://download.example/asset")
+        self.assertEqual(urlopen.call_args_list[0].kwargs["timeout"], 20)
+
+    def test_custom_threshold_is_used_in_notification_title(self):
+        notifications = []
+        controller = app.AppController.__new__(app.AppController)
+        controller.store = SimpleNamespace(
+            get_thresholds=lambda: {"warn": 37, "danger": 18, "critical": 7},
+            alert_severity=lambda _key_id, _metric: 0,
+            set_alert_severity=lambda *_args: None,
+        )
+        controller.notify = lambda title, message, severity=0: notifications.append(
+            (title, message, severity)
+        )
+
+        controller._check_alerts(
+            "key-1",
+            "自定义密钥",
+            {"quota": {"limit": 100, "remaining": 6}},
+        )
+
+        self.assertEqual(len(notifications), 1)
+        self.assertIn("7% 严重", notifications[0][0])
+        self.assertNotIn("5%", notifications[0][0])
+        self.assertEqual(notifications[0][2], 3)
+
     @patch("app.Notification")
     def test_notify_uses_severity_icon(self, notification):
         controller = app.AppController.__new__(app.AppController)
