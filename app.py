@@ -33,7 +33,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 GITHUB_REPOSITORY = os.environ.get(
     "API_TOOLS_GITHUB_REPOSITORY", "Binceenigne/easyapitool"
@@ -48,7 +48,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "19"
+STATIC_UI_VERSION = "20"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -95,6 +95,10 @@ def normalize_title_bar_mode(mode: Any) -> str:
 def window_frame_options(title_bar_mode: Any) -> dict[str, bool]:
     original = normalize_title_bar_mode(title_bar_mode) == "original"
     return {"frameless": not original, "easy_drag": original}
+
+
+def window_min_size(title_bar_mode: Any) -> tuple[int, int]:
+    return (220, 96) if normalize_title_bar_mode(title_bar_mode) == "minimal" else (260, 120)
 
 
 class POINT(ctypes.Structure):
@@ -1915,11 +1919,13 @@ class AppController:
             "  }\n"
             "  if (-not $updated) { throw '无法替换应用文件' }\n"
             "  Remove-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue\n"
+            "  $env:PYINSTALLER_RESET_ENVIRONMENT = '1'\n"
             "  Start-Process -FilePath $Target\n"
             "  Remove-Item -LiteralPath $Log -Force -ErrorAction SilentlyContinue\n"
             "  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force\n"
             "} catch {\n"
             "  $_ | Out-String | Set-Content -LiteralPath $Log -Encoding UTF8\n"
+            "  $env:PYINSTALLER_RESET_ENVIRONMENT = '1'\n"
             "  Start-Process -FilePath $Target\n"
             "  exit 1\n"
             "}\n",
@@ -2282,6 +2288,7 @@ class AppController:
             "Set-Content -LiteralPath $Ready -Value 'ready' -Encoding ASCII\n"
             "$process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue\n"
             "if ($process) { $process | Wait-Process -ErrorAction SilentlyContinue }\n"
+            "$env:PYINSTALLER_RESET_ENVIRONMENT = '1'\n"
             "if ($SourceScript) { Start-Process -FilePath $Executable -ArgumentList @($SourceScript) }\n"
             "else { Start-Process -FilePath $Executable }\n"
             "Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force\n",
@@ -2477,6 +2484,7 @@ def main() -> None:
     controller = AppController(asset_cache)
     title_bar_mode = controller.store.get_title_bar_mode()
     frame_options = window_frame_options(title_bar_mode)
+    minimum_size = window_min_size(title_bar_mode)
     initial_page = (
         asset_cache.main_page
         if asset_cache.is_ready()
@@ -2494,7 +2502,7 @@ def main() -> None:
         js_api=WebApi(controller),
         width=920,
         height=680,
-        min_size=(260, 120),
+        min_size=minimum_size,
         resizable=True,
         frameless=frame_options["frameless"],
         easy_drag=frame_options["easy_drag"],

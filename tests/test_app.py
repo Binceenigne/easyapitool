@@ -294,6 +294,9 @@ class UtilityTests(unittest.TestCase):
             {"frameless": False, "easy_drag": True},
         )
         self.assertEqual(app.normalize_title_bar_mode("unknown"), "default")
+        self.assertEqual(app.window_min_size("default"), (260, 120))
+        self.assertEqual(app.window_min_size("minimal"), (220, 96))
+        self.assertEqual(app.window_min_size("original"), (260, 120))
     def test_semantic_version_comparison(self):
         self.assertTrue(app.is_newer_version("v1.1.0", "1.0.9"))
         self.assertFalse(app.is_newer_version("1.0", "1.0.0"))
@@ -594,7 +597,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=19">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=20">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -638,7 +641,9 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("changeTitleBarMode", page)
         self.assertIn("restartApp", page)
         self.assertIn("#widget-root.titlebar-minimal #windowTitleBar", stylesheet)
-        self.assertIn("height: 17px", stylesheet)
+        self.assertIn("height: 22px", stylesheet)
+        self.assertIn("#widget-root.titlebar-minimal #settingsPanel", stylesheet)
+        self.assertIn("top: 22px", stylesheet)
         self.assertIn("#widget-root.titlebar-original #windowTitleBar", stylesheet)
         self.assertIn("#widget-root.titlebar-original .native-resize-handle", stylesheet)
         self.assertIn("inset: 0", stylesheet)
@@ -894,6 +899,11 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("for ($attempt = 1; $attempt -le 60; $attempt++)", script)
         self.assertIn("Copy-Item -LiteralPath $Source -Destination $Target -Force", script)
         self.assertIn("Start-Process -FilePath $Target", script)
+        self.assertEqual(script.count("$env:PYINSTALLER_RESET_ENVIRONMENT = '1'"), 2)
+        self.assertLess(
+            script.index("$env:PYINSTALLER_RESET_ENVIRONMENT = '1'"),
+            script.index("Start-Process -FilePath $Target"),
+        )
         self.assertIn("-Log", popen.call_args.args[0])
         controller.exit_app.assert_called_once_with()
 
@@ -1026,6 +1036,10 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result, {"ok": True})
         self.assertIn("Wait-Process", script)
         self.assertIn("Start-Process -FilePath $Executable", script)
+        self.assertLess(
+            script.index("$env:PYINSTALLER_RESET_ENVIRONMENT = '1'"),
+            script.index("Start-Process -FilePath $Executable"),
+        )
         self.assertIn("-ProcessId", popen.call_args.args[0])
         self.assertTrue(controller.stopping.is_set())
         self.assertTrue(controller.refresh_wakeup.is_set())
