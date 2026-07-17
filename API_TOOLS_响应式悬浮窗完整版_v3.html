@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="assets/app.css?v=18">
+    <link rel="stylesheet" href="assets/app.css?v=19">
     <script defer src="vendor/lucide/lucide.min.js"></script>
     <style media="not all" data-legacy-styles-disabled>
         /* 强制无圆角 */
@@ -1281,6 +1281,28 @@
                     </div>
                 </div>
 
+                <div class="settings-group settings-title-bar">
+                    <label>标题栏样式 (TITLE BAR)</label>
+                    <div role="group" aria-label="标题栏样式">
+                        <button type="button" onclick="changeTitleBarMode('default')" id="titleBarDefault">
+                            <i data-lucide="panel-top" aria-hidden="true"></i> 默认
+                        </button>
+                        <button type="button" onclick="changeTitleBarMode('minimal')" id="titleBarMinimal">
+                            <i data-lucide="minus" aria-hidden="true"></i> 极简
+                        </button>
+                        <button type="button" onclick="changeTitleBarMode('original')" id="titleBarOriginal">
+                            <i data-lucide="app-window" aria-hidden="true"></i> 原生
+                        </button>
+                    </div>
+                    <span class="settings-help">默认使用完整自绘标题栏；极简将密钥操作收纳到半高标题栏；原生使用 Windows 标题栏。</span>
+                    <div id="titleBarRestartRow" hidden>
+                        <span>标题栏将在重启后切换</span>
+                        <button type="button" onclick="restartApp()" id="restartAppButton">
+                            <i data-lucide="rotate-cw" aria-hidden="true"></i> 重启应用
+                        </button>
+                    </div>
+                </div>
+
                 <div class="settings-group settings-app-behavior">
                     <label>应用行为 (APP BEHAVIOR)</label>
                     <div class="settings-fields">
@@ -1468,6 +1490,8 @@
             rateLimitProgressMode: 'remaining',
             appVersion: '',
             closeAction: 'ask',
+            titleBarMode: 'default',
+            activeTitleBarMode: 'default',
             startupEnabled: false,
             update: { status: 'idle', percent: 0, message: '尚未检查更新', releaseNotes: '' },
             isTabActive: true,
@@ -1512,6 +1536,12 @@
             window.appState.rateLimitProgressMode = state.rateLimitProgressMode === 'used' ? 'used' : 'remaining';
             window.appState.appVersion = state.appVersion || window.appState.appVersion;
             window.appState.closeAction = state.closeAction || 'ask';
+            window.appState.titleBarMode = ['default', 'minimal', 'original'].includes(state.titleBarMode)
+                ? state.titleBarMode
+                : 'default';
+            window.appState.activeTitleBarMode = ['default', 'minimal', 'original'].includes(state.activeTitleBarMode)
+                ? state.activeTitleBarMode
+                : window.appState.activeTitleBarMode;
             window.appState.startupEnabled = state.startupEnabled === true;
             window.appState.update = state.update || window.appState.update;
             window.appState.refreshIntervals = state.refreshIntervals || window.appState.refreshIntervals;
@@ -1540,6 +1570,8 @@
             );
             document.getElementById('closeAction').value = window.appState.closeAction;
             document.getElementById('startupEnabled').checked = window.appState.startupEnabled;
+            applyTitleBarMode(window.appState.activeTitleBarMode);
+            updateTitleBarModeControls();
             document.getElementById('settingsVersionValue').textContent = `v${window.appState.appVersion}`;
             window.applyUpdateState(window.appState.update);
             updateRefreshBadge();
@@ -1813,6 +1845,55 @@
             document.getElementById('rateModeUsed')?.classList.toggle('is-active', usedMode);
         }
 
+        function applyTitleBarMode(mode) {
+            const root = document.getElementById('widget-root');
+            const titleBar = document.getElementById('windowTitleBar');
+            const toolbar = document.getElementById('keyToolbar');
+            const controls = titleBar?.querySelector('.window-controls');
+            root.classList.toggle('titlebar-minimal', mode === 'minimal');
+            root.classList.toggle('titlebar-original', mode === 'original');
+            if (mode === 'minimal' && titleBar && toolbar && controls) {
+                titleBar.insertBefore(toolbar, controls);
+                const activeKey = getActiveKey();
+                toolbar.title = activeKey ? `当前密钥：${activeKey.name}` : '选择密钥';
+                setLucideIcon(
+                    document.querySelector('#keySelector + div [data-lucide]'),
+                    'key-round',
+                    'icon-10'
+                );
+            } else if (toolbar && titleBar?.nextElementSibling) {
+                const lastResizeHandle = document.querySelector('.resize-bottom-right');
+                lastResizeHandle?.after(toolbar);
+                toolbar.removeAttribute('title');
+                setLucideIcon(
+                    document.querySelector('#keySelector + div [data-lucide]'),
+                    'chevron-down',
+                    'icon-10'
+                );
+            }
+        }
+
+        function updateTitleBarModeControls() {
+            const selected = window.appState.titleBarMode;
+            const active = window.appState.activeTitleBarMode;
+            document.getElementById('titleBarDefault')?.classList.toggle('is-active', selected === 'default');
+            document.getElementById('titleBarMinimal')?.classList.toggle('is-active', selected === 'minimal');
+            document.getElementById('titleBarOriginal')?.classList.toggle('is-active', selected === 'original');
+            document.getElementById('titleBarRestartRow').hidden = selected === active;
+        }
+
+        async function changeTitleBarMode(mode) {
+            const previous = window.appState.titleBarMode;
+            window.appState.titleBarMode = ['minimal', 'original'].includes(mode) ? mode : 'default';
+            updateTitleBarModeControls();
+            try {
+                await updateAppPreferences(false);
+            } catch (error) {
+                window.appState.titleBarMode = previous;
+                updateTitleBarModeControls();
+            }
+        }
+
         async function changeRateLimitProgressMode(mode) {
             window.appState.rateLimitProgressMode = mode === 'used' ? 'used' : 'remaining';
             updateRateLimitModeButtons();
@@ -1890,18 +1971,32 @@
             }
         }
 
-        async function updateAppPreferences() {
+        async function updateAppPreferences(showSavedToast = true) {
             const closeAction = document.getElementById('closeAction').value;
             const startupEnabled = document.getElementById('startupEnabled').checked;
             if (!window.pywebview?.api?.update_app_preferences) return;
             try {
                 const result = await window.pywebview.api.update_app_preferences(
-                    'startup', closeAction, startupEnabled
+                    'startup', closeAction, startupEnabled, window.appState.titleBarMode
                 );
                 if (!result?.ok) throw new Error(result?.error || '保存应用设置失败');
                 if (result.state) window.applyBackendState(result.state);
-                showToast('应用设置已保存');
+                if (showSavedToast) showToast('应用设置已保存');
             } catch (error) {
+                showToast(error.message || String(error), 'error');
+                throw error;
+            }
+        }
+
+        async function restartApp() {
+            const button = document.getElementById('restartAppButton');
+            if (!window.pywebview?.api?.restart_app || button.disabled) return;
+            button.disabled = true;
+            try {
+                const result = await window.pywebview.api.restart_app();
+                if (result && !result.ok) throw new Error(result.error || '无法重启应用');
+            } catch (error) {
+                button.disabled = false;
                 showToast(error.message || String(error), 'error');
             }
         }
@@ -2336,6 +2431,9 @@
                 opt.selected = key.id === window.appState.activeKeyId;
                 selector.appendChild(opt);
             });
+            if (window.appState.activeTitleBarMode === 'minimal') {
+                document.getElementById('keyToolbar').title = `当前密钥：${activeKey.name}`;
+            }
 
             // 2. 算可用率
             const remaining = Number.isFinite(activeKey.remainingQuota) ? activeKey.remainingQuota : (activeKey.totalQuota - activeKey.usedQuota);

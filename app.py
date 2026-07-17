@@ -33,7 +33,8 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
+TITLE_BAR_MODES = {"default", "minimal", "original"}
 GITHUB_REPOSITORY = os.environ.get(
     "API_TOOLS_GITHUB_REPOSITORY", "Binceenigne/easyapitool"
 )
@@ -47,7 +48,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "18"
+STATIC_UI_VERSION = "19"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -84,6 +85,16 @@ SWP_NOSIZE = 0x0001
 SWP_NOZORDER = 0x0004
 RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 UPDATE_CHECK_INTERVAL = 7 * 24 * 60 * 60
+
+
+def normalize_title_bar_mode(mode: Any) -> str:
+    clean = str(mode or "").strip().lower()
+    return clean if clean in TITLE_BAR_MODES else "default"
+
+
+def window_frame_options(title_bar_mode: Any) -> dict[str, bool]:
+    original = normalize_title_bar_mode(title_bar_mode) == "original"
+    return {"frameless": not original, "easy_drag": original}
 
 
 class POINT(ctypes.Structure):
@@ -1276,6 +1287,23 @@ class Store:
             )
         return clean
 
+    def get_title_bar_mode(self) -> str:
+        with self.lock, self.connect() as db:
+            row = db.execute(
+                "SELECT value FROM settings WHERE name='title_bar_mode'"
+            ).fetchone()
+        return normalize_title_bar_mode(row["value"] if row else None)
+
+    def set_title_bar_mode(self, mode: Any) -> str:
+        clean = normalize_title_bar_mode(mode)
+        with self.lock, self.connect() as db:
+            db.execute(
+                """INSERT INTO settings(name,value) VALUES('title_bar_mode',?)
+                ON CONFLICT(name) DO UPDATE SET value=excluded.value""",
+                (clean,),
+            )
+        return clean
+
     def get_last_update_check(self) -> float:
         with self.lock, self.connect() as db:
             row = db.execute(
@@ -1367,6 +1395,7 @@ class AppController:
         trace_startup("controller_init_started")
         self.asset_cache = asset_cache or StaticAssetCache()
         self.store = Store(app_data_dir() / "api_tools.db")
+        self.active_title_bar_mode = self.store.get_title_bar_mode()
         self.client = EasyClinClient()
         self.store.import_environment_key()
         self.window: webview.Window | None = None
@@ -2160,6 +2189,8 @@ class AppController:
                 else ""
             ),
             "closeAction": self.store.get_close_action(),
+            "titleBarMode": self.store.get_title_bar_mode(),
+            "activeTitleBarMode": self.active_title_bar_mode,
             "startupEnabled": startup_is_enabled(),
             "update": dict(self.update_state),
             "refreshIntervals": {
@@ -2217,18 +2248,67 @@ class AppController:
         return {"ok": True, "refreshIntervals": intervals, "state": self.get_state()}
 
     def update_app_preferences(
-        self, update_frequency: Any, close_action: Any, startup_enabled: Any
+        self,
+        update_frequency: Any,
+        close_action: Any,
+        startup_enabled: Any,
+        title_bar_mode: Any = None,
     ) -> dict[str, Any]:
         frequency = self.store.set_update_frequency(update_frequency)
         action = self.store.set_close_action(close_action)
+        title_bar = (
+            self.store.get_title_bar_mode()
+            if title_bar_mode is None
+            else self.store.set_title_bar_mode(title_bar_mode)
+        )
         startup = set_startup_enabled(bool(startup_enabled))
         return {
             "ok": True,
             "updateFrequency": frequency,
             "closeAction": action,
+            "titleBarMode": title_bar,
             "startupEnabled": startup,
             "state": self.get_state(),
         }
+
+    def restart_app(self) -> dict[str, Any]:
+        script = app_data_dir() / "restart-app.ps1"
+        ready = app_data_dir() / "restart.ready"
+        ready.unlink(missing_ok=True)
+        source_script = "" if getattr(sys, "frozen", False) else str(Path(__file__).resolve())
+        script.write_text(
+            "param([int]$ProcessId,[string]$Executable,[string]$SourceScript,[string]$Ready)\n"
+            "$ErrorActionPreference = 'Stop'\n"
+            "Set-Content -LiteralPath $Ready -Value 'ready' -Encoding ASCII\n"
+            "$process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue\n"
+            "if ($process) { $process | Wait-Process -ErrorAction SilentlyContinue }\n"
+            "if ($SourceScript) { Start-Process -FilePath $Executable -ArgumentList @($SourceScript) }\n"
+            "else { Start-Process -FilePath $Executable }\n"
+            "Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force\n",
+            encoding="utf-8",
+        )
+        restarter = subprocess.Popen(
+            [
+                "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-WindowStyle", "Hidden", "-File", str(script),
+                "-ProcessId", str(os.getpid()), "-Executable", str(Path(sys.executable).resolve()),
+                "-SourceScript", source_script, "-Ready", str(ready),
+            ],
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        deadline = time.monotonic() + 5
+        while not ready.exists() and restarter.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not ready.exists():
+            raise RuntimeError("重启程序启动失败")
+        ready.unlink(missing_ok=True)
+        self.stopping.set()
+        self.refresh_wakeup.set()
+        if self.tray:
+            self.tray.stop()
+        if self.window:
+            self.window.destroy()
+        return {"ok": True}
 
     def window_action(self, action: str) -> dict[str, Any]:
         if not self.window:
@@ -2334,11 +2414,18 @@ class WebApi:
         return self._controller.update_refresh_intervals(foreground, background)
 
     def update_app_preferences(
-        self, update_frequency: Any, close_action: Any, startup_enabled: Any
+        self,
+        update_frequency: Any,
+        close_action: Any,
+        startup_enabled: Any,
+        title_bar_mode: Any = None,
     ) -> dict[str, Any]:
         return self._controller.update_app_preferences(
-            update_frequency, close_action, startup_enabled
+            update_frequency, close_action, startup_enabled, title_bar_mode
         )
+
+    def restart_app(self) -> dict[str, Any]:
+        return self._controller.restart_app()
 
     def check_for_updates(self) -> dict[str, Any]:
         return self._controller.check_for_updates(manual=True)
@@ -2388,6 +2475,8 @@ def main() -> None:
         return
     asset_cache = StaticAssetCache()
     controller = AppController(asset_cache)
+    title_bar_mode = controller.store.get_title_bar_mode()
+    frame_options = window_frame_options(title_bar_mode)
     initial_page = (
         asset_cache.main_page
         if asset_cache.is_ready()
@@ -2407,8 +2496,8 @@ def main() -> None:
         height=680,
         min_size=(260, 120),
         resizable=True,
-        frameless=True,
-        easy_drag=False,
+        frameless=frame_options["frameless"],
+        easy_drag=frame_options["easy_drag"],
         shadow=True,
         background_color="#0f172a",
     )

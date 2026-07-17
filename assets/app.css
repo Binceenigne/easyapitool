@@ -462,6 +462,123 @@ img, svg {
   font-size: 10px;
 }
 
+#widget-root.titlebar-minimal #windowTitleBar {
+  flex-basis: 17px !important;
+  height: 17px !important;
+  min-height: 17px !important;
+  max-height: 17px !important;
+  padding-left: 3px !important;
+}
+#widget-root.titlebar-minimal #windowTitleIdentity {
+  display: none;
+}
+#widget-root.titlebar-minimal #keyToolbar {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  width: auto;
+  height: 16px;
+  min-height: 16px;
+  padding: 0 !important;
+  gap: 1px;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+}
+#widget-root.titlebar-minimal #keyToolbar > div:first-child {
+  position: relative;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  gap: 0;
+}
+#widget-root.titlebar-minimal #keyToolbar > div:first-child > div {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+#widget-root.titlebar-minimal .toolbar-label,
+#widget-root.titlebar-minimal .toolbar-button-text {
+  display: none;
+}
+#widget-root.titlebar-minimal #keySelector {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0;
+}
+#widget-root.titlebar-minimal #keySelector + div {
+  right: 3px;
+  color: var(--brand);
+}
+#widget-root.titlebar-minimal .toolbar-actions {
+  gap: 1px;
+}
+#widget-root.titlebar-minimal .toolbar-action-button,
+#widget-root.titlebar-minimal .toolbar-action-button:first-child,
+#widget-root.titlebar-minimal .toolbar-action-button:nth-child(3) {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+}
+#widget-root.titlebar-minimal .toolbar-action-button:nth-child(2) {
+  border: 0;
+  background: transparent;
+  color: var(--brand);
+}
+#widget-root.titlebar-minimal .toolbar-action-button [data-lucide] {
+  flex-basis: 9px;
+  width: 9px;
+  height: 9px;
+  min-width: 9px;
+  min-height: 9px;
+}
+#widget-root.titlebar-minimal .window-controls {
+  height: 16px !important;
+  min-height: 16px !important;
+  max-height: 16px !important;
+}
+#widget-root.titlebar-minimal .window-control {
+  flex-basis: 26px !important;
+  width: 26px !important;
+  min-width: 26px !important;
+  max-width: 26px !important;
+  height: 16px !important;
+  min-height: 16px !important;
+  max-height: 16px !important;
+}
+#widget-root.titlebar-minimal .window-control .titlebar-icon,
+#widget-root.titlebar-minimal .window-control [data-lucide] {
+  flex-basis: 9px;
+  width: 9px;
+  height: 9px;
+  min-width: 9px;
+  min-height: 9px;
+  max-width: 9px;
+  max-height: 9px;
+}
+#widget-root.titlebar-minimal #settingsPanel {
+  top: 17px;
+}
+
+#widget-root.titlebar-original #windowTitleBar,
+#widget-root.titlebar-original .native-resize-handle {
+  display: none !important;
+}
+#widget-root.titlebar-original #settingsPanel {
+  top: 0;
+}
+
 /* Add-key form */
 #keyFormPanel {
   flex: 0 0 auto;
@@ -1474,6 +1591,33 @@ html.dark #avgMinVal {
 .settings-progress-mode > div,
 .refresh-cards {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-title-bar > div:first-of-type {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settings-title-bar > #titleBarRestartRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border: 1px solid rgba(99, 102, 241, 0.28);
+  background: rgba(99, 102, 241, 0.08);
+  color: var(--text-soft);
+  font-size: var(--fs-9, 9px);
+}
+
+.settings-title-bar > #titleBarRestartRow[hidden] {
+  display: none;
+}
+
+.settings-title-bar > #titleBarRestartRow button {
+  flex: 0 0 auto;
+  min-height: 24px;
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
 }
 
 .settings-fields {

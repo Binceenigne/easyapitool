@@ -172,6 +172,14 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.set_update_frequency("invalid"), "startup")
         self.assertEqual(self.store.set_close_action("invalid"), "ask")
 
+    def test_title_bar_mode_is_normalized_and_persisted(self):
+        self.assertEqual(self.store.get_title_bar_mode(), "default")
+        self.assertEqual(self.store.set_title_bar_mode("minimal"), "minimal")
+        self.assertEqual(self.store.get_title_bar_mode(), "minimal")
+        self.assertEqual(self.store.set_title_bar_mode("original"), "original")
+        self.assertEqual(self.store.get_title_bar_mode(), "original")
+        self.assertEqual(self.store.set_title_bar_mode("invalid"), "default")
+
     def test_ignored_update_version_is_normalized_and_persisted(self):
         self.assertEqual(self.store.get_ignored_update_version(), "")
         self.assertEqual(self.store.set_ignored_update_version("v1.2.3"), "1.2.3")
@@ -271,6 +279,21 @@ class StoreTests(unittest.TestCase):
 
 
 class UtilityTests(unittest.TestCase):
+
+    def test_window_frame_options_use_native_frame_only_for_original_mode(self):
+        self.assertEqual(
+            app.window_frame_options("default"),
+            {"frameless": True, "easy_drag": False},
+        )
+        self.assertEqual(
+            app.window_frame_options("minimal"),
+            {"frameless": True, "easy_drag": False},
+        )
+        self.assertEqual(
+            app.window_frame_options("original"),
+            {"frameless": False, "easy_drag": True},
+        )
+        self.assertEqual(app.normalize_title_bar_mode("unknown"), "default")
     def test_semantic_version_comparison(self):
         self.assertTrue(app.is_newer_version("v1.1.0", "1.0.9"))
         self.assertFalse(app.is_newer_version("1.0", "1.0.0"))
@@ -571,7 +594,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=18">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=19">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -608,6 +631,16 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("@mixin fixed-square", scss_source)
         self.assertIn("#usageTrendPlot", stylesheet)
         self.assertIn("#trendNodeLayer", stylesheet)
+        self.assertIn('id="titleBarDefault"', page)
+        self.assertIn('id="titleBarMinimal"', page)
+        self.assertIn('id="titleBarOriginal"', page)
+        self.assertIn('id="titleBarRestartRow"', page)
+        self.assertIn("changeTitleBarMode", page)
+        self.assertIn("restartApp", page)
+        self.assertIn("#widget-root.titlebar-minimal #windowTitleBar", stylesheet)
+        self.assertIn("height: 17px", stylesheet)
+        self.assertIn("#widget-root.titlebar-original #windowTitleBar", stylesheet)
+        self.assertIn("#widget-root.titlebar-original .native-resize-handle", stylesheet)
         self.assertIn("inset: 0", stylesheet)
         self.assertIn("width: 6.5px", stylesheet)
         self.assertIn("height: 6.5px", stylesheet)
@@ -968,6 +1001,51 @@ class ControllerTests(unittest.TestCase):
 
         controller.exit_app.assert_not_called()
 
+    def test_restart_app_waits_for_ready_before_closing_current_window(self):
+        mock = __import__("unittest.mock").mock
+        controller = app.AppController.__new__(app.AppController)
+        controller.stopping = __import__("threading").Event()
+        controller.refresh_wakeup = __import__("threading").Event()
+        controller.tray = SimpleNamespace(stop=mock.Mock())
+        controller.window = SimpleNamespace(destroy=mock.Mock())
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+
+            def start_restarter(arguments, **_kwargs):
+                (root / "restart.ready").write_text("ready", encoding="ascii")
+                return SimpleNamespace(poll=lambda: None, arguments=arguments)
+
+            with patch("app.app_data_dir", return_value=root), patch(
+                "app.subprocess.Popen", side_effect=start_restarter
+            ) as popen:
+                result = controller.restart_app()
+
+            script = (root / "restart-app.ps1").read_text(encoding="utf-8")
+
+        self.assertEqual(result, {"ok": True})
+        self.assertIn("Wait-Process", script)
+        self.assertIn("Start-Process -FilePath $Executable", script)
+        self.assertIn("-ProcessId", popen.call_args.args[0])
+        self.assertTrue(controller.stopping.is_set())
+        self.assertTrue(controller.refresh_wakeup.is_set())
+        controller.tray.stop.assert_called_once_with()
+        controller.window.destroy.assert_called_once_with()
+
+    def test_legacy_app_preference_call_preserves_title_bar_mode(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.store = SimpleNamespace(
+            set_update_frequency=lambda value: value,
+            set_close_action=lambda value: value,
+            get_title_bar_mode=lambda: "minimal",
+        )
+        controller.get_state = lambda: {"titleBarMode": "minimal"}
+
+        with patch("app.set_startup_enabled", return_value=False):
+            result = controller.update_app_preferences("startup", "ask", False)
+
+        self.assertEqual(result["titleBarMode"], "minimal")
+
     def test_updater_replaces_target_when_original_process_is_already_gone(self):
         controller = app.AppController.__new__(app.AppController)
         controller.exit_app = __import__("unittest.mock").mock.Mock()
@@ -1072,6 +1150,7 @@ class ControllerTests(unittest.TestCase):
                 "open_devtools",
                 "refresh_now",
                 "report_startup",
+                "restart_app",
                 "restart_update",
                 "resolve_close_action",
                 "update_app_preferences",
@@ -1132,6 +1211,7 @@ class ControllerTests(unittest.TestCase):
         controller.next_refresh_at = 1000
         controller.foreground_interval = 60
         controller.background_interval = 300
+        controller.active_title_bar_mode = "minimal"
         controller.update_state = {
             "status": "idle",
             "percent": 0,
@@ -1144,6 +1224,7 @@ class ControllerTests(unittest.TestCase):
             get_rate_limit_progress_mode=lambda: "used",
             get_update_frequency=lambda: "startup",
             get_close_action=lambda: "ask",
+            get_title_bar_mode=lambda: "minimal",
             get_secret=lambda _key_id: "test-secret-value",
             rates=lambda _key_id: {
                 "speed10m": 0,
@@ -1161,6 +1242,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(state["keys"][0]["remainingQuota"], 150)
         self.assertEqual(state["refreshIntervals"], {"foreground": 60, "background": 300})
         self.assertEqual(state["rateLimitProgressMode"], "used")
+        self.assertEqual(state["titleBarMode"], "minimal")
+        self.assertEqual(state["activeTitleBarMode"], "minimal")
 
     def test_maximized_title_drag_uses_async_restore_without_js_reentry(self):
         class FakeUser32:
