@@ -597,7 +597,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=20">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=21">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -606,7 +606,16 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("rates?.tenMinute2h", page)
         self.assertIn("openModelModal", page)
         self.assertIn('id="keyToolbar"', page)
-        self.assertIn("#keySelector", stylesheet)
+        self.assertIn('id="keySwitcherButton"', page)
+        self.assertIn('id="keySwitcherMenu" role="listbox"', page)
+        self.assertNotIn('<select id="keySelector"', page)
+        self.assertIn("#keySwitcherButton", stylesheet)
+        self.assertIn("#keySwitcherMenu", stylesheet)
+        self.assertIn("handleKeySwitcherOptionKeydown", page)
+        self.assertIn("keySwitcherStatusClass", page)
+        self.assertIn(".key-switcher-status.is-error", stylesheet)
+        self.assertIn("set_window_background(window.__pendingNativeTheme)", page)
+        self.assertIn("set_window_background(normalizedMode)", page)
         self.assertIn('id="dashboardMetrics"', page)
         self.assertIn('class="metric-cell metric-primary metric-today"', page)
         self.assertIn('class="metric-cell metric-primary metric-expiry"', page)
@@ -641,9 +650,9 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("changeTitleBarMode", page)
         self.assertIn("restartApp", page)
         self.assertIn("#widget-root.titlebar-minimal #windowTitleBar", stylesheet)
-        self.assertIn("height: 22px", stylesheet)
+        self.assertIn("height: 24px", stylesheet)
         self.assertIn("#widget-root.titlebar-minimal #settingsPanel", stylesheet)
-        self.assertIn("top: 22px", stylesheet)
+        self.assertIn("top: 24px", stylesheet)
         self.assertIn("#widget-root.titlebar-original #windowTitleBar", stylesheet)
         self.assertIn("#widget-root.titlebar-original .native-resize-handle", stylesheet)
         self.assertIn("inset: 0", stylesheet)
@@ -752,13 +761,152 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('data-lucide="x"', page)
         self.assertIn('class="titlebar-icon"', page)
         self.assertIn("flex: 0 0 33px", stylesheet)
+        self.assertIn("#windowTitleBar {\n  z-index: auto;", stylesheet)
         self.assertIn("width: 46px", stylesheet)
+        self.assertIn(".window-controls {\n  position: relative;\n  z-index: 101;", stylesheet)
         self.assertIn("font-size: 12px", stylesheet)
         self.assertIn("stroke-width: 1.5 !important", stylesheet)
         self.assertIn("setLucideIcon(icon, isMaximized ? 'copy' : 'square', 'titlebar-icon')", page)
 
 
 class ControllerTests(unittest.TestCase):
+    def test_minimize_posts_native_message_without_sync_webview_call(self):
+        mock = __import__("unittest.mock").mock
+        controller = app.AppController.__new__(app.AppController)
+        controller.window = SimpleNamespace(minimize=mock.Mock())
+        controller.visible = True
+        controller.maximized = False
+        controller.refresh_wakeup = __import__("threading").Event()
+
+        with patch.object(controller, "_window_handle", return_value=1234), patch.object(
+            app.user32, "PostMessageW", return_value=True
+        ) as post_message:
+            result = controller.window_action("minimize")
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(controller.visible)
+        self.assertTrue(controller.refresh_wakeup.is_set())
+        post_message.assert_called_once_with(1234, app.WM_SYSCOMMAND, app.SC_MINIMIZE, 0)
+        controller.window.minimize.assert_not_called()
+
+    def test_minimized_window_restore_skips_expensive_ui_state_push(self):
+        mock = __import__("unittest.mock").mock
+        controller = app.AppController.__new__(app.AppController)
+        controller.visible = False
+        controller.maximized = False
+        controller.refresh_wakeup = __import__("threading").Event()
+        controller._set_window_corner = mock.Mock()
+        controller._push_window_state = mock.Mock()
+
+        controller._on_restored()
+
+        self.assertTrue(controller.visible)
+        self.assertFalse(controller.maximized)
+        self.assertTrue(controller.refresh_wakeup.is_set())
+        controller._set_window_corner.assert_not_called()
+        controller._push_window_state.assert_not_called()
+
+    def test_maximized_window_restore_still_updates_window_state(self):
+        mock = __import__("unittest.mock").mock
+        controller = app.AppController.__new__(app.AppController)
+        controller.visible = True
+        controller.maximized = True
+        controller.refresh_wakeup = __import__("threading").Event()
+        controller._set_window_corner = mock.Mock()
+        controller._push_window_state = mock.Mock()
+
+        controller._on_restored()
+
+        self.assertFalse(controller.maximized)
+        controller._set_window_corner.assert_called_once_with(False)
+        controller._push_window_state.assert_called_once_with()
+
+    def test_tray_close_action_defers_window_hide_outside_api_callback(self):
+        mock = __import__("unittest.mock").mock
+        controller = app.AppController.__new__(app.AppController)
+        controller.hide_window = mock.Mock()
+        scheduled = []
+
+        class DeferredTimer:
+            def __init__(self, delay, callback):
+                scheduled.append((delay, callback))
+
+            def start(self):
+                return None
+
+        with patch("app.threading.Timer", DeferredTimer):
+            result = controller._handle_close_request("tray")
+
+        self.assertEqual(result, "tray")
+        controller.hide_window.assert_not_called()
+        self.assertEqual(scheduled, [(0.01, controller.hide_window)])
+
+    def test_hide_window_posts_to_native_ui_thread_without_sync_webview_hide(self):
+        mock = __import__("unittest.mock").mock
+        native_form = SimpleNamespace(BeginInvoke=mock.Mock(), Hide=mock.Mock())
+        controller = app.AppController.__new__(app.AppController)
+        controller.window = SimpleNamespace(native=native_form, hide=mock.Mock())
+        controller.visible = True
+        controller.refresh_wakeup = __import__("threading").Event()
+
+        fake_system = SimpleNamespace(Action=lambda callback: callback)
+        with patch.dict(sys.modules, {"System": fake_system}):
+            controller.hide_window()
+
+        self.assertFalse(controller.visible)
+        self.assertTrue(controller.refresh_wakeup.is_set())
+        native_form.BeginInvoke.assert_called_once_with(native_form.Hide)
+        controller.window.hide.assert_not_called()
+
+    def test_window_background_matches_theme_without_blocking_ui_thread(self):
+        mock = __import__("unittest.mock").mock
+        native_webview = SimpleNamespace(DefaultBackgroundColor=None)
+        native_form = SimpleNamespace(
+            BackColor=None,
+            webview=native_webview,
+            BeginInvoke=mock.Mock(side_effect=lambda callback: callback()),
+        )
+        controller = app.AppController.__new__(app.AppController)
+        controller.window = SimpleNamespace(native=native_form)
+        fake_system = SimpleNamespace(Action=lambda callback: callback)
+        fake_drawing = SimpleNamespace(
+            Color=SimpleNamespace(FromArgb=lambda *channels: channels),
+            ColorTranslator=SimpleNamespace(FromHtml=lambda color: color),
+        )
+
+        with patch.dict(sys.modules, {"System": fake_system, "System.Drawing": fake_drawing}):
+            light_result = controller.set_window_background("light")
+            light_back_color = native_form.BackColor
+            light_webview_color = native_webview.DefaultBackgroundColor
+            dark_result = controller.set_window_background("dark")
+
+        self.assertEqual(light_result, {"ok": True, "color": "#ffffff"})
+        self.assertEqual(light_back_color, "#ffffff")
+        self.assertEqual(light_webview_color, (255, 255, 255, 255))
+        self.assertEqual(dark_result, {"ok": True, "color": "#020617"})
+        self.assertEqual(native_form.BackColor, "#020617")
+        self.assertEqual(native_webview.DefaultBackgroundColor, (255, 2, 6, 23))
+        self.assertEqual(native_form.BeginInvoke.call_count, 2)
+
+    def test_start_workers_confirms_restarted_application_is_ready(self):
+        mock = __import__("unittest.mock").mock
+        controller = app.AppController.__new__(app.AppController)
+        controller.window = None
+        controller._set_window_corner = mock.Mock()
+        controller.check_for_updates = mock.Mock()
+
+        with tempfile.TemporaryDirectory() as temp:
+            ready = Path(temp) / "update-restarted.ready"
+            controller.restart_ready_path = str(ready)
+            with patch("app.threading.Thread") as thread, patch("app.trace_startup"):
+                controller.start_workers()
+
+            self.assertEqual(ready.read_text(encoding="ascii"), str(__import__("os").getpid()))
+
+        self.assertEqual(thread.call_count, 3)
+        self.assertEqual(thread.return_value.start.call_count, 3)
+        controller.check_for_updates.assert_called_once_with(manual=False)
+
     def test_automatic_update_check_respects_ignored_version(self):
         with tempfile.TemporaryDirectory() as temp:
             controller = app.AppController.__new__(app.AppController)
@@ -893,17 +1041,24 @@ class ControllerTests(unittest.TestCase):
 
             script = (Path(temp) / "apply-update.ps1").read_text(encoding="utf-8")
 
-        self.assertIn("Get-Process -Id $ProcessId -ErrorAction SilentlyContinue", script)
+        self.assertIn("Get-Process -Id $Id -ErrorAction SilentlyContinue", script)
         self.assertIn("Set-Content -LiteralPath $Ready", script)
         self.assertIn("if ($process)", script)
+        self.assertIn("Wait-ForProcessExit $ProcessId", script)
+        self.assertIn("Wait-ForProcessExit $BootloaderProcessId", script)
         self.assertIn("for ($attempt = 1; $attempt -le 60; $attempt++)", script)
         self.assertIn("Copy-Item -LiteralPath $Source -Destination $Target -Force", script)
         self.assertIn("Start-Process -FilePath $Target", script)
-        self.assertEqual(script.count("$env:PYINSTALLER_RESET_ENVIRONMENT = '1'"), 2)
+        self.assertIn("$env:API_TOOLS_RESTART_READY = $Restarted", script)
+        self.assertIn("Test-Path -LiteralPath $Restarted", script)
+        self.assertIn("for ($launchAttempt = 1; $launchAttempt -le 2; $launchAttempt++)", script)
+        self.assertEqual(script.count("$env:PYINSTALLER_RESET_ENVIRONMENT = '1'"), 1)
         self.assertLess(
             script.index("$env:PYINSTALLER_RESET_ENVIRONMENT = '1'"),
             script.index("Start-Process -FilePath $Target"),
         )
+        self.assertIn("-BootloaderProcessId", popen.call_args.args[0])
+        self.assertIn("-Restarted", popen.call_args.args[0])
         self.assertIn("-Log", popen.call_args.args[0])
         controller.exit_app.assert_called_once_with()
 
@@ -1069,7 +1224,12 @@ class ControllerTests(unittest.TestCase):
             target = root / "API_TOOLS.cmd"
             downloaded = root / "API_TOOLS-new.cmd"
             target.write_text("@echo off\r\nrem old-version\r\n", encoding="ascii")
-            downloaded.write_text("@echo off\r\nrem new-version\r\n", encoding="ascii")
+            downloaded.write_text(
+                "@echo off\r\n"
+                "rem new-version\r\n"
+                "if defined API_TOOLS_RESTART_READY echo ready>\"%API_TOOLS_RESTART_READY%\"\r\n",
+                encoding="ascii",
+            )
             processes = []
             real_popen = __import__("subprocess").Popen
 
@@ -1167,6 +1327,7 @@ class ControllerTests(unittest.TestCase):
                 "restart_app",
                 "restart_update",
                 "resolve_close_action",
+                "set_window_background",
                 "update_app_preferences",
                 "update_refresh_intervals",
                 "update_rate_limit_progress_mode",

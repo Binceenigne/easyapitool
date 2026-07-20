@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="assets/app.css?v=20">
+    <link rel="stylesheet" href="assets/app.css?v=21">
     <script defer src="vendor/lucide/lucide.min.js"></script>
     <style media="not all" data-legacy-styles-disabled>
         /* 强制无圆角 */
@@ -256,14 +256,14 @@
         #keyToolbar .toolbar-label { font-size: 9px !important; }
         #keyToolbar .toolbar-button-text { font-size: 10px !important; }
 
-        #keySelector,
+        #keySwitcherButton,
         .toolbar-action-button {
             height: 22px;
             min-height: 22px;
             line-height: 1;
         }
 
-        #keySelector { font-size: 12px !important; }
+        #keySwitcherButton { font-size: 12px !important; }
 
         .toolbar-action-button [data-lucide] {
             width: 11px;
@@ -857,13 +857,12 @@
         <div id="keyToolbar">
             <div>
                 <span class="toolbar-label">密钥:</span>
-                <div>
-                    <select id="keySelector" onchange="selectKey(this.value)">
-                        <!-- 动态加载 -->
-                    </select>
-                    <div>
-                        <i data-lucide="chevron-down" class="icon-10" aria-hidden="true"></i>
-                    </div>
+                <div id="keySwitcher">
+                    <button type="button" id="keySwitcherButton" aria-haspopup="listbox" aria-expanded="false" aria-controls="keySwitcherMenu" onclick="toggleKeySwitcher()" onkeydown="handleKeySwitcherButtonKeydown(event)" title="切换密钥">
+                        <span class="key-switcher-status" aria-hidden="true"></span>
+                        <span id="keySwitcherLabel">暂无密钥</span>
+                        <i id="keySwitcherChevron" data-lucide="chevron-down" class="icon-10" aria-hidden="true"></i>
+                    </button>
                 </div>
             </div>
 
@@ -884,6 +883,8 @@
                 </button>
             </div>
         </div>
+
+        <div id="keySwitcherMenu" role="listbox" aria-label="选择密钥" hidden></div>
 
         <!-- 添加密钥面板 (在小窗口高度下自适应收纳) -->
         <div id="keyFormPanel" class="is-hidden">
@@ -1638,6 +1639,12 @@
 
             runAuthAndInitialize();
 
+            window.addEventListener('pywebviewready', () => {
+                if (window.__pendingNativeTheme) {
+                    window.pywebview?.api?.set_window_background(window.__pendingNativeTheme);
+                }
+            }, { once: true });
+
             const beginWindowDrag = event => {
                 if (event.button !== 0 || event.target.closest('button, input, select, textarea, .window-controls')) return;
                 event.preventDefault();
@@ -1668,17 +1675,24 @@
 
             document.addEventListener('keydown', event => {
                 if (event.key === 'Escape') {
+                    closeKeySwitcher();
                     closeModelModal();
                     closeUpdateModal();
                 }
                 handleDevToolsSequence(event);
+            });
+            document.addEventListener('pointerdown', event => {
+                if (!event.target.closest('#keySwitcher, #keySwitcherMenu')) closeKeySwitcher();
             });
             
             // 实时倒计时
             setInterval(updateClockCountdowns, 1000);
             
             // 响应式高宽监测
-            window.addEventListener('resize', handleResponsiveLayout, { passive: true });
+            window.addEventListener('resize', () => {
+                handleResponsiveLayout();
+                positionKeySwitcherMenu();
+            }, { passive: true });
             if ('ResizeObserver' in window) {
                 const rootResizeObserver = new ResizeObserver(handleResponsiveLayout);
                 rootResizeObserver.observe(document.getElementById('widget-root'));
@@ -1770,7 +1784,143 @@
 
         function selectKey(id) {
             window.appState.activeKeyId = id;
+            closeKeySwitcher();
             updateUI();
+        }
+
+        function closeKeySwitcher() {
+            const button = document.getElementById('keySwitcherButton');
+            const menu = document.getElementById('keySwitcherMenu');
+            if (!button || !menu) return;
+            menu.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+            button.classList.remove('is-open');
+            const icon = window.appState.activeTitleBarMode === 'minimal' ? 'key-round' : 'chevron-down';
+            setLucideIcon(document.getElementById('keySwitcherChevron'), icon, 'icon-10');
+        }
+
+        function positionKeySwitcherMenu() {
+            const button = document.getElementById('keySwitcherButton');
+            const menu = document.getElementById('keySwitcherMenu');
+            if (!button || !menu || menu.hidden) return;
+            const rect = button.getBoundingClientRect();
+            const minimal = window.appState.activeTitleBarMode === 'minimal';
+            const width = minimal
+                ? Math.min(220, Math.max(150, window.innerWidth - 12))
+                : Math.min(320, Math.max(rect.width, 180));
+            const left = Math.min(Math.max(6, rect.left), Math.max(6, window.innerWidth - width - 6));
+            menu.style.left = `${left}px`;
+            menu.style.width = `${width}px`;
+            const menuHeight = menu.offsetHeight;
+            const below = rect.bottom + 4;
+            const top = below + menuHeight <= window.innerHeight - 6
+                ? below
+                : Math.max(6, rect.top - menuHeight - 4);
+            menu.style.top = `${top}px`;
+        }
+
+        function focusKeySwitcherOption(direction = 0) {
+            const options = [...document.querySelectorAll('#keySwitcherMenu [role="option"]')];
+            if (!options.length) return;
+            const current = options.indexOf(document.activeElement);
+            const selected = options.findIndex(option => option.getAttribute('aria-selected') === 'true');
+            const base = current >= 0 ? current : Math.max(0, selected);
+            options[(base + direction + options.length) % options.length].focus();
+        }
+
+        function openKeySwitcher(focusDirection = 0) {
+            const button = document.getElementById('keySwitcherButton');
+            const menu = document.getElementById('keySwitcherMenu');
+            if (!button || !menu || button.disabled) return;
+            renderKeySwitcher();
+            menu.hidden = false;
+            button.setAttribute('aria-expanded', 'true');
+            button.classList.add('is-open');
+            const icon = window.appState.activeTitleBarMode === 'minimal' ? 'key-round' : 'chevron-up';
+            setLucideIcon(document.getElementById('keySwitcherChevron'), icon, 'icon-10');
+            positionKeySwitcherMenu();
+            if (focusDirection) requestAnimationFrame(() => focusKeySwitcherOption(focusDirection));
+        }
+
+        function toggleKeySwitcher() {
+            const menu = document.getElementById('keySwitcherMenu');
+            if (menu?.hidden) openKeySwitcher();
+            else closeKeySwitcher();
+        }
+
+        function handleKeySwitcherButtonKeydown(event) {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                openKeySwitcher(event.key === 'ArrowDown' ? 1 : -1);
+            } else if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggleKeySwitcher();
+            }
+        }
+
+        function handleKeySwitcherOptionKeydown(event) {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                focusKeySwitcherOption(event.key === 'ArrowDown' ? 1 : -1);
+            } else if (event.key === 'Home' || event.key === 'End') {
+                event.preventDefault();
+                const options = [...document.querySelectorAll('#keySwitcherMenu [role="option"]')];
+                options[event.key === 'Home' ? 0 : options.length - 1]?.focus();
+            } else if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                const keyId = event.currentTarget.dataset.keyId;
+                const key = window.appState.keys.find(item => String(item.id) === keyId);
+                if (key) selectKey(key.id);
+                document.getElementById('keySwitcherButton')?.focus();
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                closeKeySwitcher();
+                document.getElementById('keySwitcherButton')?.focus();
+            }
+        }
+
+        function renderKeySwitcher() {
+            const menu = document.getElementById('keySwitcherMenu');
+            const button = document.getElementById('keySwitcherButton');
+            const label = document.getElementById('keySwitcherLabel');
+            if (!menu || !button || !label) return;
+            const activeKey = getActiveKey();
+            label.textContent = activeKey?.name || '暂无密钥';
+            button.disabled = !window.appState.keys.length;
+            button.title = activeKey ? `当前密钥：${activeKey.name}` : '暂无密钥';
+            const buttonStatus = button.querySelector('.key-switcher-status');
+            if (buttonStatus) buttonStatus.className = `key-switcher-status ${keySwitcherStatusClass(activeKey)}`;
+            menu.replaceChildren();
+            window.appState.keys.forEach(key => {
+                const option = document.createElement('button');
+                const selected = key.id === window.appState.activeKeyId;
+                option.type = 'button';
+                option.className = 'key-switcher-option';
+                option.setAttribute('role', 'option');
+                option.setAttribute('aria-selected', String(selected));
+                option.dataset.keyId = String(key.id);
+                option.onclick = () => selectKey(key.id);
+                option.onkeydown = handleKeySwitcherOptionKeydown;
+                const status = document.createElement('span');
+                status.className = `key-switcher-status ${keySwitcherStatusClass(key)}`;
+                status.setAttribute('aria-hidden', 'true');
+                const text = document.createElement('span');
+                text.className = 'key-switcher-option-name';
+                text.textContent = key.name;
+                const check = document.createElement('i');
+                check.setAttribute('data-lucide', selected ? 'check' : 'circle');
+                check.setAttribute('aria-hidden', 'true');
+                option.append(status, text, check);
+                menu.append(option);
+            });
+            renderLucideIcons();
+        }
+
+        function keySwitcherStatusClass(key) {
+            const status = String(key?.status || '').toLowerCase();
+            if (status === 'active') return 'is-active';
+            if (['error', 'disabled', 'invalid'].includes(status)) return 'is-error';
+            return 'is-unknown';
         }
 
         const DEVTOOLS_SEQUENCE = 'ddjjyyxx';
@@ -1825,8 +1975,9 @@
             const html = document.documentElement;
             const btnLight = document.getElementById('themeBtnLight');
             const btnDark = document.getElementById('themeBtnDark');
+            const normalizedMode = mode === 'light' ? 'light' : 'dark';
 
-            if (mode === 'light') {
+            if (normalizedMode === 'light') {
                 html.classList.remove('dark');
                 localStorage.setItem('theme', 'light');
                 btnLight.classList.add('is-active');
@@ -1837,6 +1988,8 @@
                 btnDark.classList.add('is-active');
                 btnLight.classList.remove('is-active');
             }
+            window.__pendingNativeTheme = normalizedMode;
+            window.pywebview?.api?.set_window_background(normalizedMode);
         }
 
         function updateRateLimitModeButtons() {
@@ -1856,21 +2009,14 @@
                 titleBar.insertBefore(toolbar, controls);
                 const activeKey = getActiveKey();
                 toolbar.title = activeKey ? `当前密钥：${activeKey.name}` : '选择密钥';
-                setLucideIcon(
-                    document.querySelector('#keySelector + div [data-lucide]'),
-                    'key-round',
-                    'icon-10'
-                );
+                setLucideIcon(document.getElementById('keySwitcherChevron'), 'key-round', 'icon-10');
             } else if (toolbar && titleBar?.nextElementSibling) {
                 const lastResizeHandle = document.querySelector('.resize-bottom-right');
                 lastResizeHandle?.after(toolbar);
                 toolbar.removeAttribute('title');
-                setLucideIcon(
-                    document.querySelector('#keySelector + div [data-lucide]'),
-                    'chevron-down',
-                    'icon-10'
-                );
+                setLucideIcon(document.getElementById('keySwitcherChevron'), 'chevron-down', 'icon-10');
             }
+            closeKeySwitcher();
         }
 
         function updateTitleBarModeControls() {
@@ -2416,21 +2562,13 @@
             const keys = window.appState.keys;
             const activeKey = getActiveKey();
             if (!activeKey) {
-                document.getElementById('keySelector').innerHTML = '<option value="">暂无密钥，请点击添加</option>';
+                renderKeySwitcher();
                 clearDashboard();
                 return;
             }
 
-            // 1. 切换下拉列表刷新
-            const selector = document.getElementById('keySelector');
-            selector.innerHTML = '';
-            keys.forEach(key => {
-                const opt = document.createElement('option');
-                opt.value = key.id;
-                opt.text = key.name;
-                opt.selected = key.id === window.appState.activeKeyId;
-                selector.appendChild(opt);
-            });
+            // 1. 切换密钥菜单刷新
+            renderKeySwitcher();
             if (window.appState.activeTitleBarMode === 'minimal') {
                 document.getElementById('keyToolbar').title = `当前密钥：${activeKey.name}`;
             }

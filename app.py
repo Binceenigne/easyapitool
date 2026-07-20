@@ -33,7 +33,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 GITHUB_REPOSITORY = os.environ.get(
     "API_TOOLS_GITHUB_REPOSITORY", "Binceenigne/easyapitool"
@@ -48,7 +48,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "20"
+STATIC_UI_VERSION = "21"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -69,6 +69,8 @@ ERROR_ALREADY_EXISTS = 183
 SW_SHOW = 5
 SW_RESTORE = 9
 WM_NCLBUTTONDOWN = 0x00A1
+WM_SYSCOMMAND = 0x0112
+SC_MINIMIZE = 0xF020
 HTCAPTION = 2
 HTLEFT = 10
 HTRIGHT = 11
@@ -85,6 +87,7 @@ SWP_NOSIZE = 0x0001
 SWP_NOZORDER = 0x0004
 RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 UPDATE_CHECK_INTERVAL = 7 * 24 * 60 * 60
+RESTART_READY_ENV = "API_TOOLS_RESTART_READY"
 
 
 def normalize_title_bar_mode(mode: Any) -> str:
@@ -1399,6 +1402,7 @@ class AppController:
         trace_startup("controller_init_started")
         self.asset_cache = asset_cache or StaticAssetCache()
         self.store = Store(app_data_dir() / "api_tools.db")
+        self.restart_ready_path = os.environ.pop(RESTART_READY_ENV, "").strip()
         self.active_title_bar_mode = self.store.get_title_bar_mode()
         self.client = EasyClinClient()
         self.store.import_environment_key()
@@ -1439,6 +1443,11 @@ class AppController:
 
     def start_workers(self) -> None:
         trace_startup("webview_start_callback")
+        if self.restart_ready_path:
+            try:
+                Path(self.restart_ready_path).write_text(str(os.getpid()), encoding="ascii")
+            except OSError:
+                pass
         native_form = getattr(self.window, "native", None) if self.window else None
         if native_form is not None:
             native_form.VisibleChanged += self._on_native_visibility_changed
@@ -1657,14 +1666,15 @@ class AppController:
         self.refresh_wakeup.set()
 
     def _on_restored(self) -> None:
+        was_maximized = self.maximized
         self.visible = True
         self.maximized = False
-        self._set_window_corner(False)
         self.refresh_wakeup.set()
         if time.monotonic() < getattr(self, "drag_restore_suppressed_until", 0.0):
             return
-        self._push_window_state()
-        threading.Timer(0.25, self.push_state_to_ui).start()
+        if was_maximized:
+            self._set_window_corner(False)
+            self._push_window_state()
 
     def _on_closing(self) -> bool | None:
         if self.stopping.is_set():
@@ -1677,7 +1687,7 @@ class AppController:
         if action == "exit":
             threading.Timer(0.05, self.exit_app).start()
         elif action == "tray":
-            self.hide_window()
+            threading.Timer(0.01, self.hide_window).start()
         elif self.window:
             try:
                 self.window.evaluate_js("window.openCloseActionModal();")
@@ -1898,14 +1908,38 @@ class AppController:
         script = app_data_dir() / "apply-update.ps1"
         log = app_data_dir() / "update.log"
         ready = app_data_dir() / "update.ready"
+        restarted = app_data_dir() / "update-restarted.ready"
         ready.unlink(missing_ok=True)
+        restarted.unlink(missing_ok=True)
         script.write_text(
-            "param([int]$ProcessId,[string]$Source,[string]$Target,[string]$Log,[string]$Ready)\n"
+            "param([int]$ProcessId,[int]$BootloaderProcessId,[string]$Source,[string]$Target,[string]$Log,[string]$Ready,[string]$Restarted)\n"
             "$ErrorActionPreference = 'Stop'\n"
+            "function Wait-ForProcessExit([int]$Id) {\n"
+            "  if ($Id -le 0) { return }\n"
+            "  $process = Get-Process -Id $Id -ErrorAction SilentlyContinue\n"
+            "  if ($process) { $process | Wait-Process -ErrorAction SilentlyContinue }\n"
+            "}\n"
+            "function Start-UpdatedApplication {\n"
+            "  for ($launchAttempt = 1; $launchAttempt -le 2; $launchAttempt++) {\n"
+            "    Remove-Item -LiteralPath $Restarted -Force -ErrorAction SilentlyContinue\n"
+            "    $env:PYINSTALLER_RESET_ENVIRONMENT = '1'\n"
+            f"    $env:{RESTART_READY_ENV} = $Restarted\n"
+            "    $started = Start-Process -FilePath $Target -PassThru\n"
+            "    for ($check = 1; $check -le 300; $check++) {\n"
+            "      if (Test-Path -LiteralPath $Restarted) { return }\n"
+            "      if ($started.HasExited) { break }\n"
+            "      [System.Threading.Thread]::Sleep(100)\n"
+            "      $started.Refresh()\n"
+            "    }\n"
+            "    if (-not $started.HasExited) { throw 'Updated application startup timed out' }\n"
+            "    [System.Threading.Thread]::Sleep(500)\n"
+            "  }\n"
+            "  throw 'Updated application failed to start'\n"
+            "}\n"
             "try {\n"
             "  Set-Content -LiteralPath $Ready -Value 'ready' -Encoding ASCII\n"
-            "  $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue\n"
-            "  if ($process) { $process | Wait-Process -ErrorAction SilentlyContinue }\n"
+            "  Wait-ForProcessExit $ProcessId\n"
+            "  Wait-ForProcessExit $BootloaderProcessId\n"
             "  $updated = $false\n"
             "  for ($attempt = 1; $attempt -le 60; $attempt++) {\n"
             "    try {\n"
@@ -1917,26 +1951,27 @@ class AppController:
             "      [System.Threading.Thread]::Sleep(500)\n"
             "    }\n"
             "  }\n"
-            "  if (-not $updated) { throw '无法替换应用文件' }\n"
+            "  if (-not $updated) { throw 'Unable to replace application executable' }\n"
             "  Remove-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue\n"
-            "  $env:PYINSTALLER_RESET_ENVIRONMENT = '1'\n"
-            "  Start-Process -FilePath $Target\n"
+            "  Start-UpdatedApplication\n"
+            "  Remove-Item -LiteralPath $Restarted -Force -ErrorAction SilentlyContinue\n"
             "  Remove-Item -LiteralPath $Log -Force -ErrorAction SilentlyContinue\n"
             "  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force\n"
             "} catch {\n"
             "  $_ | Out-String | Set-Content -LiteralPath $Log -Encoding UTF8\n"
-            "  $env:PYINSTALLER_RESET_ENVIRONMENT = '1'\n"
-            "  Start-Process -FilePath $Target\n"
             "  exit 1\n"
             "}\n",
             encoding="utf-8",
         )
+        bootloader_process_id = os.getppid() if getattr(sys, "frozen", False) else 0
         updater = subprocess.Popen(
             [
                 "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
                 "-WindowStyle", "Hidden", "-File", str(script),
-                "-ProcessId", str(os.getpid()), "-Source", str(downloaded),
-                "-Target", str(current), "-Log", str(log), "-Ready", str(ready),
+                "-ProcessId", str(os.getpid()),
+                "-BootloaderProcessId", str(bootloader_process_id),
+                "-Source", str(downloaded), "-Target", str(current),
+                "-Log", str(log), "-Ready", str(ready), "-Restarted", str(restarted),
             ],
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
@@ -2322,7 +2357,11 @@ class AppController:
             return {"ok": False}
         if action == "minimize":
             self.visible = False
-            self.window.minimize()
+            hwnd = self._window_handle()
+            if hwnd:
+                user32.PostMessageW(hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0)
+            else:
+                threading.Thread(target=self.window.minimize, name="window-minimize", daemon=True).start()
         elif action == "maximize":
             hwnd = self._window_handle()
             if hwnd and user32.IsZoomed(hwnd):
@@ -2341,20 +2380,74 @@ class AppController:
         return {"ok": True, "visible": self.visible, "maximized": self.maximized}
 
     def hide_window(self) -> None:
-        if self.window:
-            self.window.hide()
         self.visible = False
         self.refresh_wakeup.set()
+        native_form = getattr(self.window, "native", None) if self.window else None
+        if native_form is not None:
+            try:
+                from System import Action
+
+                native_form.BeginInvoke(Action(native_form.Hide))
+                return
+            except Exception:
+                pass
+        if self.window:
+            threading.Thread(target=self.window.hide, name="window-hide", daemon=True).start()
 
     def show_window(self) -> None:
-        if self.window:
-            self.window.show()
-            hwnd = self._window_handle()
-            if hwnd and user32.IsIconic(hwnd):
-                self.window.restore()
         self.visible = True
         self.refresh_wakeup.set()
-        threading.Timer(0.25, self.push_state_to_ui).start()
+
+        def show_native_window() -> None:
+            if not self.window:
+                return
+            native_form = getattr(self.window, "native", None)
+            if native_form is not None:
+                native_form.Show()
+                native_form.Activate()
+            else:
+                self.window.show()
+            hwnd = self._window_handle()
+            if hwnd and user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, SW_RESTORE)
+
+        native_form = getattr(self.window, "native", None) if self.window else None
+        if native_form is not None:
+            try:
+                from System import Action
+
+                native_form.BeginInvoke(Action(show_native_window))
+            except Exception:
+                threading.Thread(target=show_native_window, name="window-show", daemon=True).start()
+        else:
+            threading.Thread(target=show_native_window, name="window-show", daemon=True).start()
+
+    def set_window_background(self, mode: Any) -> dict[str, Any]:
+        color_hex = "#020617" if str(mode).lower() == "dark" else "#ffffff"
+        native_form = getattr(self.window, "native", None) if self.window else None
+        if native_form is None:
+            return {"ok": False}
+
+        def apply_background() -> None:
+            from System.Drawing import Color, ColorTranslator
+
+            native_form.BackColor = ColorTranslator.FromHtml(color_hex)
+            native_webview = getattr(native_form, "webview", None)
+            if native_webview is not None:
+                native_webview.DefaultBackgroundColor = Color.FromArgb(
+                    255,
+                    int(color_hex[1:3], 16),
+                    int(color_hex[3:5], 16),
+                    int(color_hex[5:7], 16),
+                )
+
+        try:
+            from System import Action
+
+            native_form.BeginInvoke(Action(apply_background))
+            return {"ok": True, "color": color_hex}
+        except Exception:
+            return {"ok": False}
 
     def push_state_to_ui(self) -> None:
         if not self.window or not self.visible:
@@ -2457,6 +2550,9 @@ class WebApi:
 
     def window_action(self, action: str) -> dict[str, Any]:
         return self._controller.window_action(action)
+
+    def set_window_background(self, mode: Any) -> dict[str, Any]:
+        return self._controller.set_window_background(mode)
 
     def native_drag(self, direction: str) -> dict[str, Any]:
         return self._controller.native_drag(direction)
