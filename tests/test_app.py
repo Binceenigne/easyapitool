@@ -912,6 +912,113 @@ class ControllerTests(unittest.TestCase):
 
         build_opener.assert_not_called()
 
+    def test_curl_get_uses_system_proxy_for_github_metadata(self):
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout=b'{"tag_name":"v9.9.9"}\n200',
+            stderr=b"",
+        )
+        request = app.urllib.request.Request("https://api.github.com/releases")
+
+        with patch("app.shutil.which", return_value="curl.exe"), patch(
+            "app.urllib.request.getproxies", return_value={"https": "http://127.0.0.1:7890"}
+        ), patch("app.subprocess.run", return_value=completed) as run:
+            payload = app.curl_get_bytes(request, timeout=8)
+
+        self.assertEqual(payload, b'{"tag_name":"v9.9.9"}')
+        self.assertEqual(run.call_args.kwargs["env"]["HTTPS_PROXY"], "http://127.0.0.1:7890")
+        self.assertIn("--http1.1", run.call_args.args[0])
+        self.assertIn("--retry-all-errors", run.call_args.args[0])
+        max_time_index = run.call_args.args[0].index("--max-time")
+        self.assertEqual(run.call_args.args[0][max_time_index + 1], "4")
+
+    def test_curl_get_preserves_http_rate_limit_status(self):
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout=b'{"message":"API rate limit exceeded"}\n403',
+            stderr=b"",
+        )
+        request = app.urllib.request.Request("https://api.github.com/releases")
+
+        with patch("app.shutil.which", return_value="curl.exe"), patch(
+            "app.urllib.request.getproxies", return_value={}
+        ), patch("app.subprocess.run", return_value=completed):
+            with self.assertRaises(app.urllib.error.HTTPError) as raised:
+                app.curl_get_bytes(request, timeout=8)
+
+        self.assertEqual(raised.exception.code, 403)
+
+    def test_small_github_request_does_not_retry_python_after_curl_tls_failure(self):
+        request = app.urllib.request.Request("https://api.github.com/releases")
+
+        with patch(
+            "app.curl_get_bytes",
+            side_effect=app.NetworkTransportError("TLS connection closed"),
+        ), patch("app.open_url_with_direct_fallback") as python_transport:
+            with self.assertRaises(app.NetworkTransportError):
+                app.get_small_url_bytes(request, timeout=8)
+
+        python_transport.assert_not_called()
+
+    def test_update_check_skips_latest_api_after_tls_transport_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            controller = app.AppController.__new__(app.AppController)
+            controller.store = app.Store(Path(temp) / "test.db")
+            controller.update_lock = __import__("threading").Lock()
+            controller.update_state = {}
+            controller.window = None
+            controller.visible = False
+            controller._github_json = __import__("unittest.mock").mock.Mock(
+                side_effect=app.NetworkTransportError("SSL UNEXPECTED_EOF_WHILE_READING")
+            )
+            controller._github_release_feed = __import__("unittest.mock").mock.Mock(
+                return_value=[
+                    {
+                        "tag_name": "v9.9.9",
+                        "body": "- TLS 后备成功",
+                        "draft": False,
+                        "prerelease": False,
+                        "assets": [
+                            {
+                                "name": app.RELEASE_ASSET_NAME,
+                                "browser_download_url": "https://github.com/download/exe",
+                            }
+                        ],
+                    }
+                ]
+            )
+
+            controller._check_for_updates_worker(manual=True)
+
+            controller._github_json.assert_called_once_with("/releases?per_page=20")
+            controller._github_release_feed.assert_called_once_with()
+            self.assertEqual(controller.update_state["status"], "available")
+            self.assertIn("TLS 后备成功", controller.update_state["releaseNotes"])
+
+    def test_update_check_hides_transport_details_when_all_routes_fail(self):
+        with tempfile.TemporaryDirectory() as temp:
+            controller = app.AppController.__new__(app.AppController)
+            controller.store = app.Store(Path(temp) / "test.db")
+            controller.update_lock = __import__("threading").Lock()
+            controller.update_state = {}
+            controller.window = None
+            controller.visible = False
+            controller._github_json = __import__("unittest.mock").mock.Mock(
+                side_effect=app.NetworkTransportError("SSL UNEXPECTED_EOF_WHILE_READING")
+            )
+            controller._github_release_feed = __import__("unittest.mock").mock.Mock(
+                side_effect=app.NetworkTransportError("curl schannel failed")
+            )
+
+            controller._check_for_updates_worker(manual=True)
+
+            self.assertEqual(controller.update_state["status"], "failed")
+            self.assertEqual(
+                controller.update_state["message"],
+                "检查更新失败：无法连接 GitHub，请检查网络或代理后重试",
+            )
+            self.assertNotIn("SSL", controller.update_state["message"])
+
     def test_manual_refresh_returns_valid_result_then_enforces_five_second_cooldown(self):
         controller = app.AppController.__new__(app.AppController)
         controller.manual_refresh_lock = __import__("threading").Lock()

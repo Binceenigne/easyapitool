@@ -10,6 +10,7 @@ import math
 import multiprocessing
 import os
 import shutil
+import ssl
 import sqlite3
 import subprocess
 import sys
@@ -36,7 +37,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.14"
+APP_VERSION = "1.0.15"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -54,7 +55,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "30"
+STATIC_UI_VERSION = "31"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -105,6 +106,10 @@ RESTART_READY_ENV = "API_TOOLS_RESTART_READY"
 MANUAL_REFRESH_COOLDOWN_SECONDS = 5
 
 
+class NetworkTransportError(RuntimeError):
+    pass
+
+
 def open_url_with_direct_fallback(request: urllib.request.Request, timeout: int) -> Any:
     def connection_was_refused(error: BaseException) -> bool:
         pending: list[Any] = [error]
@@ -151,6 +156,106 @@ def open_url_with_direct_fallback(request: urllib.request.Request, timeout: int)
             raise RuntimeError(
                 f"系统代理连接失败 ({proxy_error})；直连也失败 ({direct_error})"
             ) from direct_error
+
+
+def curl_get_bytes(request: urllib.request.Request, timeout: int = 10) -> bytes:
+    curl = shutil.which("curl.exe") or shutil.which("curl")
+    if not curl:
+        raise FileNotFoundError("系统未找到 curl")
+    proxy = (
+        urllib.request.getproxies().get("https")
+        or urllib.request.getproxies().get("http")
+    )
+    environments: list[tuple[str, dict[str, str], list[str], int]] = []
+    if proxy:
+        proxy_environment = os.environ.copy()
+        proxy_environment["HTTPS_PROXY"] = proxy
+        proxy_environment["HTTP_PROXY"] = proxy
+        proxy_environment.pop("NO_PROXY", None)
+        proxy_environment.pop("no_proxy", None)
+        environments.append(("系统代理", proxy_environment, [], 4))
+    direct_environment = os.environ.copy()
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        direct_environment.pop(name, None)
+    direct_environment["NO_PROXY"] = "*"
+    environments.append(("直连", direct_environment, ["--noproxy", "*"], max(6, int(timeout))))
+    errors: list[str] = []
+    for route, environment, route_arguments, route_timeout in environments:
+        command = [
+            curl,
+            "--silent",
+            "--show-error",
+            "--http1.1",
+            "--location",
+            "--retry",
+            "2",
+            "--retry-all-errors",
+            "--retry-delay",
+            "0",
+            "--connect-timeout",
+            str(min(4, route_timeout)),
+            "--max-time",
+            str(route_timeout),
+            "--max-filesize",
+            str(4 * 1024 * 1024),
+            "--write-out",
+            "\n%{http_code}",
+            *route_arguments,
+        ]
+        for header, value in request.header_items():
+            command.extend(["--header", f"{header}: {value}"])
+        command.append(request.full_url)
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                timeout=route_timeout + 5,
+                env=environment,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            errors.append(f"{route}: {exc}")
+            continue
+        if completed.returncode != 0:
+            message = completed.stderr.decode("utf-8", "replace").strip()
+            errors.append(f"{route}: {message or f'curl {completed.returncode}'}")
+            continue
+        try:
+            payload, status_line = completed.stdout.rsplit(b"\n", 1)
+            status = int(status_line.strip())
+        except (ValueError, TypeError):
+            errors.append(f"{route}: curl 响应格式无效")
+            continue
+        if status >= 400:
+            message = payload.decode("utf-8", "replace")[:200].strip()
+            raise urllib.error.HTTPError(
+                request.full_url,
+                status,
+                message or f"HTTP {status}",
+                {},
+                io.BytesIO(payload),
+            )
+        return payload
+    raise NetworkTransportError("；".join(errors) or "curl 无法连接")
+
+
+def get_small_url_bytes(request: urllib.request.Request, timeout: int = 10) -> bytes:
+    try:
+        return curl_get_bytes(request, timeout=timeout)
+    except urllib.error.HTTPError:
+        raise
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        raise NetworkTransportError(str(exc)) from exc
+    try:
+        with open_url_with_direct_fallback(request, timeout=timeout) as response:
+            return response.read()
+    except urllib.error.HTTPError:
+        raise
+    except Exception as exc:
+        raise NetworkTransportError(str(exc)) from exc
 
 
 def normalize_title_bar_mode(mode: Any) -> str:
@@ -2153,8 +2258,7 @@ class AppController:
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
-        with open_url_with_direct_fallback(request, timeout=25) as response:
-            return json.loads(response.read().decode("utf-8"))
+        return json.loads(get_small_url_bytes(request, timeout=10).decode("utf-8"))
 
     @staticmethod
     def _github_release_feed() -> list[dict[str, Any]]:
@@ -2165,8 +2269,7 @@ class AppController:
                 "User-Agent": f"{APP_NAME}/{APP_VERSION}",
             },
         )
-        with open_url_with_direct_fallback(request, timeout=25) as response:
-            releases = parse_github_release_feed(response.read())
+        releases = parse_github_release_feed(get_small_url_bytes(request, timeout=10))
         if not releases:
             raise RuntimeError("GitHub Release feed 没有可用版本")
         return releases
@@ -2177,6 +2280,16 @@ class AppController:
             isinstance(error, urllib.error.HTTPError)
             and error.code in {403, 429}
         ) or "rate limit" in str(error).lower()
+
+    @staticmethod
+    def _github_transport_failed(error: BaseException) -> bool:
+        return isinstance(
+            error,
+            (NetworkTransportError, urllib.error.URLError, TimeoutError, ConnectionError, ssl.SSLError),
+        ) or any(
+            marker in str(error).lower()
+            for marker in ("unexpected_eof", "unexpected eof", "timed out", "tls", "ssl")
+        )
 
     def check_for_updates(self, manual: Any = True) -> dict[str, Any]:
         if self.update_lock.locked():
@@ -2201,12 +2314,22 @@ class AppController:
                 try:
                     release_payload = self._github_json("/releases?per_page=20")
                 except Exception as list_error:
-                    if self._github_api_rate_limited(list_error):
+                    if self._github_api_rate_limited(list_error) or self._github_transport_failed(
+                        list_error
+                    ):
+                        self._set_update_state(
+                            percent=38,
+                            message="主检查通道不可用，正在尝试备用通道",
+                        )
                         release_payload = self._github_release_feed()
                     else:
                         try:
                             release_payload = self._github_json("/releases/latest")
                         except Exception:
+                            self._set_update_state(
+                                percent=38,
+                                message="主检查通道不可用，正在尝试备用通道",
+                            )
                             release_payload = self._github_release_feed()
                 releases = (
                     [item for item in release_payload if isinstance(item, dict)]
@@ -2282,10 +2405,15 @@ class AppController:
                 if manual and not available:
                     self.notify("API_TOOLS 更新", "当前已是最新版本。")
             except Exception as exc:
+                message = (
+                    "检查更新失败：无法连接 GitHub，请检查网络或代理后重试"
+                    if self._github_transport_failed(exc)
+                    else f"检查更新失败: {exc}"
+                )
                 self._set_update_state(
                     status="failed",
                     percent=0,
-                    message=f"检查更新失败: {exc}",
+                    message=message,
                     showPrompt=manual,
                 )
 
