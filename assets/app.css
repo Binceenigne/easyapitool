@@ -551,6 +551,69 @@ html.dark #keySwitcherMenu {
   color: var(--brand);
 }
 
+#manualRefreshButton {
+  position: relative;
+  overflow: hidden;
+}
+
+#manualRefreshButton:disabled {
+  cursor: default;
+}
+
+#manualRefreshCountdown {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 800 9px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+#manualRefreshCountdown[hidden] {
+  display: none !important;
+}
+
+#manualRefreshButton.is-refreshing {
+  border-color: var(--muted);
+  background: var(--surface-strong);
+  color: var(--muted) !important;
+}
+
+#manualRefreshButton.is-refreshing [data-lucide] {
+  animation: manualRefreshSpin 0.72s linear infinite;
+}
+
+#manualRefreshButton.is-refresh-success {
+  color: var(--good) !important;
+  animation: manualRefreshSuccess 0.7s ease-out;
+}
+
+#manualRefreshButton.is-refresh-error {
+  color: var(--critical) !important;
+  animation: manualRefreshError 0.7s ease-out;
+}
+
+#manualRefreshButton.is-refresh-cooldown {
+  cursor: default;
+  border-color: var(--border-soft);
+  background: var(--surface-soft);
+  color: var(--muted) !important;
+}
+
+#manualRefreshButton.is-refresh-cooldown [data-lucide] {
+  display: none !important;
+}
+
+#manualRefreshButton.is-refresh-cooldown.is-refresh-success {
+  color: var(--good) !important;
+}
+
+#manualRefreshButton.is-refresh-cooldown.is-refresh-error {
+  color: var(--critical) !important;
+}
+
 .toolbar-action-button:nth-child(2) {
   border-color: var(--brand);
   background: var(--brand);
@@ -578,6 +641,31 @@ html.dark #keySwitcherMenu {
   font-size: 10px;
 }
 
+@keyframes manualRefreshSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes manualRefreshSuccess {
+  0%, 100% {
+    background-color: var(--bg);
+    box-shadow: none;
+  }
+  35% {
+    background-color: color-mix(in srgb, var(--good) 18%, var(--bg));
+    box-shadow: 0 0 9px color-mix(in srgb, var(--good) 70%, transparent);
+  }
+}
+@keyframes manualRefreshError {
+  0%, 100% {
+    background-color: var(--bg);
+    box-shadow: none;
+  }
+  25%, 70% {
+    background-color: color-mix(in srgb, var(--critical) 16%, var(--bg));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--critical) 58%, transparent);
+  }
+}
 #widget-root.titlebar-minimal #windowTitleBar {
   flex-basis: 24px !important;
   height: 24px !important;
@@ -1751,6 +1839,10 @@ html.dark #avgMinVal {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.settings-app-behavior .settings-fields {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .settings-thresholds > div {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -2134,6 +2226,26 @@ html.dark #avgMinVal {
   color: var(--muted);
   font-size: 10px;
   font-weight: 700;
+}
+
+.full-changelog-toggle {
+  align-self: flex-start;
+  margin: 0 16px 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 9px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.full-changelog-toggle:hover {
+  color: var(--brand);
+}
+
+.full-changelog-toggle[hidden] {
+  display: none;
 }
 
 #updateChangelogContent {

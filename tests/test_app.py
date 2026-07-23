@@ -18,6 +18,47 @@ class StoreTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_changelog_between_includes_only_uninstalled_versions(self):
+        markdown = (
+            "# 更新日志\n\n"
+            "## 1.0.11 - 2026-07-23\n\n- 新功能\n\n"
+            "## 1.0.10 - 2026-07-22\n\n- 修复问题\n\n"
+            "## 1.0.9 - 2026-07-21\n\n- 旧版本\n"
+        )
+
+        result = app.changelog_between(markdown, "1.0.9", "1.0.11")
+
+        self.assertIn("## 1.0.11", result)
+        self.assertIn("## 1.0.10", result)
+        self.assertNotIn("## 1.0.9", result)
+
+    def test_changelog_for_update_uses_full_range_for_multiple_versions(self):
+        markdown = (
+            "## 1.0.11\n- 新版本\n\n"
+            "## 1.0.10\n- 中间版本\n\n"
+            "## 1.0.9\n- 当前版本\n"
+        )
+
+        result = app.changelog_for_update(markdown, "1.0.9", "1.0.11", "仅最新 Release")
+
+        self.assertIn("中间版本", result)
+        self.assertNotIn("当前版本", result)
+
+    def test_release_notes_since_combines_every_uninstalled_release(self):
+        releases = [
+            {"tag_name": "v1.0.12", "body": "- 最新版本"},
+            {"tag_name": "v1.0.11", "body": "- 中间版本"},
+            {"tag_name": "v1.0.10", "body": "- 已安装版本"},
+        ]
+
+        result = app.release_notes_since(releases, "1.0.10")
+
+        self.assertIn("## 1.0.12", result)
+        self.assertIn("最新版本", result)
+        self.assertIn("## 1.0.11", result)
+        self.assertIn("中间版本", result)
+        self.assertNotIn("已安装版本", result)
+
     @patch("app.protect_secret", side_effect=lambda value: value)
     @patch("app.unprotect_secret", side_effect=lambda value: value)
     def test_snapshot_and_rates(self, _unprotect, _protect):
@@ -165,12 +206,16 @@ class StoreTests(unittest.TestCase):
     def test_application_preferences_are_normalized_and_persisted(self):
         self.assertEqual(self.store.get_update_frequency(), "startup")
         self.assertEqual(self.store.get_close_action(), "ask")
+        self.assertEqual(self.store.get_background_ui_mode(), "delayed")
         self.assertEqual(self.store.set_update_frequency("weekly"), "weekly")
         self.assertEqual(self.store.set_close_action("tray"), "tray")
+        self.assertEqual(self.store.set_background_ui_mode("active"), "active")
         self.assertEqual(self.store.get_update_frequency(), "weekly")
         self.assertEqual(self.store.get_close_action(), "tray")
+        self.assertEqual(self.store.get_background_ui_mode(), "active")
         self.assertEqual(self.store.set_update_frequency("invalid"), "startup")
         self.assertEqual(self.store.set_close_action("invalid"), "ask")
+        self.assertEqual(self.store.set_background_ui_mode("invalid"), "delayed")
 
     def test_title_bar_mode_is_normalized_and_persisted(self):
         self.assertEqual(self.store.get_title_bar_mode(), "default")
@@ -597,7 +642,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=21">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=25">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -616,6 +661,39 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn(".key-switcher-status.is-error", stylesheet)
         self.assertIn("set_window_background(window.__pendingNativeTheme)", page)
         self.assertIn("set_window_background(normalizedMode)", page)
+        self.assertIn("syncVisibleBackendState", page)
+        self.assertIn("setInterval(syncVisibleBackendState, 5000)", page)
+        self.assertIn('id="manualRefreshButton"', page)
+        self.assertNotIn('id="manualRefreshButton" onclick=', page)
+        self.assertIn('id="manualRefreshCountdown"', page)
+        self.assertIn("setManualRefreshButtonState('refreshing'", page)
+        self.assertIn("startManualRefreshCooldown", page)
+        self.assertIn("manualRefreshCooldownDeadline", page)
+        self.assertIn("MANUAL_REFRESH_LOG_PREFIX", page)
+        self.assertIn("bridge-call-started", page)
+        self.assertIn("bridge-call-resolved", page)
+        self.assertIn("backendDebug", page)
+        self.assertIn("getManualRefreshDebugLog", page)
+        self.assertIn("clearManualRefreshDebugLog", page)
+        self.assertIn("manualRefreshPendingTraceId", page)
+        self.assertIn("button-click", page)
+        self.assertIn("if (event.button !== 0) return;", page)
+        self.assertIn("RELIABLE_BUTTON_PRESS_TIMEOUT_MS", page)
+        self.assertIn("dispatchReliableButtonFallback", page)
+        self.assertIn("finishReliableButtonPress", page)
+        self.assertIn("document.addEventListener('mouseup'", page)
+        self.assertIn("press.button.click();", page)
+        self.assertNotIn("'pointerup-missing'", page)
+        self.assertIn("late-click-suppressed", page)
+        self.assertIn("getReliableButtonDebugLog", page)
+        self.assertIn("manualRefreshSpin", stylesheet)
+        self.assertIn("manualRefreshSuccess", stylesheet)
+        self.assertIn("manualRefreshError", stylesheet)
+        self.assertIn("#manualRefreshButton.is-refresh-cooldown [data-lucide]", stylesheet)
+        self.assertIn("#manualRefreshCountdown[hidden]", stylesheet)
+        self.assertIn("#keyToolbar {\n  z-index: 5;", stylesheet)
+        self.assertIn("#settingsPanel {\n  position: absolute;", stylesheet)
+        self.assertIn("  z-index: 40;", stylesheet)
         self.assertIn('id="dashboardMetrics"', page)
         self.assertIn('class="metric-cell metric-primary metric-today"', page)
         self.assertIn('class="metric-cell metric-primary metric-expiry"', page)
@@ -770,6 +848,110 @@ class StaticAssetCacheTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_github_request_retries_without_system_proxy_when_proxy_refuses(self):
+        request = app.urllib.request.Request("https://api.github.com/test")
+        response = object()
+        direct_opener = SimpleNamespace(open=__import__("unittest.mock").mock.Mock(return_value=response))
+        refused = app.urllib.error.URLError(ConnectionRefusedError(10061, "refused"))
+
+        with patch("app.urllib.request.urlopen", side_effect=refused), patch(
+            "app.urllib.request.build_opener", return_value=direct_opener
+        ) as build_opener:
+            result = app.open_url_with_direct_fallback(request, timeout=7)
+
+        self.assertIs(result, response)
+        proxy_handler = build_opener.call_args.args[0]
+        self.assertEqual(proxy_handler.proxies, {})
+        direct_request = direct_opener.open.call_args.args[0]
+        self.assertIsNot(direct_request, request)
+        self.assertEqual(direct_request.full_url, request.full_url)
+        direct_opener.open.assert_called_once_with(direct_request, timeout=7)
+
+    def test_github_request_does_not_mask_http_errors_with_direct_retry(self):
+        request = app.urllib.request.Request("https://api.github.com/test")
+        http_error = app.urllib.error.HTTPError(request.full_url, 403, "forbidden", {}, None)
+
+        with patch("app.urllib.request.urlopen", side_effect=http_error), patch(
+            "app.urllib.request.build_opener"
+        ) as build_opener:
+            with self.assertRaises(app.urllib.error.HTTPError):
+                app.open_url_with_direct_fallback(request, timeout=7)
+
+        build_opener.assert_not_called()
+
+    def test_github_request_does_not_duplicate_normal_timeout(self):
+        request = app.urllib.request.Request("https://api.github.com/test")
+        timeout = TimeoutError("timed out")
+
+        with patch("app.urllib.request.urlopen", side_effect=timeout), patch(
+            "app.urllib.request.build_opener"
+        ) as build_opener:
+            with self.assertRaises(TimeoutError):
+                app.open_url_with_direct_fallback(request, timeout=7)
+
+        build_opener.assert_not_called()
+
+    def test_manual_refresh_returns_valid_result_then_enforces_five_second_cooldown(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.manual_refresh_lock = __import__("threading").Lock()
+        controller.manual_refresh_available_at = 0.0
+        controller.refresh_lock = __import__("threading").Lock()
+        controller.store = SimpleNamespace(list_key_records=lambda: [{"id": "key-1"}])
+        controller._refresh_key = __import__("unittest.mock").mock.Mock(return_value=True)
+        controller.get_state = lambda: {"keys": ["key-1"]}
+
+        with patch("app.time.monotonic", side_effect=[100.0, 102.2, 103.0]):
+            result = controller.refresh_now()
+            cooling = controller.refresh_now()
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["valid"])
+        self.assertAlmostEqual(result["cooldownSeconds"], 2.8)
+        self.assertEqual(result["debug"]["outcome"], "success")
+        self.assertEqual(result["debug"]["traceId"], "backend-refresh")
+        self.assertIn(
+            "manual-lock-released",
+            [event["event"] for event in result["debug"]["events"]],
+        )
+        self.assertEqual(cooling["cooldownSeconds"], 2.0)
+        self.assertEqual(cooling["error"], "手动刷新冷却中")
+        controller._refresh_key.assert_called_once_with("key-1")
+
+    def test_manual_refresh_returns_busy_instead_of_waiting_for_background_refresh(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.manual_refresh_lock = __import__("threading").Lock()
+        controller.manual_refresh_available_at = 0.0
+        controller.refresh_lock = __import__("threading").Lock()
+        controller.refresh_lock.acquire()
+
+        try:
+            with patch("app.time.monotonic", return_value=100.0):
+                result = controller.refresh_now()
+        finally:
+            controller.refresh_lock.release()
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["busy"])
+        self.assertEqual(result["cooldownSeconds"], 0)
+        self.assertEqual(result["error"], "后台刷新正在进行")
+        self.assertEqual(controller.manual_refresh_available_at, 0.0)
+
+    def test_manual_refresh_does_not_extend_cooldown_after_slow_response(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.manual_refresh_lock = __import__("threading").Lock()
+        controller.manual_refresh_available_at = 0.0
+        controller.refresh_lock = __import__("threading").Lock()
+        controller.store = SimpleNamespace(list_key_records=lambda: [{"id": "key-1"}])
+        controller._refresh_key = __import__("unittest.mock").mock.Mock(return_value=True)
+        controller.get_state = lambda: {"keys": ["key-1"]}
+
+        with patch("app.time.monotonic", side_effect=[100.0, 106.0]):
+            result = controller.refresh_now()
+
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["cooldownSeconds"], 0)
+        self.assertEqual(controller.manual_refresh_available_at, 105.0)
+
     def test_minimize_posts_native_message_without_sync_webview_call(self):
         mock = __import__("unittest.mock").mock
         controller = app.AppController.__new__(app.AppController)
@@ -946,6 +1128,73 @@ class ControllerTests(unittest.TestCase):
 
             self.assertTrue(controller.update_state["available"])
             self.assertTrue(controller.update_state["showPrompt"])
+
+    def test_update_check_falls_back_to_latest_release_when_list_fails(self):
+        with tempfile.TemporaryDirectory() as temp:
+            controller = app.AppController.__new__(app.AppController)
+            controller.store = app.Store(Path(temp) / "test.db")
+            controller.update_lock = __import__("threading").Lock()
+            controller.update_state = {}
+            controller.window = None
+            controller.visible = False
+            requested_paths = []
+
+            def github_json(path):
+                requested_paths.append(path)
+                if path.startswith("/releases?"):
+                    raise RuntimeError("rate limited")
+                return {
+                    "tag_name": "v9.9.9",
+                    "body": "- 最新版本内容",
+                    "assets": [
+                        {
+                            "name": app.RELEASE_ASSET_NAME,
+                            "url": "api",
+                            "browser_download_url": "web",
+                        }
+                    ],
+                }
+
+            controller._github_json = github_json
+            controller._check_for_updates_worker(manual=True)
+
+            self.assertEqual(requested_paths, ["/releases?per_page=20", "/releases/latest"])
+            self.assertTrue(controller.update_state["available"])
+            self.assertIn("最新版本内容", controller.update_state["releaseNotes"])
+
+    def test_update_check_combines_all_uninstalled_release_notes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            controller = app.AppController.__new__(app.AppController)
+            controller.store = app.Store(Path(temp) / "test.db")
+            controller.update_lock = __import__("threading").Lock()
+            controller.update_state = {}
+            controller.window = None
+            controller.visible = False
+            controller._github_json = lambda _path: [
+                {
+                    "tag_name": "v9.9.9",
+                    "body": "- 最新版本内容",
+                    "assets": [
+                        {
+                            "name": app.RELEASE_ASSET_NAME,
+                            "url": "api",
+                            "browser_download_url": "web",
+                        }
+                    ],
+                },
+                {"tag_name": "v9.9.8", "body": "- 中间版本内容", "assets": []},
+                {"tag_name": app.APP_VERSION, "body": "- 已安装版本内容", "assets": []},
+            ]
+
+            controller._check_for_updates_worker(manual=True)
+
+            notes = controller.update_state["releaseNotes"]
+            self.assertTrue(controller.update_state["available"])
+            self.assertIn("## 9.9.9", notes)
+            self.assertIn("最新版本内容", notes)
+            self.assertIn("## 9.9.8", notes)
+            self.assertIn("中间版本内容", notes)
+            self.assertNotIn("已安装版本内容", notes)
 
     def test_limit_change_notifications_report_increase_and_decrease_once(self):
         notifications = []
@@ -1207,13 +1456,36 @@ class ControllerTests(unittest.TestCase):
             set_update_frequency=lambda value: value,
             set_close_action=lambda value: value,
             get_title_bar_mode=lambda: "minimal",
+            get_background_ui_mode=lambda: "delayed",
         )
-        controller.get_state = lambda: {"titleBarMode": "minimal"}
+        controller.get_state = lambda: {
+            "titleBarMode": "minimal",
+            "backgroundUiMode": "delayed",
+        }
 
         with patch("app.set_startup_enabled", return_value=False):
             result = controller.update_app_preferences("startup", "ask", False)
 
         self.assertEqual(result["titleBarMode"], "minimal")
+        self.assertEqual(result["backgroundUiMode"], "delayed")
+
+    def test_background_ui_mode_option_is_wired_to_app_preferences(self):
+        page = Path(app.resource_path(app.MAIN_PAGE_NAME)).read_text(encoding="utf-8")
+
+        self.assertIn('id="backgroundUiMode"', page)
+        self.assertIn('value="delayed">5 分钟后进入低开销模式（默认）', page)
+        self.assertIn('value="active">始终保持活跃（启动更快）', page)
+        self.assertIn('value="low_power">立刻进入低消耗模式（内存占用更少）', page)
+        self.assertIn("window.appState.titleBarMode, backgroundUiMode", page)
+
+    def test_update_modal_defaults_to_pending_notes_and_can_expand_full_history(self):
+        page = Path(app.resource_path(app.MAIN_PAGE_NAME)).read_text(encoding="utf-8")
+
+        self.assertIn('id="toggleFullChangelogButton"', page)
+        self.assertIn("查看完整更新日志", page)
+        self.assertIn("window.appState.showFullChangelog", page)
+        self.assertIn("current.fullReleaseNotes", page)
+        self.assertIn("current.status === 'checking'", page)
 
     def test_updater_replaces_target_when_original_process_is_already_gone(self):
         controller = app.AppController.__new__(app.AppController)
@@ -1338,6 +1610,209 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("store", public_names)
         self.assertNotIn("window", public_names)
 
+    def test_rpc_server_dispatches_only_allowlisted_controller_methods(self):
+        class FakeConnection:
+            def __init__(self, request):
+                self.request = request
+                self.responses = []
+                self.closed = False
+
+            def recv(self):
+                return self.request
+
+            def send(self, response):
+                self.responses.append(response)
+
+            def close(self):
+                self.closed = True
+
+        controller = SimpleNamespace(get_state=lambda: {"keys": ["key-1"]})
+        server = app.ControllerRpcServer(controller, "pipe", b"secret")
+        allowed = FakeConnection({"method": "get_state", "args": []})
+        blocked = FakeConnection({"method": "__dict__", "args": []})
+
+        server._handle_connection(allowed)
+        server._handle_connection(blocked)
+
+        self.assertEqual(allowed.responses, [{"ok": True, "result": {"keys": ["key-1"]}}])
+        self.assertTrue(blocked.responses[0]["ok"] is False)
+        self.assertIn("不允许", blocked.responses[0]["error"])
+        self.assertTrue(allowed.closed)
+        self.assertTrue(blocked.closed)
+
+    def test_remote_web_api_routes_data_calls_and_keeps_window_calls_local(self):
+        rpc = SimpleNamespace(call=__import__("unittest.mock").mock.Mock())
+        rpc.call.side_effect = lambda method, *args: (
+            {"keys": [], "isForeground": False}
+            if method == "get_state"
+            else {"method": method, "args": args}
+        )
+        controller = SimpleNamespace(
+            window_action=lambda action: {"local": action},
+            complete_initialization=lambda: {"local": "init"},
+        )
+        api = app.RemoteWebApi(controller, rpc)
+
+        state = api.get_state()
+        refresh = api.refresh_now("trace-1")
+        window_result = api.window_action("minimize")
+
+        self.assertTrue(state["isForeground"])
+        self.assertEqual(refresh, {"method": "refresh_now", "args": ("trace-1",)})
+        self.assertEqual(window_result, {"local": "minimize"})
+        self.assertNotIn(
+            __import__("unittest.mock").mock.call("window_action", "minimize"),
+            rpc.call.call_args_list,
+        )
+
+    def test_ui_controller_low_power_hide_destroys_window_immediately(self):
+        mock = __import__("unittest.mock").mock
+        rpc = SimpleNamespace(
+            call=mock.Mock(
+                return_value={
+                    "ok": True,
+                    "backgroundUiMode": "low_power",
+                    "visibilityToken": 2,
+                }
+            )
+        )
+        controller = app.UiController.__new__(app.UiController)
+        controller.rpc_client = rpc
+        controller.visible = True
+        controller.stopping = __import__("threading").Event()
+        controller.refresh_wakeup = __import__("threading").Event()
+        controller.release_timer = None
+        controller.window = SimpleNamespace(destroy=mock.Mock())
+
+        with patch.object(app.AppController, "hide_window") as local_hide, patch(
+            "app.threading.Timer"
+        ) as timer:
+            controller.hide_window()
+
+        local_hide.assert_called_once_with(controller)
+        self.assertTrue(controller.stopping.is_set())
+        rpc.call.assert_called_once_with("notify_ui_hidden")
+        timer.assert_called_once_with(0.01, controller.window.destroy)
+        timer.return_value.start.assert_called_once_with()
+
+    def test_ui_controller_active_hide_keeps_webview_process_alive(self):
+        mock = __import__("unittest.mock").mock
+        rpc = SimpleNamespace(
+            call=mock.Mock(
+                return_value={
+                    "ok": True,
+                    "backgroundUiMode": "active",
+                    "visibilityToken": 3,
+                }
+            )
+        )
+        controller = app.UiController.__new__(app.UiController)
+        controller.rpc_client = rpc
+        controller.release_timer = None
+
+        with patch.object(app.AppController, "hide_window") as local_hide, patch(
+            "app.threading.Timer"
+        ) as timer:
+            controller.hide_window()
+
+        local_hide.assert_called_once_with(controller)
+        rpc.call.assert_called_once_with("notify_ui_hidden")
+        timer.assert_not_called()
+
+    def test_ui_controller_delayed_hide_claims_release_after_five_minutes(self):
+        mock = __import__("unittest.mock").mock
+        rpc = SimpleNamespace(
+            call=mock.Mock(
+                return_value={
+                    "ok": True,
+                    "backgroundUiMode": "delayed",
+                    "visibilityToken": 7,
+                }
+            )
+        )
+        controller = app.UiController.__new__(app.UiController)
+        controller.rpc_client = rpc
+        controller.release_timer = None
+
+        with patch.object(app.AppController, "hide_window"), patch(
+            "app.threading.Timer"
+        ) as timer:
+            controller.hide_window()
+
+        timer.assert_called_once_with(
+            300,
+            controller._release_if_still_hidden,
+            args=(7,),
+        )
+        timer.return_value.start.assert_called_once_with()
+
+    def test_stale_delayed_release_is_rejected_after_ui_reopens(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.visible = True
+        controller.ui_visibility_token = 4
+        controller.refresh_wakeup = __import__("threading").Event()
+        controller.store = SimpleNamespace(get_background_ui_mode=lambda: "delayed")
+
+        hidden = controller.notify_ui_hidden()
+        controller.set_ui_visible(True)
+        claim = controller.claim_ui_release(hidden["visibilityToken"])
+
+        self.assertFalse(claim["release"])
+
+    def test_valid_delayed_release_destroys_hidden_ui(self):
+        mock = __import__("unittest.mock").mock
+        controller = app.UiController.__new__(app.UiController)
+        controller.rpc_client = SimpleNamespace(
+            call=mock.Mock(return_value={"ok": True, "release": True})
+        )
+        controller._destroy_ui = mock.Mock()
+
+        controller._release_if_still_hidden(9)
+
+        controller.rpc_client.call.assert_called_once_with("claim_ui_release", 9)
+        controller._destroy_ui.assert_called_once_with()
+
+    def test_background_visibility_switches_refresh_cadence_without_window(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.visible = True
+        controller.ui_visibility_token = 0
+        controller.refresh_wakeup = __import__("threading").Event()
+
+        hidden = controller.set_ui_visible(False)
+
+        self.assertEqual(
+            hidden,
+            {"ok": True, "visible": False, "visibilityToken": 1},
+        )
+        self.assertFalse(controller.visible)
+        self.assertTrue(controller.refresh_wakeup.is_set())
+
+    def test_hidden_refresh_loop_uses_background_interval_and_records_without_ui_push(self):
+        mock = __import__("unittest.mock").mock
+
+        class StopSequence:
+            def __init__(self):
+                self.values = iter((False, False, True))
+
+            def is_set(self):
+                return next(self.values)
+
+        controller = app.AppController.__new__(app.AppController)
+        controller.visible = False
+        controller.foreground_interval = 60
+        controller.background_interval = 300
+        controller.stopping = StopSequence()
+        controller.refresh_wakeup = SimpleNamespace(
+            wait=mock.Mock(return_value=False),
+            clear=mock.Mock(),
+        )
+        controller.refresh_all = mock.Mock()
+
+        controller._refresh_loop()
+
+        controller.refresh_wakeup.wait.assert_called_once_with(300)
+        controller.refresh_all.assert_called_once_with(push_ui=False)
+
     def test_open_devtools_uses_native_ui_thread_and_enables_webview_setting(self):
         settings = SimpleNamespace(AreDevToolsEnabled=False)
 
@@ -1399,6 +1874,7 @@ class ControllerTests(unittest.TestCase):
             get_rate_limit_progress_mode=lambda: "used",
             get_update_frequency=lambda: "startup",
             get_close_action=lambda: "ask",
+            get_background_ui_mode=lambda: "delayed",
             get_title_bar_mode=lambda: "minimal",
             get_secret=lambda _key_id: "test-secret-value",
             rates=lambda _key_id: {
@@ -1417,6 +1893,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(state["keys"][0]["remainingQuota"], 150)
         self.assertEqual(state["refreshIntervals"], {"foreground": 60, "background": 300})
         self.assertEqual(state["rateLimitProgressMode"], "used")
+        self.assertEqual(state["backgroundUiMode"], "delayed")
         self.assertEqual(state["titleBarMode"], "minimal")
         self.assertEqual(state["activeTitleBarMode"], "minimal")
 

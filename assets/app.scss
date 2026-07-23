@@ -238,18 +238,17 @@ img, svg { display: block; }
 /* Key toolbar */
 #keyToolbar {
     z-index: 5;
-    display: flex;
-    flex: 0 0 31px;
-    align-items: center;
-    justify-content: space-between;
-    min-width: 0;
-    height: 31px;
-    padding: 4px 12px;
-    gap: 8px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-soft);
+  display: flex;
+  flex: 0 0 31px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  height: 31px;
+  padding: 4px 12px;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
 }
-
 #keyToolbar > div:first-child {
     display: flex;
     flex: 1 1 auto;
@@ -425,12 +424,43 @@ html.dark #keySwitcherMenu {
 .toolbar-action-button:first-child,
 .toolbar-action-button:nth-child(3) { width: 22px; padding: 0; }
 .toolbar-action-button:first-child { color: var(--brand); }
+#manualRefreshButton { position: relative; overflow: hidden; }
+#manualRefreshButton:disabled { cursor: default; }
+#manualRefreshCountdown {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 800 9px/1 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+#manualRefreshCountdown[hidden] { display: none !important; }
+#manualRefreshButton.is-refreshing { border-color: var(--muted); background: var(--surface-strong); color: var(--muted) !important; }
+#manualRefreshButton.is-refreshing [data-lucide] { animation: manualRefreshSpin 0.72s linear infinite; }
+#manualRefreshButton.is-refresh-success { color: var(--good) !important; animation: manualRefreshSuccess 0.7s ease-out; }
+#manualRefreshButton.is-refresh-error { color: var(--critical) !important; animation: manualRefreshError 0.7s ease-out; }
+#manualRefreshButton.is-refresh-cooldown { cursor: default; border-color: var(--border-soft); background: var(--surface-soft); color: var(--muted) !important; }
+#manualRefreshButton.is-refresh-cooldown [data-lucide] { display: none !important; }
+#manualRefreshButton.is-refresh-cooldown.is-refresh-success { color: var(--good) !important; }
+#manualRefreshButton.is-refresh-cooldown.is-refresh-error { color: var(--critical) !important; }
 .toolbar-action-button:nth-child(2) { border-color: var(--brand); background: var(--brand); color: #fff; }
 .toolbar-action-button:nth-child(2):hover { background: var(--brand-strong); }
 .toolbar-action-button:nth-child(3) { color: var(--muted); }
 .toolbar-action-button:nth-child(3):hover { background: rgba(244, 63, 94, 0.08); color: var(--critical); }
 .toolbar-action-button:hover { background: var(--surface-strong); }
 .toolbar-button-text { font-size: 10px; }
+
+@keyframes manualRefreshSpin { to { transform: rotate(360deg); } }
+@keyframes manualRefreshSuccess {
+    0%, 100% { background-color: var(--bg); box-shadow: none; }
+    35% { background-color: color-mix(in srgb, var(--good) 18%, var(--bg)); box-shadow: 0 0 9px color-mix(in srgb, var(--good) 70%, transparent); }
+}
+@keyframes manualRefreshError {
+    0%, 100% { background-color: var(--bg); box-shadow: none; }
+    25%, 70% { background-color: color-mix(in srgb, var(--critical) 16%, var(--bg)); box-shadow: 0 0 8px color-mix(in srgb, var(--critical) 58%, transparent); }
+}
 
 #widget-root.titlebar-minimal {
     #windowTitleBar {
@@ -1178,6 +1208,7 @@ html.dark #avgMinVal { color: #818cf8; }
     color: #fff;
 }
 .settings-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settings-app-behavior .settings-fields { grid-template-columns: minmax(0, 1fr); }
 .settings-thresholds > div { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .settings-group button { display: flex; align-items: center; justify-content: center; min-height: 28px; padding: 4px 8px; gap: 4px; border: 1px solid var(--border); background: var(--surface); }
 .settings-group button:disabled { cursor: default; opacity: 0.45; }
@@ -1287,6 +1318,19 @@ html.dark #avgMinVal { color: #818cf8; }
 .update-modal-panel { width: min(560px, calc(100% - 16px)); }
 .update-modal-status { display: grid; padding: 12px 16px; gap: 8px; border-bottom: 1px solid var(--border-soft); color: var(--text-soft); font-size: 11px; }
 .update-notes-heading { padding: 10px 16px 0; color: var(--muted); font-size: 10px; font-weight: 700; }
+.full-changelog-toggle {
+    align-self: flex-start;
+    margin: 0 16px 10px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 9px;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.full-changelog-toggle:hover { color: var(--brand); }
+.full-changelog-toggle[hidden] { display: none; }
 #updateChangelogContent { min-height: 150px; margin: 0; padding: 10px 16px 16px; overflow: auto; color: var(--text-soft); font: 13px/1.75 var(--font-mono); overflow-wrap: anywhere; }
 #updateChangelogContent h1 { margin: 0 0 14px; color: var(--text); font-size: 20px; line-height: 1.35; }
 #updateChangelogContent h2 { margin: 18px 0 8px; color: var(--text); font-size: 16px; line-height: 1.4; }

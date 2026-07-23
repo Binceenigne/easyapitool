@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import math
+import multiprocessing
 import os
 import shutil
 import sqlite3
@@ -23,32 +24,35 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 import winreg
+from multiprocessing.connection import Client, Listener
 
 PROCESS_STARTED_AT = time.perf_counter()
 
-import pystray
 import webview
 from PIL import Image
 from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.12"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
+BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
     "API_TOOLS_GITHUB_REPOSITORY", "Binceenigne/easyapitool"
 )
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPOSITORY}"
 RELEASE_ASSET_NAME = "API_TOOLS.exe"
 MUTEX_NAME = "Local\\API_TOOLS_EasyClin_Quota_Monitor"
+SHOW_EVENT_NAME = "Local\\API_TOOLS_EasyClin_Show_Window"
 DEFAULT_BASE_URL = "https://work.easyclin.cn/v1"
 FOREGROUND_INTERVAL = 60
 BACKGROUND_INTERVAL = 300
+BACKGROUND_UI_RELEASE_DELAY = 300
 RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "21"
+STATIC_UI_VERSION = "28"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -66,6 +70,10 @@ LUCIDE_MIRRORS = (
 )
 
 ERROR_ALREADY_EXISTS = 183
+EVENT_MODIFY_STATE = 0x0002
+SYNCHRONIZE = 0x00100000
+WAIT_OBJECT_0 = 0
+WAIT_TIMEOUT = 258
 SW_SHOW = 5
 SW_RESTORE = 9
 WM_NCLBUTTONDOWN = 0x00A1
@@ -88,11 +96,65 @@ SWP_NOZORDER = 0x0004
 RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 UPDATE_CHECK_INTERVAL = 7 * 24 * 60 * 60
 RESTART_READY_ENV = "API_TOOLS_RESTART_READY"
+MANUAL_REFRESH_COOLDOWN_SECONDS = 5
+
+
+def open_url_with_direct_fallback(request: urllib.request.Request, timeout: int) -> Any:
+    def connection_was_refused(error: BaseException) -> bool:
+        pending: list[Any] = [error]
+        seen: set[int] = set()
+        while pending:
+            current = pending.pop()
+            if current is None or id(current) in seen:
+                continue
+            seen.add(id(current))
+            if isinstance(current, ConnectionRefusedError):
+                return True
+            if getattr(current, "winerror", None) == 10061:
+                return True
+            if getattr(current, "errno", None) in {61, 111, 10061}:
+                return True
+            pending.extend(
+                [
+                    getattr(current, "reason", None),
+                    getattr(current, "__cause__", None),
+                    getattr(current, "__context__", None),
+                ]
+            )
+        return False
+
+    def clone_request() -> urllib.request.Request:
+        return urllib.request.Request(
+            request.full_url,
+            data=request.data,
+            headers=dict(request.header_items()),
+            method=request.get_method(),
+        )
+
+    try:
+        return urllib.request.urlopen(clone_request(), timeout=timeout)
+    except urllib.error.HTTPError:
+        raise
+    except (urllib.error.URLError, OSError) as proxy_error:
+        if not connection_was_refused(proxy_error):
+            raise
+        direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            return direct_opener.open(clone_request(), timeout=timeout)
+        except Exception as direct_error:
+            raise RuntimeError(
+                f"系统代理连接失败 ({proxy_error})；直连也失败 ({direct_error})"
+            ) from direct_error
 
 
 def normalize_title_bar_mode(mode: Any) -> str:
     clean = str(mode or "").strip().lower()
     return clean if clean in TITLE_BAR_MODES else "default"
+
+
+def normalize_background_ui_mode(mode: Any) -> str:
+    clean = str(mode or "").strip().lower()
+    return clean if clean in BACKGROUND_UI_MODES else "delayed"
 
 
 def window_frame_options(title_bar_mode: Any) -> dict[str, bool]:
@@ -147,6 +209,14 @@ kernel32.SetLastError.argtypes = [wintypes.DWORD]
 kernel32.SetLastError.restype = None
 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 kernel32.CloseHandle.restype = wintypes.BOOL
+kernel32.CreateEventW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
+kernel32.CreateEventW.restype = wintypes.HANDLE
+kernel32.OpenEventW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+kernel32.OpenEventW.restype = wintypes.HANDLE
+kernel32.SetEvent.argtypes = [wintypes.HANDLE]
+kernel32.SetEvent.restype = wintypes.BOOL
+kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+kernel32.WaitForSingleObject.restype = wintypes.DWORD
 dwmapi = ctypes.windll.dwmapi
 dwmapi.DwmSetWindowAttribute.argtypes = [
     wintypes.HWND,
@@ -155,7 +225,7 @@ dwmapi.DwmSetWindowAttribute.argtypes = [
     wintypes.DWORD,
 ]
 dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
-def activate_existing_instance() -> bool:
+def activate_ui_window() -> bool:
     hwnd = user32.FindWindowW(None, WINDOW_TITLE)
     if not hwnd:
         return False
@@ -164,6 +234,18 @@ def activate_existing_instance() -> bool:
         user32.ShowWindow(hwnd, SW_RESTORE)
     user32.SetForegroundWindow(hwnd)
     return True
+
+
+def activate_existing_instance() -> bool:
+    if activate_ui_window():
+        return True
+    event_handle = kernel32.OpenEventW(EVENT_MODIFY_STATE, False, SHOW_EVENT_NAME)
+    if not event_handle:
+        return False
+    try:
+        return bool(kernel32.SetEvent(event_handle))
+    finally:
+        kernel32.CloseHandle(event_handle)
 
 
 def acquire_single_instance() -> int | None:
@@ -254,6 +336,94 @@ def bundled_changelog() -> str:
         return resource_path("CHANGELOG.md").read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return f"# v{APP_VERSION}\n\n- 当前版本暂无本地更新日志。"
+
+
+def version_tuple(version: Any) -> tuple[int, ...]:
+    clean = str(version or "").strip().lower().lstrip("v")
+    values: list[int] = []
+    for part in clean.split("."):
+        digits = "".join(character for character in part if character.isdigit())
+        if not digits:
+            break
+        values.append(int(digits))
+    return tuple(values)
+
+
+def changelog_between(markdown: str, current_version: Any, latest_version: Any) -> str:
+    current = version_tuple(current_version)
+    latest = version_tuple(latest_version)
+    sections: list[tuple[tuple[int, ...], list[str]]] = []
+    active_version: tuple[int, ...] | None = None
+    active_lines: list[str] = []
+    for line in str(markdown or "").splitlines():
+        match = __import__("re").match(r"^##\s+v?(\d+(?:\.\d+)+)\b", line.strip())
+        if match:
+            if active_version is not None:
+                sections.append((active_version, active_lines))
+            active_version = version_tuple(match.group(1))
+            active_lines = [line]
+        elif active_version is not None:
+            active_lines.append(line)
+    if active_version is not None:
+        sections.append((active_version, active_lines))
+    selected = [
+        "\n".join(lines).strip()
+        for version, lines in sections
+        if current < version <= latest
+    ]
+    return "\n\n".join(item for item in selected if item)
+
+
+def changelog_for_update(
+    markdown: str,
+    current_version: Any,
+    latest_version: Any,
+    latest_release_notes: str = "",
+) -> str:
+    current = version_tuple(current_version)
+    latest = version_tuple(latest_version)
+    if latest > current:
+        selected = changelog_between(markdown, current_version, latest_version)
+        section_count = len(__import__("re").findall(r"^##\s+v?\d", selected, flags=__import__("re").M))
+        if section_count <= 1 and str(latest_release_notes or "").strip():
+            return str(latest_release_notes).strip()
+        return selected or str(latest_release_notes or "").strip()
+    current_notes = changelog_between(markdown, "0", current_version)
+    sections = __import__("re").split(r"(?=^##\s+v?\d)", current_notes, flags=__import__("re").M)
+    return next((section.strip() for section in sections if section.strip()), "")
+
+
+def release_notes_since(releases: list[dict[str, Any]], current_version: Any) -> str:
+    current = version_tuple(current_version)
+    pending = [
+        release
+        for release in releases
+        if not release.get("draft")
+        and not release.get("prerelease")
+        and version_tuple(release.get("tag_name")) > current
+    ]
+    pending.sort(key=lambda release: version_tuple(release.get("tag_name")), reverse=True)
+    sections: list[str] = []
+    for release in pending:
+        version = str(release.get("tag_name") or "").strip().lstrip("v")
+        notes = str(release.get("body") or "").strip()
+        if not notes:
+            notes = "- 本版本暂无更新说明。"
+        notes = __import__("re").sub(
+            r"^#{1,3}\s+(更新日志|更新内容|Release Notes)\s*\r?\n+",
+            "",
+            notes,
+            count=1,
+            flags=__import__("re").I,
+        ).strip()
+        version_heading = __import__("re").compile(
+            rf"^#{{1,3}}\s+v?{__import__('re').escape(version)}\b",
+            __import__("re").I,
+        )
+        if not version_heading.match(notes):
+            notes = f"## {version}\n\n{notes}"
+        sections.append(notes)
+    return "\n\n".join(sections)
 
 
 class StaticAssetCache:
@@ -542,6 +712,101 @@ startup_trace: StartupTrace | None = None
 def trace_startup(stage: str, **details: Any) -> None:
     if startup_trace is not None:
         startup_trace.write(stage, **details)
+
+
+RPC_METHODS = {
+    "add_key",
+    "check_for_updates",
+    "delete_key",
+    "defer_update_restart",
+    "dismiss_update_prompt",
+    "download_update",
+    "exit_app",
+    "get_asset_status",
+    "get_state",
+    "ignore_update_version",
+    "initialize_assets",
+    "refresh_now",
+    "report_startup",
+    "restart_app",
+    "restart_update",
+    "claim_ui_release",
+    "notify_ui_hidden",
+    "set_ui_visible",
+    "update_app_preferences",
+    "update_refresh_intervals",
+    "update_rate_limit_progress_mode",
+    "update_thresholds",
+}
+
+
+class ControllerRpcServer:
+    def __init__(self, controller: "AppController", address: str, authkey: bytes) -> None:
+        self.controller = controller
+        self.address = address
+        self.authkey = authkey
+        self.listener: Listener | None = None
+        self.thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self.listener = Listener(self.address, family="AF_PIPE", authkey=self.authkey)
+        self.thread = threading.Thread(target=self._serve, name="controller-rpc", daemon=True)
+        self.thread.start()
+
+    def _serve(self) -> None:
+        while not self.controller.stopping.is_set():
+            try:
+                connection = self.listener.accept() if self.listener else None
+            except (OSError, EOFError):
+                break
+            if connection is None:
+                continue
+            threading.Thread(
+                target=self._handle_connection,
+                args=(connection,),
+                name="controller-rpc-request",
+                daemon=True,
+            ).start()
+
+    def _handle_connection(self, connection: Any) -> None:
+        try:
+            request = connection.recv()
+            method_name = str(request.get("method") or "") if isinstance(request, dict) else ""
+            arguments = request.get("args", []) if isinstance(request, dict) else []
+            if method_name not in RPC_METHODS:
+                raise ValueError("不允许的后台调用")
+            method = getattr(self.controller, method_name)
+            connection.send({"ok": True, "result": method(*arguments)})
+        except Exception as exc:
+            try:
+                connection.send({"ok": False, "error": str(exc)})
+            except (OSError, EOFError):
+                pass
+        finally:
+            connection.close()
+
+    def stop(self) -> None:
+        listener = self.listener
+        self.listener = None
+        if listener:
+            listener.close()
+
+
+class ControllerRpcClient:
+    def __init__(self, address: str, authkey: bytes) -> None:
+        self.address = address
+        self.authkey = authkey
+
+    def call(self, method: str, *arguments: Any) -> Any:
+        connection = Client(self.address, family="AF_PIPE", authkey=self.authkey)
+        try:
+            connection.send({"method": method, "args": list(arguments)})
+            response = connection.recv()
+        finally:
+            connection.close()
+        if not response.get("ok"):
+            raise RuntimeError(response.get("error") or "后台服务调用失败")
+        return response.get("result")
 
 
 class DATA_BLOB(ctypes.Structure):
@@ -1294,6 +1559,23 @@ class Store:
             )
         return clean
 
+    def get_background_ui_mode(self) -> str:
+        with self.lock, self.connect() as db:
+            row = db.execute(
+                "SELECT value FROM settings WHERE name='background_ui_mode'"
+            ).fetchone()
+        return normalize_background_ui_mode(row["value"] if row else None)
+
+    def set_background_ui_mode(self, mode: Any) -> str:
+        clean = normalize_background_ui_mode(mode)
+        with self.lock, self.connect() as db:
+            db.execute(
+                """INSERT INTO settings(name,value) VALUES('background_ui_mode',?)
+                ON CONFLICT(name) DO UPDATE SET value=excluded.value""",
+                (clean,),
+            )
+        return clean
+
     def get_title_bar_mode(self) -> str:
         with self.lock, self.connect() as db:
             row = db.execute(
@@ -1398,7 +1680,12 @@ class EasyClinClient:
 
 
 class AppController:
-    def __init__(self, asset_cache: StaticAssetCache | None = None) -> None:
+    def __init__(
+        self,
+        asset_cache: StaticAssetCache | None = None,
+        ui_show_callback: Any = None,
+        ui_hide_callback: Any = None,
+    ) -> None:
         trace_startup("controller_init_started")
         self.asset_cache = asset_cache or StaticAssetCache()
         self.store = Store(app_data_dir() / "api_tools.db")
@@ -1408,21 +1695,30 @@ class AppController:
         self.store.import_environment_key()
         self.window: webview.Window | None = None
         self.tray: Any = None
+        self.ui_show_callback = ui_show_callback
+        self.ui_hide_callback = ui_hide_callback
         self.visible = True
+        self.ui_visibility_token = 0
         self.maximized = False
         self.drag_restore_suppressed_until = 0.0
         self.stopping = threading.Event()
         self.frontend_ready = threading.Event()
         self.refresh_wakeup = threading.Event()
         self.refresh_lock = threading.Lock()
+        self.manual_refresh_lock = threading.Lock()
+        self.manual_refresh_available_at = 0.0
         self.update_lock = threading.Lock()
+        full_release_notes = bundled_changelog()
         self.update_state: dict[str, Any] = {
             "status": "idle",
             "percent": 0,
             "message": "尚未检查更新",
             "currentVersion": APP_VERSION,
             "latestVersion": APP_VERSION,
-            "releaseNotes": bundled_changelog(),
+            "releaseNotes": changelog_for_update(
+                full_release_notes, APP_VERSION, APP_VERSION
+            ),
+            "fullReleaseNotes": full_release_notes,
             "available": False,
             "showPrompt": False,
         }
@@ -1484,6 +1780,33 @@ class AppController:
         trace_startup("webview_page_loaded")
         if self.asset_cache.is_ready():
             self.frontend_ready.set()
+
+    def set_ui_visible(self, visible: Any) -> dict[str, Any]:
+        self.visible = bool(visible)
+        self.ui_visibility_token += 1
+        self.refresh_wakeup.set()
+        return {
+            "ok": True,
+            "visible": self.visible,
+            "visibilityToken": self.ui_visibility_token,
+        }
+
+    def notify_ui_hidden(self) -> dict[str, Any]:
+        state = self.set_ui_visible(False)
+        state["backgroundUiMode"] = self.store.get_background_ui_mode()
+        return state
+
+    def claim_ui_release(self, visibility_token: Any) -> dict[str, Any]:
+        try:
+            token = int(visibility_token)
+        except (TypeError, ValueError):
+            token = -1
+        release = (
+            not self.visible
+            and token == self.ui_visibility_token
+            and self.store.get_background_ui_mode() == "delayed"
+        )
+        return {"ok": True, "release": release}
 
     def initialize_assets(self, retry: Any = False) -> dict[str, Any]:
         return self.asset_cache.start_install(retry=bool(retry))
@@ -1616,6 +1939,8 @@ class AppController:
     def _start_tray(self) -> None:
         trace_startup("tray_init_started")
         try:
+            import pystray
+
             image = Image.open(self.icon_png).convert("RGBA")
             menu = pystray.Menu(
                 pystray.MenuItem("显示 DJYX_APITOOL", lambda _icon, _item: self.show_window(), default=True),
@@ -1709,7 +2034,7 @@ class AppController:
         self._push_update_state()
 
     @staticmethod
-    def _github_json(path: str) -> dict[str, Any]:
+    def _github_json(path: str) -> Any:
         request = urllib.request.Request(
             f"{GITHUB_API_URL}{path}",
             headers={
@@ -1718,7 +2043,7 @@ class AppController:
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
-        with urllib.request.urlopen(request, timeout=25) as response:
+        with open_url_with_direct_fallback(request, timeout=25) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def check_for_updates(self, manual: Any = True) -> dict[str, Any]:
@@ -1741,7 +2066,28 @@ class AppController:
                 showPrompt=manual,
             )
             try:
-                release = self._github_json("/releases/latest")
+                try:
+                    release_payload = self._github_json("/releases?per_page=20")
+                except Exception:
+                    release_payload = self._github_json("/releases/latest")
+                releases = (
+                    [item for item in release_payload if isinstance(item, dict)]
+                    if isinstance(release_payload, list)
+                    else [release_payload]
+                    if isinstance(release_payload, dict)
+                    else []
+                )
+                stable_releases = [
+                    item
+                    for item in releases
+                    if not item.get("draft") and not item.get("prerelease")
+                ]
+                if not stable_releases:
+                    raise RuntimeError("GitHub 没有可用的正式版本")
+                release = max(
+                    stable_releases,
+                    key=lambda item: version_tuple(item.get("tag_name")),
+                )
                 self.store.set_last_update_check(time.time())
                 latest = str(release.get("tag_name") or "").lstrip("v")
                 assets = {
@@ -1749,6 +2095,21 @@ class AppController:
                     for asset in release.get("assets") or []
                 }
                 available = is_newer_version(latest) and RELEASE_ASSET_NAME in assets
+                full_notes = bundled_changelog()
+                pending_notes = release_notes_since(stable_releases, APP_VERSION)
+                concise_notes = (
+                    pending_notes
+                    if available and pending_notes
+                    else changelog_for_update(
+                        full_notes,
+                        APP_VERSION,
+                        latest or APP_VERSION,
+                        str(release.get("body") or ""),
+                    )
+                )
+                complete_notes = (
+                    f"{pending_notes}\n\n{full_notes}" if pending_notes else full_notes
+                )
                 self.update_state["release"] = {
                     "version": latest,
                     "notes": str(release.get("body") or ""),
@@ -1773,7 +2134,8 @@ class AppController:
                     percent=100,
                     message=(f"发现新版本 v{latest}" if available else "当前已是最新版本"),
                     latestVersion=latest or APP_VERSION,
-                    releaseNotes=str(release.get("body") or ""),
+                    releaseNotes=concise_notes,
+                    fullReleaseNotes=complete_notes,
                     available=available,
                     showPrompt=available and (
                         manual or self.store.get_ignored_update_version() != latest
@@ -1832,7 +2194,7 @@ class AppController:
                 },
             )
             try:
-                return urllib.request.urlopen(request, timeout=timeout)
+                return open_url_with_direct_fallback(request, timeout=timeout)
             except Exception as exc:
                 errors.append(str(exc))
         detail = errors[-1] if errors else "没有可用下载地址"
@@ -2230,6 +2592,7 @@ class AppController:
                 else ""
             ),
             "closeAction": self.store.get_close_action(),
+            "backgroundUiMode": self.store.get_background_ui_mode(),
             "titleBarMode": self.store.get_title_bar_mode(),
             "activeTitleBarMode": self.active_title_bar_mode,
             "startupEnabled": startup_is_enabled(),
@@ -2263,9 +2626,104 @@ class AppController:
         self.store.delete_key(key_id)
         return {"ok": True, "state": self.get_state()}
 
-    def refresh_now(self) -> dict[str, Any]:
-        result = self.refresh_all(push_ui=False)
-        return {"ok": not result["failed"], **result, "state": self.get_state()}
+    def refresh_now(self, trace_id: Any = None) -> dict[str, Any]:
+        trace_id = str(trace_id or "").strip()[:80] or "backend-refresh"
+        debug_started_at = time.perf_counter()
+        debug_events: list[dict[str, Any]] = []
+
+        def mark_debug(event: str, **details: Any) -> None:
+            debug_events.append({
+                "event": event,
+                "elapsedMs": round((time.perf_counter() - debug_started_at) * 1000, 1),
+                **details,
+            })
+
+        def with_debug(payload: dict[str, Any], outcome: str) -> dict[str, Any]:
+            mark_debug(
+                "response",
+                outcome=outcome,
+                manualLockLocked=self.manual_refresh_lock.locked(),
+                refreshLockLocked=self.refresh_lock.locked(),
+            )
+            payload["debug"] = {
+                "traceId": trace_id,
+                "outcome": outcome,
+                "durationMs": round((time.perf_counter() - debug_started_at) * 1000, 1),
+                "events": debug_events,
+            }
+            return payload
+
+        now = time.monotonic()
+        cooldown = max(0.0, self.manual_refresh_available_at - now)
+        mark_debug(
+            "received",
+            cooldownSeconds=round(cooldown, 3),
+            manualLockLocked=self.manual_refresh_lock.locked(),
+            refreshLockLocked=self.refresh_lock.locked(),
+        )
+        if cooldown > 0:
+            return with_debug({
+                "ok": False,
+                "busy": False,
+                "cooldownSeconds": cooldown,
+                "error": "手动刷新冷却中",
+            }, "cooldown")
+        if not self.manual_refresh_lock.acquire(blocking=False):
+            return with_debug({
+                "ok": False,
+                "busy": True,
+                "cooldownSeconds": cooldown,
+                "error": "手动刷新正在进行",
+            }, "manual-lock-busy")
+        mark_debug("manual-lock-acquired")
+        try:
+            if not self.refresh_lock.acquire(blocking=False):
+                return with_debug({
+                    "ok": False,
+                    "busy": True,
+                    "cooldownSeconds": 0,
+                    "error": "后台刷新正在进行",
+                }, "background-lock-busy")
+            mark_debug("refresh-lock-acquired")
+            self.manual_refresh_available_at = (
+                now + MANUAL_REFRESH_COOLDOWN_SECONDS
+            )
+            try:
+                refreshed: list[str] = []
+                failed: list[str] = []
+                records = self.store.list_key_records()
+                mark_debug("keys-loaded", count=len(records))
+                for index, record in enumerate(records, start=1):
+                    mark_debug("key-refresh-started", index=index, total=len(records))
+                    succeeded = self._refresh_key(record["id"])
+                    mark_debug(
+                        "key-refresh-finished",
+                        index=index,
+                        total=len(records),
+                        succeeded=succeeded,
+                    )
+                    if succeeded:
+                        refreshed.append(record["id"])
+                    else:
+                        failed.append(record["id"])
+            finally:
+                self.refresh_lock.release()
+                mark_debug("refresh-lock-released")
+            valid = bool(refreshed) and not failed
+            return with_debug({
+                "ok": valid,
+                "valid": valid,
+                "refreshed": refreshed,
+                "failed": failed,
+                "cooldownSeconds": max(
+                    0.0, self.manual_refresh_available_at - time.monotonic()
+                ),
+                "state": self.get_state(),
+                "error": "" if valid else "未获取到全部密钥的有效回复",
+            }, "success" if valid else "invalid-response")
+        finally:
+            self.manual_refresh_lock.release()
+            mark_debug("manual-lock-released")
 
     def update_thresholds(self, thresholds: dict[str, Any]) -> dict[str, Any]:
         clean = self.store.set_thresholds(thresholds)
@@ -2294,6 +2752,7 @@ class AppController:
         close_action: Any,
         startup_enabled: Any,
         title_bar_mode: Any = None,
+        background_ui_mode: Any = None,
     ) -> dict[str, Any]:
         frequency = self.store.set_update_frequency(update_frequency)
         action = self.store.set_close_action(close_action)
@@ -2302,11 +2761,17 @@ class AppController:
             if title_bar_mode is None
             else self.store.set_title_bar_mode(title_bar_mode)
         )
+        background_mode = (
+            self.store.get_background_ui_mode()
+            if background_ui_mode is None
+            else self.store.set_background_ui_mode(background_ui_mode)
+        )
         startup = set_startup_enabled(bool(startup_enabled))
         return {
             "ok": True,
             "updateFrequency": frequency,
             "closeAction": action,
+            "backgroundUiMode": background_mode,
             "titleBarMode": title_bar,
             "startupEnabled": startup,
             "state": self.get_state(),
@@ -2382,6 +2847,10 @@ class AppController:
     def hide_window(self) -> None:
         self.visible = False
         self.refresh_wakeup.set()
+        ui_hide_callback = getattr(self, "ui_hide_callback", None)
+        if ui_hide_callback:
+            ui_hide_callback()
+            return
         native_form = getattr(self.window, "native", None) if self.window else None
         if native_form is not None:
             try:
@@ -2397,6 +2866,10 @@ class AppController:
     def show_window(self) -> None:
         self.visible = True
         self.refresh_wakeup.set()
+        ui_show_callback = getattr(self, "ui_show_callback", None)
+        if ui_show_callback:
+            ui_show_callback()
+            return
 
         def show_native_window() -> None:
             if not self.window:
@@ -2501,8 +2974,8 @@ class WebApi:
     def delete_key(self, key_id: str) -> dict[str, Any]:
         return self._controller.delete_key(key_id)
 
-    def refresh_now(self) -> dict[str, Any]:
-        return self._controller.refresh_now()
+    def refresh_now(self, trace_id: Any = None) -> dict[str, Any]:
+        return self._controller.refresh_now(trace_id)
 
     def update_thresholds(self, thresholds: dict[str, Any]) -> dict[str, Any]:
         return self._controller.update_thresholds(thresholds)
@@ -2519,9 +2992,14 @@ class WebApi:
         close_action: Any,
         startup_enabled: Any,
         title_bar_mode: Any = None,
+        background_ui_mode: Any = None,
     ) -> dict[str, Any]:
         return self._controller.update_app_preferences(
-            update_frequency, close_action, startup_enabled, title_bar_mode
+            update_frequency,
+            close_action,
+            startup_enabled,
+            title_bar_mode,
+            background_ui_mode,
         )
 
     def restart_app(self) -> dict[str, Any]:
@@ -2564,6 +3042,257 @@ class WebApi:
         return self._controller.report_startup(stage, navigation_ms)
 
 
+class BackgroundApp:
+    def __init__(self, asset_cache: StaticAssetCache | None = None) -> None:
+        self.rpc_address = rf"\\.\pipe\API_TOOLS_{os.getpid()}_{uuid.uuid4().hex}"
+        self.rpc_authkey = os.urandom(32)
+        self.ui_process: multiprocessing.Process | None = None
+        self.ui_lock = threading.Lock()
+        self.controller = AppController(
+            asset_cache,
+            ui_show_callback=self.show_ui,
+            ui_hide_callback=self.hide_ui,
+        )
+        self.rpc_server = ControllerRpcServer(
+            self.controller, self.rpc_address, self.rpc_authkey
+        )
+        self.show_event_handle = kernel32.CreateEventW(None, False, False, SHOW_EVENT_NAME)
+        if not self.show_event_handle:
+            raise ctypes.WinError()
+
+    def start(self) -> None:
+        self.rpc_server.start()
+        self.controller.start_workers()
+        threading.Thread(target=self._show_event_loop, name="show-window-event", daemon=True).start()
+        self.show_ui()
+
+    def _show_event_loop(self) -> None:
+        while not self.controller.stopping.is_set():
+            result = kernel32.WaitForSingleObject(self.show_event_handle, 500)
+            if result == WAIT_OBJECT_0:
+                self.show_ui()
+            elif result != WAIT_TIMEOUT:
+                break
+
+    def _watch_ui_process(self, process: multiprocessing.Process) -> None:
+        process.join()
+        with self.ui_lock:
+            if self.ui_process is process:
+                self.ui_process = None
+                self.hide_ui()
+        trace_startup("ui_process_exited", exitCode=process.exitcode)
+
+    def show_ui(self) -> None:
+        with self.ui_lock:
+            process = self.ui_process
+            if process and process.is_alive():
+                activate_ui_window()
+                self.controller.set_ui_visible(True)
+                return
+            process = multiprocessing.Process(
+                target=run_ui_process,
+                args=(self.rpc_address, self.rpc_authkey),
+                name="API_TOOLS_UI",
+            )
+            process.start()
+            self.ui_process = process
+            self.controller.set_ui_visible(True)
+            threading.Thread(
+                target=self._watch_ui_process,
+                args=(process,),
+                name="ui-process-monitor",
+                daemon=True,
+            ).start()
+            trace_startup("ui_process_started", pid=process.pid)
+
+    def hide_ui(self) -> None:
+        self.controller.set_ui_visible(False)
+
+    def stop(self) -> None:
+        self.controller.stopping.set()
+        self.controller.refresh_wakeup.set()
+        self.rpc_server.stop()
+        if self.controller.tray:
+            self.controller.tray.stop()
+        with self.ui_lock:
+            process = self.ui_process
+            if process and process.is_alive():
+                process.terminate()
+                process.join(timeout=3)
+        if self.show_event_handle:
+            kernel32.CloseHandle(self.show_event_handle)
+            self.show_event_handle = None
+
+
+class UiController(AppController):
+    def __init__(self, rpc_client: ControllerRpcClient, asset_cache: StaticAssetCache) -> None:
+        super().__init__(asset_cache)
+        self.rpc_client = rpc_client
+        self.release_timer: threading.Timer | None = None
+
+    def _destroy_ui(self) -> None:
+        self.stopping.set()
+        if self.window:
+            threading.Timer(0.01, self.window.destroy).start()
+
+    def _release_if_still_hidden(self, visibility_token: int) -> None:
+        try:
+            result = self.rpc_client.call("claim_ui_release", visibility_token)
+        except Exception:
+            result = {"release": True}
+        if result.get("release"):
+            self._destroy_ui()
+
+    def hide_window(self) -> None:
+        AppController.hide_window(self)
+        try:
+            state = self.rpc_client.call("notify_ui_hidden")
+        except Exception:
+            self._destroy_ui()
+            return
+        mode = normalize_background_ui_mode(state.get("backgroundUiMode"))
+        if mode == "active":
+            return
+        if mode == "low_power":
+            self._destroy_ui()
+            return
+        visibility_token = int(state.get("visibilityToken") or -1)
+        self.release_timer = threading.Timer(
+            BACKGROUND_UI_RELEASE_DELAY,
+            self._release_if_still_hidden,
+            args=(visibility_token,),
+        )
+        self.release_timer.daemon = True
+        self.release_timer.start()
+
+    def exit_app(self) -> None:
+        if self.release_timer:
+            self.release_timer.cancel()
+        try:
+            self.rpc_client.call("exit_app")
+        finally:
+            self.stopping.set()
+            if self.window:
+                self.window.destroy()
+
+    def restart_app(self) -> dict[str, Any]:
+        return self.rpc_client.call("restart_app")
+
+    def restart_update(self) -> dict[str, Any]:
+        return self.rpc_client.call("restart_update")
+
+    def complete_initialization(self) -> dict[str, Any]:
+        if not self.asset_cache.is_ready() or not self.window:
+            return {"ok": False, "error": "静态资源缓存尚未就绪"}
+        url = self.asset_cache.main_page.as_uri()
+        self.window.load_url(url)
+        return {"ok": True, "url": url}
+
+
+class RemoteWebApi(WebApi):
+    def __init__(self, controller: UiController, rpc_client: ControllerRpcClient) -> None:
+        super().__init__(controller)
+        self._rpc_client = rpc_client
+
+    def _remote(self, method: str, *arguments: Any) -> Any:
+        return self._rpc_client.call(method, *arguments)
+
+    def get_state(self) -> dict[str, Any]:
+        state = self._remote("get_state")
+        state["isForeground"] = True
+        return state
+
+    def initialize_assets(self, retry: Any = False) -> dict[str, Any]:
+        return self._remote("initialize_assets", retry)
+
+    def get_asset_status(self) -> dict[str, Any]:
+        return self._remote("get_asset_status")
+
+    def add_key(self, name: str, value: str) -> dict[str, Any]:
+        return self._remote("add_key", name, value)
+
+    def delete_key(self, key_id: str) -> dict[str, Any]:
+        return self._remote("delete_key", key_id)
+
+    def refresh_now(self, trace_id: Any = None) -> dict[str, Any]:
+        return self._remote("refresh_now", trace_id)
+
+    def update_thresholds(self, thresholds: dict[str, Any]) -> dict[str, Any]:
+        return self._remote("update_thresholds", thresholds)
+
+    def update_rate_limit_progress_mode(self, mode: Any) -> dict[str, Any]:
+        return self._remote("update_rate_limit_progress_mode", mode)
+
+    def update_refresh_intervals(self, foreground: Any, background: Any) -> dict[str, Any]:
+        return self._remote("update_refresh_intervals", foreground, background)
+
+    def update_app_preferences(
+        self,
+        update_frequency: Any,
+        close_action: Any,
+        startup_enabled: Any,
+        title_bar_mode: Any = None,
+        background_ui_mode: Any = None,
+    ) -> dict[str, Any]:
+        return self._remote(
+            "update_app_preferences",
+            update_frequency,
+            close_action,
+            startup_enabled,
+            title_bar_mode,
+            background_ui_mode,
+        )
+
+    def check_for_updates(self) -> dict[str, Any]:
+        return self._remote("check_for_updates")
+
+    def download_update(self) -> dict[str, Any]:
+        return self._remote("download_update")
+
+    def defer_update_restart(self) -> dict[str, Any]:
+        return self._remote("defer_update_restart")
+
+    def dismiss_update_prompt(self) -> dict[str, Any]:
+        return self._remote("dismiss_update_prompt")
+
+    def ignore_update_version(self, version: Any) -> dict[str, Any]:
+        return self._remote("ignore_update_version", version)
+
+    def report_startup(self, stage: str, navigation_ms: Any = 0) -> dict[str, Any]:
+        return self._remote("report_startup", stage, navigation_ms)
+
+
+def run_ui_process(rpc_address: str, rpc_authkey: bytes) -> None:
+    rpc_client = ControllerRpcClient(rpc_address, rpc_authkey)
+    asset_cache = StaticAssetCache()
+    state = rpc_client.call("get_state")
+    title_bar_mode = state.get("titleBarMode") or "default"
+    frame_options = window_frame_options(title_bar_mode)
+    minimum_size = window_min_size(title_bar_mode)
+    initial_page = (
+        asset_cache.main_page if asset_cache.is_ready() else resource_path("initialize.html")
+    )
+    controller = UiController(rpc_client, asset_cache)
+    controller.active_title_bar_mode = normalize_title_bar_mode(title_bar_mode)
+    window = webview.create_window(
+        WINDOW_TITLE,
+        url=str(initial_page),
+        js_api=RemoteWebApi(controller, rpc_client),
+        width=920,
+        height=680,
+        min_size=minimum_size,
+        resizable=True,
+        frameless=frame_options["frameless"],
+        easy_drag=frame_options["easy_drag"],
+        shadow=True,
+        background_color="#0f172a",
+    )
+    if window is None:
+        return
+    controller.bind_window(window)
+    webview.start(gui="edgechromium", icon=str(resource_path("assets/api_tools_icon.ico")))
+
+
 def main() -> None:
     global startup_trace
     startup_trace = StartupTrace(app_data_dir() / "startup.log")
@@ -2576,46 +3305,15 @@ def main() -> None:
     if mutex_handle is None:
         trace_startup("existing_instance_activated")
         return
-    asset_cache = StaticAssetCache()
-    controller = AppController(asset_cache)
-    title_bar_mode = controller.store.get_title_bar_mode()
-    frame_options = window_frame_options(title_bar_mode)
-    minimum_size = window_min_size(title_bar_mode)
-    initial_page = (
-        asset_cache.main_page
-        if asset_cache.is_ready()
-        else resource_path("initialize.html")
-    )
-    trace_startup(
-        "static_assets_checked",
-        ready=asset_cache.is_ready(),
-        release=asset_cache.release_id,
-    )
-    trace_startup("create_window_started")
-    window = webview.create_window(
-        WINDOW_TITLE,
-        url=str(initial_page),
-        js_api=WebApi(controller),
-        width=920,
-        height=680,
-        min_size=minimum_size,
-        resizable=True,
-        frameless=frame_options["frameless"],
-        easy_drag=frame_options["easy_drag"],
-        shadow=True,
-        background_color="#0f172a",
-    )
-    trace_startup("create_window_finished")
-    if window is None:
-        kernel32.CloseHandle(mutex_handle)
-        return
-    controller.bind_window(window)
+    background_app = BackgroundApp(StaticAssetCache())
     try:
-        trace_startup("webview_start_entered")
-        webview.start(controller.start_workers, gui="edgechromium", icon=str(resource_path("assets/api_tools_icon.ico")))
+        background_app.start()
+        background_app.controller.stopping.wait()
     finally:
+        background_app.stop()
         kernel32.CloseHandle(mutex_handle)
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()
