@@ -409,6 +409,10 @@ def release_notes_since(releases: list[dict[str, Any]], current_version: Any) ->
         notes = str(release.get("body") or "").strip()
         if not notes:
             notes = "- 本版本暂无更新说明。"
+        versioned_notes = changelog_between(notes, current_version, version)
+        if versioned_notes:
+            sections.append(versioned_notes)
+            continue
         notes = __import__("re").sub(
             r"^#{1,3}\s+(更新日志|更新内容|Release Notes)\s*\r?\n+",
             "",

@@ -59,6 +59,24 @@ class StoreTests(unittest.TestCase):
         self.assertIn("中间版本", result)
         self.assertNotIn("已安装版本", result)
 
+    def test_release_notes_since_filters_cumulative_release_body(self):
+        releases = [
+            {
+                "tag_name": "v1.0.12",
+                "body": (
+                    "## 1.0.12\n- 最新版本\n\n"
+                    "## 1.0.11\n- 中间版本\n\n"
+                    "## 1.0.10\n- 已安装版本"
+                ),
+            }
+        ]
+
+        result = app.release_notes_since(releases, "1.0.10")
+
+        self.assertIn("最新版本", result)
+        self.assertIn("中间版本", result)
+        self.assertNotIn("已安装版本", result)
+
     @patch("app.protect_secret", side_effect=lambda value: value)
     @patch("app.unprotect_secret", side_effect=lambda value: value)
     def test_snapshot_and_rates(self, _unprotect, _protect):
