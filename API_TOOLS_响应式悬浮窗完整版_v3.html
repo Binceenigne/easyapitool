@@ -827,15 +827,15 @@
     <div id="widget-root">
         <!-- Windows 风格顶部窗口外框 -->
         <header id="windowTitleBar">
-            <button type="button" id="titlebarPinButton" class="always-on-top-button titlebar-pin-button" onclick="toggleAlwaysOnTop()" title="置顶窗口" aria-label="置顶窗口" aria-pressed="false">
-                <i data-lucide="pin" class="titlebar-icon" aria-hidden="true"></i>
-            </button>
             <div id="windowTitleIdentity">
                 <img id="windowTitleLogo" src="assets/title_logo.png" alt="">
                 <span id="windowTitleText">DJYX_APITOOL</span>
             </div>
 
             <div class="window-controls">
+                <button type="button" id="titlebarPinButton" class="window-control always-on-top-button titlebar-pin-button" onclick="toggleAlwaysOnTop()" title="置顶窗口" aria-label="置顶窗口" aria-pressed="false">
+                    <i data-lucide="pin" class="titlebar-icon" aria-hidden="true"></i>
+                </button>
                 <button type="button" onclick="requestWindowAction('minimize')" class="window-control" title="最小化" aria-label="最小化">
                     <i data-lucide="minus" class="titlebar-icon" aria-hidden="true"></i>
                 </button>

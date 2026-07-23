@@ -36,7 +36,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.13"
+APP_VERSION = "1.0.14"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -54,7 +54,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "29"
+STATIC_UI_VERSION = "30"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
