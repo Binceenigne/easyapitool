@@ -1,6 +1,6 @@
 {
   "name": "djyx-api-tool-ui",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "private": true,
   "scripts": {
     "build:css": "sass --style=expanded --no-source-map assets/app.scss assets/app.css",

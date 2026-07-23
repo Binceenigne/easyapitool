@@ -1490,27 +1490,87 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual([item[2] for item in notifications], [1, 2])
 
-    def test_release_asset_download_falls_back_to_browser_url(self):
+    def test_release_asset_download_uses_curl_and_falls_back_to_browser_url(self):
         controller = app.AppController.__new__(app.AppController)
         controller.update_state = {}
         controller.window = None
         controller.visible = False
-        fallback_response = object()
 
-        with patch(
-            "app.urllib.request.urlopen",
-            side_effect=[TimeoutError("API timeout"), fallback_response],
-        ) as urlopen:
-            response = controller._open_release_asset(
-                ["https://api.example/asset", "https://download.example/asset"],
-                "正在连接下载源",
-            )
+        with tempfile.TemporaryDirectory() as temp:
+            destination = Path(temp) / "update.download"
 
-        self.assertIs(response, fallback_response)
-        self.assertEqual(urlopen.call_count, 2)
-        self.assertEqual(urlopen.call_args_list[0].args[0].full_url, "https://api.example/asset")
-        self.assertEqual(urlopen.call_args_list[1].args[0].full_url, "https://download.example/asset")
-        self.assertEqual(urlopen.call_args_list[0].kwargs["timeout"], 20)
+            class FakeProcess:
+                def __init__(self, command):
+                    self.returncode = 35 if command[-1] == "https://api.example/asset" else 0
+                    if self.returncode == 0:
+                        destination.write_bytes(b"new-binary")
+
+                def poll(self):
+                    return self.returncode
+
+                def communicate(self):
+                    return b"", b"TLS EOF" if self.returncode else b""
+
+            with patch("app.shutil.which", return_value="curl.exe"), patch(
+                "app.urllib.request.getproxies", return_value={}
+            ), patch("app.subprocess.Popen", side_effect=lambda command, **_kwargs: FakeProcess(command)) as curl:
+                result = controller._download_release_file(
+                    ["https://api.example/asset", "https://download.example/asset"],
+                    destination,
+                    "正在连接下载源",
+                    len(b"new-binary"),
+                )
+
+            self.assertEqual(result.read_bytes(), b"new-binary")
+
+        self.assertEqual(curl.call_count, 2)
+        self.assertEqual(curl.call_args_list[0].args[0][-1], "https://api.example/asset")
+        self.assertEqual(curl.call_args_list[1].args[0][-1], "https://download.example/asset")
+        self.assertIn("--continue-at", curl.call_args_list[0].args[0])
+        self.assertIn("--retry-all-errors", curl.call_args_list[0].args[0])
+
+    def test_release_asset_download_reports_file_progress(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.update_state = {}
+        controller.window = None
+        controller.visible = False
+        updates = []
+        controller._set_update_state = lambda **changes: updates.append(changes)
+
+        with tempfile.TemporaryDirectory() as temp:
+            destination = Path(temp) / "update.download"
+
+            class FakeProcess:
+                returncode = 0
+
+                def __init__(self):
+                    self.polls = 0
+
+                def poll(self):
+                    self.polls += 1
+                    if self.polls == 1:
+                        destination.write_bytes(b"12345")
+                        return None
+                    destination.write_bytes(b"1234567890")
+                    return 0
+
+                def communicate(self):
+                    return b"", b""
+
+            with patch("app.shutil.which", return_value="curl.exe"), patch(
+                "app.urllib.request.getproxies", return_value={}
+            ), patch("app.subprocess.Popen", return_value=FakeProcess()), patch(
+                "app.time.sleep"
+            ):
+                controller._download_release_file(
+                    ["https://download.example/asset"],
+                    destination,
+                    "正在连接下载源",
+                    10,
+                )
+
+        self.assertTrue(any(update.get("percent") == 50 for update in updates))
+        self.assertEqual(updates[-1]["percent"], 99)
 
     def test_launch_updater_handles_missing_process_and_retries_replacement(self):
         controller = app.AppController.__new__(app.AppController)
@@ -1553,26 +1613,12 @@ class ControllerTests(unittest.TestCase):
         controller.exit_app.assert_called_once_with()
 
     def test_download_completion_waits_for_restart_confirmation(self):
-        class DownloadResponse:
-            headers = {"Content-Length": "10"}
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                return False
-
-            def read(self, _size=-1):
-                if hasattr(self, "consumed"):
-                    return b""
-                self.consumed = True
-                return b"new-binary"
-
         controller = app.AppController.__new__(app.AppController)
         controller.update_lock = __import__("threading").Lock()
         controller.update_state = {
             "release": {
                 "version": "9.9.9",
+                "downloadSize": 10,
                 "downloadApiUrl": "download-api",
                 "downloadUrl": "download-web",
                 "checksumApiUrl": "checksum-api",
@@ -1585,7 +1631,11 @@ class ControllerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, patch(
             "app.app_data_dir", return_value=Path(temp)
         ), patch.object(
-            controller, "_open_release_asset", return_value=DownloadResponse()
+            controller,
+            "_download_release_file",
+            side_effect=lambda _urls, destination, _message, _size: destination.write_bytes(
+                b"new-binary"
+            ) or destination,
         ), patch.object(
             controller, "_download_text", return_value=app.sha256_bytes(b"new-binary")
         ), patch.object(controller, "_launch_updater") as launch_updater:
@@ -1601,6 +1651,34 @@ class ControllerTests(unittest.TestCase):
             "下载完成，点击重启以应用更新",
         )
         launch_updater.assert_not_called()
+
+    def test_update_download_hides_tls_transport_details(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.update_lock = __import__("threading").Lock()
+        controller.update_state = {
+            "release": {
+                "version": "9.9.9",
+                "downloadUrl": "https://download.example/asset",
+            }
+        }
+        controller.window = None
+        controller.visible = False
+
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "app.app_data_dir", return_value=Path(temp)
+        ), patch.object(
+            controller,
+            "_download_release_file",
+            side_effect=app.NetworkTransportError("SSL UNEXPECTED_EOF_WHILE_READING"),
+        ):
+            controller._download_update_worker()
+
+        self.assertEqual(controller.update_state["status"], "failed")
+        self.assertEqual(
+            controller.update_state["message"],
+            "更新失败：无法连接下载服务器，请检查网络或代理后重试",
+        )
+        self.assertNotIn("SSL", controller.update_state["message"])
 
     def test_restart_update_launches_verified_download(self):
         controller = app.AppController.__new__(app.AppController)

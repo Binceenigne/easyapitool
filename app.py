@@ -37,7 +37,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.15"
+APP_VERSION = "1.0.16"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -55,7 +55,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "31"
+STATIC_UI_VERSION = "32"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -2374,6 +2374,9 @@ class AppController:
                 self.update_state["release"] = {
                     "version": latest,
                     "notes": str(release.get("body") or ""),
+                    "downloadSize": int(
+                        (assets.get(RELEASE_ASSET_NAME) or {}).get("size") or 0
+                    ),
                     "downloadApiUrl": str(
                         (assets.get(RELEASE_ASSET_NAME) or {}).get("url") or ""
                     ),
@@ -2444,13 +2447,128 @@ class AppController:
         ).start()
         return {"ok": True}
 
-    def _open_release_asset(
-        self, urls: list[str], message: str, timeout: int = 20
-    ) -> Any:
+    def _download_release_file(
+        self,
+        urls: list[str],
+        destination: Path,
+        message: str,
+        expected_size: int = 0,
+    ) -> Path:
         candidates = list(dict.fromkeys(url for url in urls if url))
+        curl = shutil.which("curl.exe") or shutil.which("curl")
+        if not curl:
+            raise NetworkTransportError("系统未找到 curl")
+        proxy = (
+            urllib.request.getproxies().get("https")
+            or urllib.request.getproxies().get("http")
+        )
+        routes: list[tuple[str, dict[str, str], list[str]]] = []
+        if proxy:
+            proxy_environment = os.environ.copy()
+            proxy_environment["HTTPS_PROXY"] = proxy
+            proxy_environment["HTTP_PROXY"] = proxy
+            proxy_environment.pop("NO_PROXY", None)
+            proxy_environment.pop("no_proxy", None)
+            routes.append(("系统代理", proxy_environment, []))
+        direct_environment = os.environ.copy()
+        for name in (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+        ):
+            direct_environment.pop(name, None)
+        direct_environment["NO_PROXY"] = "*"
+        routes.append(("直连", direct_environment, ["--noproxy", "*"]))
         errors: list[str] = []
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        for source_index, url in enumerate(candidates, start=1):
+            for route, environment, route_arguments in routes:
+                self._set_update_state(
+                    message=(
+                        f"{message} · 下载源 {source_index}/{len(candidates)} · {route}"
+                    )
+                )
+                command = [
+                    curl,
+                    "--silent",
+                    "--show-error",
+                    "--fail",
+                    "--http1.1",
+                    "--location",
+                    "--retry",
+                    "6",
+                    "--retry-all-errors",
+                    "--retry-delay",
+                    "1",
+                    "--connect-timeout",
+                    "8",
+                    "--max-time",
+                    "600",
+                    "--speed-limit",
+                    "1024",
+                    "--speed-time",
+                    "30",
+                    "--continue-at",
+                    "-",
+                    "--output",
+                    str(destination),
+                    "--header",
+                    "Accept: application/octet-stream",
+                    "--header",
+                    f"User-Agent: {APP_NAME}/{APP_VERSION}",
+                    "--header",
+                    "X-GitHub-Api-Version: 2022-11-28",
+                    *route_arguments,
+                    url,
+                ]
+                try:
+                    process = subprocess.Popen(
+                        command,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        env=environment,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                    last_downloaded = -1
+                    while process.poll() is None:
+                        downloaded = destination.stat().st_size if destination.is_file() else 0
+                        if downloaded != last_downloaded:
+                            percent = (
+                                min(99, int(downloaded * 100 / expected_size))
+                                if expected_size > 0
+                                else 0
+                            )
+                            self._set_update_state(
+                                percent=percent,
+                                message=f"正在下载更新 · {downloaded / 1048576:.1f} MB",
+                            )
+                            last_downloaded = downloaded
+                        time.sleep(0.2)
+                    _, stderr = process.communicate()
+                except OSError as exc:
+                    errors.append(f"{route}: {exc}")
+                    continue
+                if process.returncode == 0 and destination.is_file():
+                    downloaded = destination.stat().st_size
+                    self._set_update_state(
+                        percent=99 if expected_size > 0 else 0,
+                        message=f"正在下载更新 · {downloaded / 1048576:.1f} MB"
+                    )
+                    return destination
+                detail = (stderr or b"").decode("utf-8", "replace").strip()
+                errors.append(f"{route}: {detail or f'curl {process.returncode}'}")
+        raise NetworkTransportError("；".join(errors) or "没有可用下载地址")
+
+    def _download_text(self, urls: list[str]) -> str:
+        errors: list[str] = []
+        candidates = list(dict.fromkeys(url for url in urls if url))
         for index, url in enumerate(candidates, start=1):
-            self._set_update_state(message=f"{message} · 下载源 {index}/{len(candidates)}")
+            self._set_update_state(
+                message=f"正在获取校验文件 · 下载源 {index}/{len(candidates)}"
+            )
             request = urllib.request.Request(
                 url,
                 headers={
@@ -2460,15 +2578,10 @@ class AppController:
                 },
             )
             try:
-                return open_url_with_direct_fallback(request, timeout=timeout)
+                return get_small_url_bytes(request, timeout=12).decode("utf-8").strip()
             except Exception as exc:
                 errors.append(str(exc))
-        detail = errors[-1] if errors else "没有可用下载地址"
-        raise RuntimeError(f"{message}失败: {detail}")
-
-    def _download_text(self, urls: list[str]) -> str:
-        with self._open_release_asset(urls, "正在获取校验文件") as response:
-            return response.read().decode("utf-8").strip()
+        raise NetworkTransportError("；".join(errors) or "没有可用校验地址")
 
     def _download_update_worker(self) -> None:
         with self.update_lock:
@@ -2479,20 +2592,12 @@ class AppController:
             try:
                 self._set_update_state(status="downloading", percent=0, message="正在连接下载源")
                 download_urls = [release.get("downloadApiUrl"), release.get("downloadUrl")]
-                with self._open_release_asset(download_urls, "正在连接下载源") as response, temporary.open("wb") as output:
-                    total = int(response.headers.get("Content-Length") or 0)
-                    downloaded = 0
-                    while True:
-                        chunk = response.read(1024 * 256)
-                        if not chunk:
-                            break
-                        output.write(chunk)
-                        downloaded += len(chunk)
-                        percent = int(downloaded * 100 / total) if total else 0
-                        self._set_update_state(
-                            percent=percent,
-                            message=f"正在下载更新 · {downloaded / 1048576:.1f} MB",
-                        )
+                self._download_release_file(
+                    download_urls,
+                    temporary,
+                    "正在连接下载源",
+                    int(release.get("downloadSize") or 0),
+                )
                 os.replace(temporary, target)
                 checksum_urls = [release.get("checksumApiUrl"), release.get("checksumUrl")]
                 if not any(checksum_urls):
@@ -2510,8 +2615,12 @@ class AppController:
                     showPrompt=True,
                 )
             except Exception as exc:
-                temporary.unlink(missing_ok=True)
-                self._set_update_state(status="failed", percent=0, message=f"更新失败: {exc}")
+                message = (
+                    "更新失败：无法连接下载服务器，请检查网络或代理后重试"
+                    if self._github_transport_failed(exc)
+                    else f"更新失败: {exc}"
+                )
+                self._set_update_state(status="failed", percent=0, message=message)
 
     def restart_update(self) -> dict[str, Any]:
         if self.update_lock.locked():
