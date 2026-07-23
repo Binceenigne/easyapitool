@@ -827,6 +827,9 @@
     <div id="widget-root">
         <!-- Windows 风格顶部窗口外框 -->
         <header id="windowTitleBar">
+            <button type="button" id="titlebarPinButton" class="always-on-top-button titlebar-pin-button" onclick="toggleAlwaysOnTop()" title="置顶窗口" aria-label="置顶窗口" aria-pressed="false">
+                <i data-lucide="pin" class="titlebar-icon" aria-hidden="true"></i>
+            </button>
             <div id="windowTitleIdentity">
                 <img id="windowTitleLogo" src="assets/title_logo.png" alt="">
                 <span id="windowTitleText">DJYX_APITOOL</span>
@@ -881,6 +884,9 @@
                 <button onclick="toggleSettingsPanel()" class="toolbar-action-button" title="小工具设置">
                     <i data-lucide="sliders-horizontal" aria-hidden="true"></i>
                     <span class="toolbar-button-text">设置</span>
+                </button>
+                <button type="button" id="toolbarPinButton" class="toolbar-action-button always-on-top-button toolbar-pin-button" onclick="toggleAlwaysOnTop()" title="置顶窗口" aria-label="置顶窗口" aria-pressed="false">
+                    <i data-lucide="pin" aria-hidden="true"></i>
                 </button>
             </div>
         </div>
@@ -1503,6 +1509,7 @@
             rateLimitProgressMode: 'remaining',
             appVersion: '',
             closeAction: 'ask',
+            alwaysOnTop: false,
             backgroundUiMode: 'delayed',
             titleBarMode: 'default',
             activeTitleBarMode: 'default',
@@ -1551,6 +1558,7 @@
             window.appState.rateLimitProgressMode = state.rateLimitProgressMode === 'used' ? 'used' : 'remaining';
             window.appState.appVersion = state.appVersion || window.appState.appVersion;
             window.appState.closeAction = state.closeAction || 'ask';
+            window.applyAlwaysOnTopState(state.alwaysOnTop === true);
             window.appState.backgroundUiMode = ['delayed', 'active', 'low_power'].includes(state.backgroundUiMode)
                 ? state.backgroundUiMode
                 : 'delayed';
@@ -1607,6 +1615,17 @@
             button.title = isMaximized ? '还原' : '最大化';
             button.setAttribute('aria-label', isMaximized ? '还原' : '最大化');
             handleResponsiveLayout();
+        };
+
+        window.applyAlwaysOnTopState = function(enabled) {
+            const active = enabled === true;
+            window.appState.alwaysOnTop = active;
+            document.querySelectorAll('.always-on-top-button').forEach(button => {
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-pressed', String(active));
+                button.title = active ? '取消置顶' : '置顶窗口';
+                button.setAttribute('aria-label', button.title);
+            });
         };
 
         function updateRefreshBadge() {
@@ -1806,6 +1825,22 @@
             const result = await window.pywebview.api.window_action(action);
             if (action === 'maximize' && result) {
                 window.applyWindowState(result.maximized);
+            }
+        }
+
+        async function toggleAlwaysOnTop() {
+            if (!window.pywebview?.api?.set_always_on_top) return;
+            const desired = !window.appState.alwaysOnTop;
+            const buttons = [...document.querySelectorAll('.always-on-top-button')];
+            buttons.forEach(button => { button.disabled = true; });
+            try {
+                const result = await window.pywebview.api.set_always_on_top(desired);
+                if (!result?.ok) throw new Error(result?.error || '无法修改窗口置顶状态');
+                window.applyAlwaysOnTopState(result.alwaysOnTop === true);
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+            } finally {
+                buttons.forEach(button => { button.disabled = false; });
             }
         }
 

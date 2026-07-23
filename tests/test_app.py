@@ -224,12 +224,15 @@ class StoreTests(unittest.TestCase):
     def test_application_preferences_are_normalized_and_persisted(self):
         self.assertEqual(self.store.get_update_frequency(), "startup")
         self.assertEqual(self.store.get_close_action(), "ask")
+        self.assertFalse(self.store.get_always_on_top())
         self.assertEqual(self.store.get_background_ui_mode(), "delayed")
         self.assertEqual(self.store.set_update_frequency("weekly"), "weekly")
         self.assertEqual(self.store.set_close_action("tray"), "tray")
+        self.assertTrue(self.store.set_always_on_top(True))
         self.assertEqual(self.store.set_background_ui_mode("active"), "active")
         self.assertEqual(self.store.get_update_frequency(), "weekly")
         self.assertEqual(self.store.get_close_action(), "tray")
+        self.assertTrue(self.store.get_always_on_top())
         self.assertEqual(self.store.get_background_ui_mode(), "active")
         self.assertEqual(self.store.set_update_frequency("invalid"), "startup")
         self.assertEqual(self.store.set_close_action("invalid"), "ask")
@@ -989,6 +992,43 @@ class ControllerTests(unittest.TestCase):
         post_message.assert_called_once_with(1234, app.WM_SYSCOMMAND, app.SC_MINIMIZE, 0)
         controller.window.minimize.assert_not_called()
 
+    def test_ui_controller_sets_native_always_on_top_and_syncs_background(self):
+        mock = __import__("unittest.mock").mock
+        controller = app.UiController.__new__(app.UiController)
+        controller.window = SimpleNamespace()
+        controller.rpc_client = SimpleNamespace(
+            call=mock.Mock(return_value={"ok": True, "alwaysOnTop": True})
+        )
+
+        with patch.object(controller, "_window_handle", return_value=123), patch.object(
+            app.user32, "SetWindowPos", return_value=True
+        ) as set_window_pos:
+            result = controller.set_always_on_top(True)
+
+        self.assertEqual(result, {"ok": True, "alwaysOnTop": True})
+        set_window_pos.assert_called_once_with(
+            123,
+            app.HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            app.SWP_NOMOVE | app.SWP_NOSIZE | app.SWP_NOACTIVATE,
+        )
+        controller.rpc_client.call.assert_called_once_with("set_always_on_top", True)
+
+    def test_always_on_top_buttons_follow_active_title_bar_mode(self):
+        page = Path(app.resource_path(app.MAIN_PAGE_NAME)).read_text(encoding="utf-8")
+        scss = Path(app.resource_path("assets/app.scss")).read_text(encoding="utf-8")
+
+        self.assertIn('id="titlebarPinButton"', page)
+        self.assertIn('id="toolbarPinButton"', page)
+        self.assertIn("toggleAlwaysOnTop", page)
+        self.assertIn("window.applyAlwaysOnTopState", page)
+        self.assertIn("#keyToolbar .toolbar-pin-button { display: none; }", scss)
+        self.assertIn("#widget-root.titlebar-original", scss)
+        self.assertIn(".toolbar-pin-button", scss)
+
     def test_minimized_window_restore_skips_expensive_ui_state_push(self):
         mock = __import__("unittest.mock").mock
         controller = app.AppController.__new__(app.AppController)
@@ -1160,7 +1200,7 @@ class ControllerTests(unittest.TestCase):
             def github_json(path):
                 requested_paths.append(path)
                 if path.startswith("/releases?"):
-                    raise RuntimeError("rate limited")
+                    raise RuntimeError("release list unavailable")
                 return {
                     "tag_name": "v9.9.9",
                     "body": "- 最新版本内容",
@@ -1179,6 +1219,71 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(requested_paths, ["/releases?per_page=20", "/releases/latest"])
             self.assertTrue(controller.update_state["available"])
             self.assertIn("最新版本内容", controller.update_state["releaseNotes"])
+
+    def test_update_check_uses_atom_feed_when_github_api_is_rate_limited(self):
+        with tempfile.TemporaryDirectory() as temp:
+            controller = app.AppController.__new__(app.AppController)
+            controller.store = app.Store(Path(temp) / "test.db")
+            controller.update_lock = __import__("threading").Lock()
+            controller.update_state = {}
+            controller.window = None
+            controller.visible = False
+            rate_limit_error = app.urllib.error.HTTPError(
+                "https://api.github.com/releases", 403, "rate limit exceeded", {}, None
+            )
+            controller._github_json = __import__("unittest.mock").mock.Mock(
+                side_effect=rate_limit_error
+            )
+            controller._github_release_feed = __import__("unittest.mock").mock.Mock(
+                return_value=[
+                    {
+                        "tag_name": "v9.9.9",
+                        "body": "- 来自 Release feed",
+                        "draft": False,
+                        "prerelease": False,
+                        "assets": [
+                            {
+                                "name": app.RELEASE_ASSET_NAME,
+                                "url": "",
+                                "browser_download_url": "https://github.com/download/exe",
+                            }
+                        ],
+                    }
+                ]
+            )
+
+            controller._check_for_updates_worker(manual=True)
+
+            controller._github_json.assert_called_once_with("/releases?per_page=20")
+            controller._github_release_feed.assert_called_once_with()
+            self.assertTrue(controller.update_state["available"])
+            self.assertIn("来自 Release feed", controller.update_state["releaseNotes"])
+
+    def test_github_release_feed_builds_download_urls_and_markdown(self):
+        payload = """<?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <link rel="alternate" href="https://github.com/Binceenigne/easyapitool/releases/tag/v9.9.9" />
+            <title>v9.9.9</title>
+            <content type="html">&lt;h2&gt;9.9.9&lt;/h2&gt;&lt;ul&gt;&lt;li&gt;修复检查更新&lt;/li&gt;&lt;/ul&gt;</content>
+          </entry>
+          <entry>
+            <link rel="alternate" href="https://github.com/Binceenigne/easyapitool/releases/tag/v9.9.8-beta" />
+            <title>v9.9.8-beta</title>
+          </entry>
+        </feed>""".encode("utf-8")
+
+        releases = app.parse_github_release_feed(payload)
+
+        self.assertEqual(len(releases), 1)
+        self.assertEqual(releases[0]["tag_name"], "v9.9.9")
+        self.assertEqual(releases[0]["body"], "## 9.9.9\n- \u4fee\u590d\u68c0\u67e5\u66f4\u65b0")
+        assets = {asset["name"]: asset for asset in releases[0]["assets"]}
+        self.assertEqual(
+            assets[app.RELEASE_ASSET_NAME]["browser_download_url"],
+            f"https://github.com/{app.GITHUB_REPOSITORY}/releases/download/v9.9.9/{app.RELEASE_ASSET_NAME}",
+        )
+        self.assertIn(f"{app.RELEASE_ASSET_NAME}.sha256", assets)
 
     def test_update_check_combines_all_uninstalled_release_notes(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1617,6 +1722,7 @@ class ControllerTests(unittest.TestCase):
                 "restart_app",
                 "restart_update",
                 "resolve_close_action",
+                "set_always_on_top",
                 "set_window_background",
                 "update_app_preferences",
                 "update_refresh_intervals",

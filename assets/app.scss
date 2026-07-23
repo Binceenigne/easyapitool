@@ -129,7 +129,7 @@ img, svg { display: block; }
     justify-content: space-between;
     height: 33px;
     min-height: 33px;
-    padding-left: 12px;
+    padding-left: 2px;
     border-bottom: 1px solid var(--border);
     background: var(--surface-strong);
     font-size: 12px;
@@ -137,11 +137,28 @@ img, svg { display: block; }
     user-select: none;
 }
 
+.titlebar-pin-button {
+    display: inline-flex;
+    flex: 0 0 32px;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    color: var(--muted);
+}
+.titlebar-pin-button:hover { background: rgba(100, 116, 139, 0.16); color: var(--text); }
+.always-on-top-button.is-active { color: var(--brand) !important; }
+.always-on-top-button.is-active [data-lucide] { fill: currentColor; fill-opacity: 0.18; }
+#keyToolbar .toolbar-pin-button { display: none; }
+
 #windowTitleIdentity {
     display: flex;
     align-items: center;
     min-width: 0;
     height: 32px;
+    margin-left: 2px;
     gap: 8px;
 }
 
@@ -468,7 +485,21 @@ html.dark #keySwitcherMenu {
         height: 24px !important;
         min-height: 24px !important;
         max-height: 24px !important;
-        padding-left: 3px !important;
+        padding-left: 2px !important;
+    }
+
+    .titlebar-pin-button {
+        flex-basis: 20px;
+        width: 20px;
+        height: 20px;
+    }
+
+    .titlebar-pin-button .titlebar-icon {
+        flex-basis: 10px !important;
+        width: 10px !important;
+        height: 10px !important;
+        min-width: 10px !important;
+        min-height: 10px !important;
     }
 
     #windowTitleIdentity { display: none; }
@@ -588,6 +619,12 @@ html.dark #keySwitcherMenu {
 #widget-root.titlebar-original {
     #windowTitleBar,
     .native-resize-handle { display: none !important; }
+
+    #keyToolbar .toolbar-pin-button {
+        display: inline-flex;
+        width: 22px;
+        padding: 0;
+    }
 
     #settingsPanel { top: 0; }
 }

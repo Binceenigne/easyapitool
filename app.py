@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import ctypes
 import hashlib
+from html.parser import HTMLParser
 import io
 import json
 import math
@@ -18,6 +19,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import xml.etree.ElementTree as ElementTree
 from contextlib import contextmanager
 from ctypes import wintypes
 from datetime import datetime, timedelta, timezone
@@ -34,7 +36,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.12"
+APP_VERSION = "1.0.13"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -52,7 +54,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "28"
+STATIC_UI_VERSION = "29"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -92,7 +94,11 @@ DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWCP_DONOTROUND = 1
 DWMWCP_ROUND = 2
 SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+HWND_TOPMOST = -1
+HWND_NOTOPMOST = -2
 RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 UPDATE_CHECK_INTERVAL = 7 * 24 * 60 * 60
 RESTART_READY_ENV = "API_TOOLS_RESTART_READY"
@@ -430,6 +436,83 @@ def release_notes_since(releases: list[dict[str, Any]], current_version: Any) ->
     return "\n\n".join(sections)
 
 
+class ReleaseNotesHtmlParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.lines: list[str] = []
+        self.block_tag = ""
+        self.block_text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"h1", "h2", "h3", "p", "li"}:
+            self._flush()
+            self.block_tag = tag
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == self.block_tag:
+            self._flush()
+
+    def handle_data(self, data: str) -> None:
+        if self.block_tag:
+            self.block_text.append(data)
+
+    def _flush(self) -> None:
+        text = " ".join("".join(self.block_text).split())
+        if text:
+            prefix = {"h1": "# ", "h2": "## ", "h3": "### ", "li": "- "}.get(
+                self.block_tag, ""
+            )
+            self.lines.append(f"{prefix}{text}")
+        self.block_tag = ""
+        self.block_text = []
+
+    def markdown(self) -> str:
+        self._flush()
+        return "\n".join(self.lines).strip()
+
+
+def parse_github_release_feed(payload: bytes) -> list[dict[str, Any]]:
+    root = ElementTree.fromstring(payload)
+    namespace = {"atom": "http://www.w3.org/2005/Atom"}
+    releases: list[dict[str, Any]] = []
+    for entry in root.findall("atom:entry", namespace):
+        release_url = next(
+            (
+                str(link.get("href") or "")
+                for link in entry.findall("atom:link", namespace)
+                if link.get("rel") == "alternate"
+            ),
+            "",
+        )
+        tag_name = release_url.rsplit("/", 1)[-1].strip()
+        if not __import__("re").fullmatch(r"v?\d+(?:\.\d+)+", tag_name):
+            continue
+        parser = ReleaseNotesHtmlParser()
+        parser.feed(entry.findtext("atom:content", default="", namespaces=namespace))
+        download_base = f"https://github.com/{GITHUB_REPOSITORY}/releases/download/{tag_name}"
+        releases.append(
+            {
+                "tag_name": tag_name,
+                "body": parser.markdown(),
+                "draft": False,
+                "prerelease": False,
+                "assets": [
+                    {
+                        "name": RELEASE_ASSET_NAME,
+                        "url": "",
+                        "browser_download_url": f"{download_base}/{RELEASE_ASSET_NAME}",
+                    },
+                    {
+                        "name": f"{RELEASE_ASSET_NAME}.sha256",
+                        "url": "",
+                        "browser_download_url": f"{download_base}/{RELEASE_ASSET_NAME}.sha256",
+                    },
+                ],
+            }
+        )
+    return releases
+
+
 class StaticAssetCache:
     def __init__(
         self,
@@ -734,6 +817,7 @@ RPC_METHODS = {
     "report_startup",
     "restart_app",
     "restart_update",
+    "set_always_on_top",
     "claim_ui_release",
     "notify_ui_hidden",
     "set_ui_visible",
@@ -1563,6 +1647,23 @@ class Store:
             )
         return clean
 
+    def get_always_on_top(self) -> bool:
+        with self.lock, self.connect() as db:
+            row = db.execute(
+                "SELECT value FROM settings WHERE name='always_on_top'"
+            ).fetchone()
+        return bool(row and str(row["value"]).strip() == "1")
+
+    def set_always_on_top(self, enabled: Any) -> bool:
+        clean = bool(enabled)
+        with self.lock, self.connect() as db:
+            db.execute(
+                """INSERT INTO settings(name,value) VALUES('always_on_top',?)
+                ON CONFLICT(name) DO UPDATE SET value=excluded.value""",
+                ("1" if clean else "0",),
+            )
+        return clean
+
     def get_background_ui_mode(self) -> str:
         with self.lock, self.connect() as db:
             row = db.execute(
@@ -1703,6 +1804,7 @@ class AppController:
         self.ui_hide_callback = ui_hide_callback
         self.visible = True
         self.ui_visibility_token = 0
+        self.always_on_top = self.store.get_always_on_top()
         self.maximized = False
         self.drag_restore_suppressed_until = 0.0
         self.stopping = threading.Event()
@@ -1794,6 +1896,10 @@ class AppController:
             "visible": self.visible,
             "visibilityToken": self.ui_visibility_token,
         }
+
+    def set_always_on_top(self, enabled: Any) -> dict[str, Any]:
+        self.always_on_top = self.store.set_always_on_top(enabled)
+        return {"ok": True, "alwaysOnTop": self.always_on_top}
 
     def notify_ui_hidden(self) -> dict[str, Any]:
         state = self.set_ui_visible(False)
@@ -2050,6 +2156,28 @@ class AppController:
         with open_url_with_direct_fallback(request, timeout=25) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    @staticmethod
+    def _github_release_feed() -> list[dict[str, Any]]:
+        request = urllib.request.Request(
+            f"https://github.com/{GITHUB_REPOSITORY}/releases.atom",
+            headers={
+                "Accept": "application/atom+xml",
+                "User-Agent": f"{APP_NAME}/{APP_VERSION}",
+            },
+        )
+        with open_url_with_direct_fallback(request, timeout=25) as response:
+            releases = parse_github_release_feed(response.read())
+        if not releases:
+            raise RuntimeError("GitHub Release feed 没有可用版本")
+        return releases
+
+    @staticmethod
+    def _github_api_rate_limited(error: BaseException) -> bool:
+        return (
+            isinstance(error, urllib.error.HTTPError)
+            and error.code in {403, 429}
+        ) or "rate limit" in str(error).lower()
+
     def check_for_updates(self, manual: Any = True) -> dict[str, Any]:
         if self.update_lock.locked():
             return {"ok": True, "update": dict(self.update_state)}
@@ -2072,8 +2200,14 @@ class AppController:
             try:
                 try:
                     release_payload = self._github_json("/releases?per_page=20")
-                except Exception:
-                    release_payload = self._github_json("/releases/latest")
+                except Exception as list_error:
+                    if self._github_api_rate_limited(list_error):
+                        release_payload = self._github_release_feed()
+                    else:
+                        try:
+                            release_payload = self._github_json("/releases/latest")
+                        except Exception:
+                            release_payload = self._github_release_feed()
                 releases = (
                     [item for item in release_payload if isinstance(item, dict)]
                     if isinstance(release_payload, list)
@@ -2596,6 +2730,7 @@ class AppController:
                 else ""
             ),
             "closeAction": self.store.get_close_action(),
+            "alwaysOnTop": bool(getattr(self, "always_on_top", False)),
             "backgroundUiMode": self.store.get_background_ui_mode(),
             "titleBarMode": self.store.get_title_bar_mode(),
             "activeTitleBarMode": self.active_title_bar_mode,
@@ -3033,6 +3168,9 @@ class WebApi:
     def window_action(self, action: str) -> dict[str, Any]:
         return self._controller.window_action(action)
 
+    def set_always_on_top(self, enabled: Any) -> dict[str, Any]:
+        return self._controller.set_always_on_top(enabled)
+
     def set_window_background(self, mode: Any) -> dict[str, Any]:
         return self._controller.set_window_background(mode)
 
@@ -3192,6 +3330,27 @@ class UiController(AppController):
         self.window.load_url(url)
         return {"ok": True, "url": url}
 
+    def set_always_on_top(self, enabled: Any) -> dict[str, Any]:
+        clean = bool(enabled)
+        hwnd = self._window_handle()
+        if not hwnd:
+            return {"ok": False, "error": "应用窗口尚未就绪"}
+        insert_after = HWND_TOPMOST if clean else HWND_NOTOPMOST
+        applied = user32.SetWindowPos(
+            hwnd,
+            insert_after,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+        if not applied:
+            return {"ok": False, "error": "无法修改窗口置顶状态"}
+        result = self.rpc_client.call("set_always_on_top", clean)
+        self.always_on_top = bool(result.get("alwaysOnTop"))
+        return {"ok": True, "alwaysOnTop": self.always_on_top}
+
 
 class RemoteWebApi(WebApi):
     def __init__(self, controller: UiController, rpc_client: ControllerRpcClient) -> None:
@@ -3289,6 +3448,7 @@ def run_ui_process(rpc_address: str, rpc_authkey: bytes) -> None:
         frameless=frame_options["frameless"],
         easy_drag=frame_options["easy_drag"],
         shadow=True,
+        on_top=bool(state.get("alwaysOnTop")),
         background_color="#0f172a",
     )
     if window is None:
