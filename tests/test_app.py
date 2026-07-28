@@ -745,6 +745,17 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('<div id="widget-root" class="image-edit-mode">', page)
         self.assertIn('id="imageEditWorkspace"', page)
         self.assertIn('id="imageEditPrompt"', page)
+        self.assertIn('id="imageEditPrompt" rows="7"', page)
+        self.assertIn('id="expandImagePromptButton" hidden', page)
+        self.assertIn('id="imagePromptModal"', page)
+        self.assertIn('id="imagePromptModalTextarea"', page)
+        self.assertIn("function resizeImagePrompt()", page)
+        self.assertIn("textarea.scrollHeight > metrics.maximum", page)
+        self.assertIn("document.addEventListener('paste'", page)
+        self.assertIn("import_reference_image", page)
+        self.assertIn("event.dataTransfer?.files", page)
+        self.assertIn("image-edit-file:is(:hover, :focus-within)", scss_source)
+        self.assertIn("resize: none", scss_source)
         self.assertNotIn('id="imageEditStream"', page)
         self.assertNotIn('id="imageEditPartialImages"', page)
         self.assertIn("stream: true", page)
@@ -967,6 +978,57 @@ class StaticAssetCacheTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_import_reference_image_validates_and_persists_image_data(self):
+        controller = app.AppController.__new__(app.AppController)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image_buffer = __import__("io").BytesIO()
+            app.Image.new("RGBA", (12, 8), (10, 20, 30, 128)).save(
+                image_buffer,
+                format="PNG",
+            )
+            data_url = "data:image/png;base64," + __import__("base64").b64encode(
+                image_buffer.getvalue()
+            ).decode("ascii")
+
+            with patch("app.app_data_dir", return_value=root):
+                result = controller.import_reference_image(data_url, "clipboard.png")
+                invalid = controller.import_reference_image(
+                    "data:image/png;base64," + __import__("base64").b64encode(b"not-image").decode("ascii"),
+                    "invalid.png",
+                )
+
+            imported_path = Path(result["path"])
+            self.assertTrue(result["ok"])
+            self.assertTrue(imported_path.is_file())
+            self.assertEqual(imported_path.parent, root / "image-references")
+            self.assertEqual(result["uri"], imported_path.as_uri())
+            self.assertFalse(invalid["ok"])
+            self.assertIn("图片内容无效", invalid["error"])
+
+    def test_choose_edit_images_imports_only_first_sixteen_with_warning(self):
+        controller = app.AppController.__new__(app.AppController)
+        with tempfile.TemporaryDirectory() as temp:
+            paths = []
+            for index in range(18):
+                image_path = Path(temp) / f"reference-{index}.png"
+                app.Image.new("RGB", (2, 2), "red").save(image_path, format="PNG")
+                paths.append(str(image_path))
+            oversized_path = Path(temp) / "oversized.png"
+            with oversized_path.open("wb") as handle:
+                handle.seek(50 * 1024 * 1024)
+                handle.write(b"0")
+            paths.append(str(oversized_path))
+            controller.window = SimpleNamespace(create_file_dialog=lambda *_args, **_kwargs: paths)
+
+            result = controller.choose_edit_images()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["paths"]), 16)
+        self.assertEqual(len(result["files"]), 16)
+        self.assertIn("仅导入前 16 张", result["warning"])
+        self.assertIn("1 张图片超过 50 MB，未导入", result["warning"])
+
     def test_generate_image_uses_selected_key_and_generation_service(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -2094,6 +2156,7 @@ class ControllerTests(unittest.TestCase):
                 "get_state",
                 "initialize_assets",
                 "ignore_update_version",
+                "import_reference_image",
                 "native_drag",
                 "open_devtools",
                 "refresh_now",

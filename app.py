@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import ctypes
 import hashlib
 from html.parser import HTMLParser
@@ -58,7 +59,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "37"
+STATIC_UI_VERSION = "38"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -1987,17 +1988,74 @@ class AppController:
             allow_multiple=True,
             file_types=("图片文件 (*.png;*.jpg;*.jpeg;*.webp)",),
         )
-        paths = [str(Path(path).resolve()) for path in selected or []]
-        if len(paths) > 16:
-            return {"ok": False, "error": "一次最多选择 16 张参考图片"}
+        selected_paths = [str(Path(path).resolve()) for path in selected or []]
+        eligible_paths = [
+            path
+            for path in selected_paths
+            if Path(path).is_file() and Path(path).stat().st_size <= 50 * 1024 * 1024
+        ]
+        oversized_count = len(selected_paths) - len(eligible_paths)
+        paths = eligible_paths[:16]
+        warnings = []
+        if len(eligible_paths) > 16:
+            warnings.append("参考图片最多 16 张，已仅导入前 16 张")
+        if oversized_count:
+            warnings.append(f"{oversized_count} 张图片超过 50 MB，未导入")
         return {
             "ok": True,
             "paths": paths,
+            "warning": "；".join(warnings),
             "files": [
-                {"name": Path(path).name, "sizeBytes": Path(path).stat().st_size}
+                {
+                    "name": Path(path).name,
+                    "sizeBytes": Path(path).stat().st_size,
+                    "uri": Path(path).as_uri(),
+                }
                 for path in paths
                 if Path(path).is_file()
             ],
+        }
+
+    def import_reference_image(self, data_url: str, name: str = "") -> dict[str, Any]:
+        raw_data = str(data_url or "")
+        if not raw_data.startswith("data:image/") or "," not in raw_data:
+            return {"ok": False, "error": "只支持粘贴或拖入图片文件"}
+        header, encoded = raw_data.split(",", 1)
+        mime_type = header[5:].split(";", 1)[0].lower()
+        suffixes = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/webp": ".webp",
+        }
+        suffix = suffixes.get(mime_type)
+        if suffix is None or ";base64" not in header.lower():
+            return {"ok": False, "error": "仅支持 PNG、JPEG 或 WebP 图片"}
+        if len(encoded) > 68 * 1024 * 1024:
+            return {"ok": False, "error": "图片超过 50 MB，未导入"}
+        try:
+            image_bytes = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error):
+            return {"ok": False, "error": "图片数据无效"}
+        if len(image_bytes) > 50 * 1024 * 1024:
+            return {"ok": False, "error": "图片超过 50 MB，未导入"}
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as source_image:
+                source_image.verify()
+        except (OSError, ValueError):
+            return {"ok": False, "error": "图片内容无效"}
+
+        reference_dir = app_data_dir() / "image-references"
+        reference_dir.mkdir(parents=True, exist_ok=True)
+        clean_stem = Path(str(name or "reference")).stem.strip()[:48] or "reference"
+        safe_stem = "".join(character for character in clean_stem if character.isalnum() or character in "-_ ").strip() or "reference"
+        output_path = reference_dir / f"{safe_stem}-{uuid.uuid4().hex[:8]}{suffix}"
+        output_path.write_bytes(image_bytes)
+        return {
+            "ok": True,
+            "path": str(output_path),
+            "name": output_path.name,
+            "sizeBytes": len(image_bytes),
+            "uri": output_path.as_uri(),
         }
 
     def save_edited_image(self, source_path: str) -> dict[str, Any]:
@@ -3436,6 +3494,9 @@ class WebApi:
 
     def choose_edit_images(self) -> dict[str, Any]:
         return self._controller.choose_edit_images()
+
+    def import_reference_image(self, data_url: str, name: str = "") -> dict[str, Any]:
+        return self._controller.import_reference_image(data_url, name)
 
     def add_key(self, name: str, value: str) -> dict[str, Any]:
         return self._controller.add_key(name, value)

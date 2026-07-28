@@ -951,23 +951,27 @@
                                 <p id="imageGenerationKeyLabel">使用顶部当前密钥</p>
                             </div>
                         </div>
-                        <button type="button" id="chooseEditImagesButton" onclick="chooseEditImages()">
-                            <i data-lucide="image-plus" aria-hidden="true"></i>
-                            添加参考图
-                        </button>
                     </div>
 
-                    <div id="editImageSelection" class="image-edit-selection is-empty">
-                        <div id="editImageEmpty">
-                            <i data-lucide="images" aria-hidden="true"></i>
-                            <span>参考图可选，未选择时直接文生图</span>
+                    <div id="editImageSelection" class="image-edit-selection is-empty" tabindex="0" aria-label="参考图，可点击添加、粘贴或拖入图片">
+                        <div class="image-edit-selection-heading">
+                            <strong>参考图 <span>（可选）</span></strong>
+                            <small id="editImageCount">0/16</small>
                         </div>
                         <div id="editImageList"></div>
+                        <button type="button" id="editImageAddTile" onclick="chooseEditImages()" title="添加参考图" aria-label="添加参考图">
+                            <i data-lucide="image-plus" aria-hidden="true"></i>
+                        </button>
                     </div>
 
                     <label class="image-edit-prompt">
                         <span>提示词</span>
-                        <textarea id="imageEditPrompt" maxlength="32000" required placeholder="描述要生成的图片；添加参考图后可要求保留主体、构图或配色"></textarea>
+                        <div class="image-edit-prompt-shell">
+                            <textarea id="imageEditPrompt" rows="7" maxlength="32000" required placeholder="描述要生成的图片；也可以粘贴或拖入参考图片"></textarea>
+                            <button type="button" id="expandImagePromptButton" hidden onclick="openImagePromptModal()" title="全屏编辑提示词" aria-label="全屏编辑提示词">
+                                <i data-lucide="maximize-2" aria-hidden="true"></i>
+                            </button>
+                        </div>
                     </label>
 
                     <div class="image-edit-options">
@@ -1481,6 +1485,24 @@
             </div>
         </div>
 
+        <div id="imagePromptModal" class="app-modal animated-modal image-prompt-modal" hidden role="dialog" aria-modal="true" aria-labelledby="imagePromptModalTitle" onclick="handleImagePromptModalBackdrop(event)">
+            <div class="app-modal-panel image-prompt-modal-panel">
+                <div class="app-modal-header">
+                    <div>
+                        <i data-lucide="text-cursor-input" class="icon-14 color-brand" aria-hidden="true"></i>
+                        <div>
+                            <h2 id="imagePromptModalTitle">编辑提示词</h2>
+                            <p>支持粘贴或拖入参考图片</p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closeImagePromptModal()" title="关闭提示词编辑器" aria-label="关闭提示词编辑器">
+                        <i data-lucide="x" class="icon-14" aria-hidden="true"></i>
+                    </button>
+                </div>
+                <textarea id="imagePromptModalTextarea" maxlength="32000" placeholder="描述要生成的图片；也可以粘贴或拖入参考图片"></textarea>
+            </div>
+        </div>
+
         <div id="updateModal" class="app-modal animated-modal" hidden role="dialog" aria-modal="true" aria-labelledby="updateModalTitle" onclick="handleAppModalBackdrop(event)">
             <div class="app-modal-panel update-modal-panel">
                 <div class="app-modal-header">
@@ -1667,30 +1689,36 @@
             const selection = document.getElementById('editImageSelection');
             const list = document.getElementById('editImageList');
             selection.classList.toggle('is-empty', files.length === 0);
+            document.getElementById('editImageCount').textContent = `${files.length}/16`;
+            document.getElementById('editImageAddTile').hidden = files.length >= 16;
             list.replaceChildren();
             files.forEach((file, index) => {
                 const item = document.createElement('div');
                 item.className = 'image-edit-file';
-                const order = document.createElement('span');
-                order.className = 'image-edit-file-order';
-                order.textContent = String(index + 1).padStart(2, '0');
-                const details = document.createElement('div');
+                item.title = `${file.name} · ${formatImageFileSize(file.sizeBytes)}`;
+                const preview = document.createElement('img');
+                preview.src = file.uri;
+                preview.alt = `参考图 ${index + 1}`;
+                preview.draggable = false;
                 const name = document.createElement('span');
-                name.textContent = file.name;
-                name.title = file.path;
-                const size = document.createElement('small');
-                size.textContent = formatImageFileSize(file.sizeBytes);
-                details.append(name, size);
+                name.textContent = `图片${index + 1}`;
                 const remove = document.createElement('button');
                 remove.type = 'button';
                 remove.title = `移除 ${file.name}`;
                 remove.setAttribute('aria-label', remove.title);
-                remove.innerHTML = iconMarkup('x', 'icon-11');
+                remove.innerHTML = iconMarkup('trash-2', 'icon-12');
                 remove.addEventListener('click', () => removeEditImage(index));
-                item.append(order, details, remove);
+                item.append(preview, name, remove);
                 list.append(item);
             });
             renderLucideIcons();
+        }
+
+        function appendReferenceImage(file) {
+            if (!file?.path || window.imageEditState.files.length >= 16) return false;
+            if (window.imageEditState.files.some(existing => existing.path === file.path)) return false;
+            window.imageEditState.files.push(file);
+            return true;
         }
 
         async function chooseEditImages() {
@@ -1699,16 +1727,108 @@
                 const result = await window.pywebview.api.choose_edit_images();
                 if (!result.ok) throw new Error(result.error || '无法选择图片');
                 if (!Array.isArray(result.paths) || result.paths.length === 0) return;
-                window.imageEditState.files = result.paths.map((path, index) => ({
+                const available = Math.max(0, 16 - window.imageEditState.files.length);
+                result.paths.slice(0, available).forEach((path, index) => appendReferenceImage({
                     path,
                     name: result.files?.[index]?.name || path.split(/[\\/]/).pop(),
-                    sizeBytes: result.files?.[index]?.sizeBytes || 0
+                    sizeBytes: result.files?.[index]?.sizeBytes || 0,
+                    uri: result.files?.[index]?.uri || `file:///${path.replace(/\\/g, '/')}`
                 }));
                 renderEditImageList();
-                document.getElementById('imageEditStatus').textContent = `已选择 ${result.paths.length} 张参考图片`;
+                if (result.warning) showToast(result.warning, 'info');
+                else if (result.paths.length > available) {
+                    showToast(`参考图片最多 16 张，已仅导入前 ${available} 张`, 'info');
+                }
+                document.getElementById('imageEditStatus').textContent = `已选择 ${window.imageEditState.files.length} 张参考图片`;
             } catch (error) {
                 showToast(error.message || String(error), 'error');
             }
+        }
+
+        function readImageAsDataUrl(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result || ''));
+                reader.onerror = () => reject(new Error(`无法读取 ${file.name || '图片'}`));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function importReferenceFiles(files) {
+            const imageFiles = [...files].filter(file => file.type?.startsWith('image/'));
+            if (!imageFiles.length) return false;
+            if (!window.pywebview?.api?.import_reference_image) {
+                showToast('图片导入服务尚未就绪', 'error');
+                return true;
+            }
+            const available = Math.max(0, 16 - window.imageEditState.files.length);
+            const withinSizeLimit = imageFiles.filter(file => file.size <= 50 * 1024 * 1024);
+            const oversizedCount = imageFiles.length - withinSizeLimit.length;
+            if (imageFiles.length > available) {
+                showToast(`参考图片最多 16 张，已仅导入前 ${available} 张`, 'info');
+            }
+            if (oversizedCount) {
+                showToast(`${oversizedCount} 张图片超过 50 MB，未导入`, 'error');
+            }
+            for (const file of withinSizeLimit.slice(0, available)) {
+                try {
+                    const result = await window.pywebview.api.import_reference_image(
+                        await readImageAsDataUrl(file),
+                        file.name || 'reference.png'
+                    );
+                    if (!result.ok) throw new Error(result.error || '图片导入失败');
+                    appendReferenceImage(result);
+                } catch (error) {
+                    showToast(error.message || String(error), 'error');
+                }
+            }
+            renderEditImageList();
+            document.getElementById('imageEditStatus').textContent = window.imageEditState.files.length
+                ? `已选择 ${window.imageEditState.files.length} 张参考图片`
+                : '填写提示词即可生成，参考图可选';
+            return true;
+        }
+
+        function imagePromptMetrics(textarea) {
+            const style = getComputedStyle(textarea);
+            const lineHeight = Number.parseFloat(style.lineHeight) || 20;
+            const verticalPadding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+            return {
+                minimum: Math.ceil(lineHeight * 7 + verticalPadding),
+                maximum: Math.ceil(lineHeight * 12 + verticalPadding)
+            };
+        }
+
+        function resizeImagePrompt() {
+            const textarea = document.getElementById('imageEditPrompt');
+            const metrics = imagePromptMetrics(textarea);
+            textarea.style.height = 'auto';
+            const nextHeight = Math.min(metrics.maximum, Math.max(metrics.minimum, textarea.scrollHeight));
+            textarea.style.height = `${nextHeight}px`;
+            const overflowing = textarea.scrollHeight > metrics.maximum + 1;
+            textarea.style.overflowY = overflowing ? 'auto' : 'hidden';
+            document.getElementById('expandImagePromptButton').hidden = !overflowing;
+        }
+
+        function openImagePromptModal() {
+            const modalTextarea = document.getElementById('imagePromptModalTextarea');
+            modalTextarea.value = document.getElementById('imageEditPrompt').value;
+            openAnimatedModal(document.getElementById('imagePromptModal'));
+            renderLucideIcons();
+            requestAnimationFrame(() => modalTextarea.focus());
+        }
+
+        async function closeImagePromptModal() {
+            const modal = document.getElementById('imagePromptModal');
+            if (modal.hidden) return;
+            const prompt = document.getElementById('imageEditPrompt');
+            prompt.value = document.getElementById('imagePromptModalTextarea').value;
+            resizeImagePrompt();
+            await closeAnimatedModal(modal);
+        }
+
+        function handleImagePromptModalBackdrop(event) {
+            if (event.target === event.currentTarget) closeImagePromptModal();
         }
 
         function removeEditImage(index) {
@@ -1994,11 +2114,55 @@
             updateRateLimitModeButtons();
             renderLucideIcons();
 
+            const promptTextarea = document.getElementById('imageEditPrompt');
+            const modalPromptTextarea = document.getElementById('imagePromptModalTextarea');
+            promptTextarea.addEventListener('input', resizeImagePrompt);
+            modalPromptTextarea.addEventListener('input', () => {
+                promptTextarea.value = modalPromptTextarea.value;
+            });
+            document.addEventListener('paste', event => {
+                const files = [...(event.clipboardData?.items || [])]
+                    .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+                    .map(item => item.getAsFile())
+                    .filter(Boolean);
+                if (files.length) {
+                    event.preventDefault();
+                    void importReferenceFiles(files);
+                }
+            });
+            const referenceDropTargets = [
+                document.getElementById('imageEditWorkspace'),
+                document.getElementById('imagePromptModal')
+            ];
+            referenceDropTargets.forEach(target => {
+                target.addEventListener('dragover', event => {
+                    if ([...(event.dataTransfer?.items || [])].some(item => item.type.startsWith('image/'))) {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = 'copy';
+                        target.classList.add('is-dragging-image');
+                    }
+                });
+                target.addEventListener('dragleave', () => target.classList.remove('is-dragging-image'));
+                target.addEventListener('drop', event => {
+                    target.classList.remove('is-dragging-image');
+                    const files = [...(event.dataTransfer?.files || [])].filter(file => file.type.startsWith('image/'));
+                    if (files.length) {
+                        event.preventDefault();
+                        void importReferenceFiles(files);
+                    }
+                });
+            });
+            document.getElementById('editImageSelection').addEventListener('click', event => {
+                if (event.target === event.currentTarget && window.imageEditState.files.length === 0) chooseEditImages();
+            });
+            resizeImagePrompt();
+
             document.addEventListener('keydown', event => {
                 if (event.key === 'Escape') {
                     closeKeySwitcher();
                     closeModelModal();
                     closeUpdateModal();
+                    closeImagePromptModal();
                 }
                 handleDevToolsSequence(event);
             });

@@ -1032,96 +1032,147 @@ html.dark #keySwitcherMenu {
 }
 
 .image-edit-selection {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   flex: 0 0 auto;
-  min-height: 76px;
-  max-height: 148px;
-  overflow-y: auto;
-  border: 1px dashed var(--border);
+  min-height: 132px;
+  padding: 9px 10px 10px;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
   background: var(--bg);
 }
 
-#editImageEmpty {
-  display: none;
+.image-edit-selection-heading {
+  display: flex;
+  grid-column: 1/-1;
   align-items: center;
-  justify-content: center;
-  min-height: 74px;
-  gap: 7px;
-  color: var(--muted);
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.image-edit-selection-heading strong {
+  color: var(--text-soft);
   font-size: 10px;
 }
 
-.image-edit-selection.is-empty #editImageEmpty {
+.image-edit-selection-heading strong span {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 500;
+}
+
+.image-edit-selection-heading small {
+  color: var(--muted);
+  font: 8px/1 var(--font-mono);
+}
+
+#editImageList {
   display: flex;
+  min-width: 0;
+  gap: 7px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.image-edit-selection.is-empty {
+  grid-template-columns: 1fr;
 }
 
 .image-edit-selection.is-empty #editImageList {
   display: none;
 }
 
-#editImageList {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding: 5px;
-  gap: 4px;
-}
-
 .image-edit-file {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  min-height: 34px;
-  padding: 4px 5px;
-  gap: 6px;
+  position: relative;
+  flex: 0 0 86px;
+  width: 86px;
+  height: 86px;
+  overflow: hidden;
   border: 1px solid var(--border-soft);
   background: var(--surface);
 }
 
-.image-edit-file-order {
-  flex: 0 0 22px;
-  color: var(--brand);
-  font: 700 9px/1 var(--font-mono);
+.image-edit-file img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
-.image-edit-file > div {
-  display: grid;
-  flex: 1 1 auto;
-  min-width: 0;
-  gap: 1px;
-}
-
-.image-edit-file > div > span {
+.image-edit-file > span {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
   overflow: hidden;
-  color: var(--text-soft);
-  font-size: 9px;
-  font-weight: 650;
+  padding: 3px 5px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 8px;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.image-edit-file small {
-  color: var(--muted);
-  font: 7px/1.2 var(--font-mono);
-}
-
 .image-edit-file button {
+  position: absolute;
+  top: 5px;
+  right: 5px;
   display: flex;
-  flex: 0 0 22px;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  background: transparent;
-  color: var(--muted);
+  width: 24px;
+  height: 24px;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  background: rgba(10, 10, 12, 0.82);
+  color: #fff;
+  transform: translateY(-3px);
+  transition: transform 140ms ease, background 140ms ease;
+}
+
+.image-edit-file:is(:hover, :focus-within) > button {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
 }
 
 .image-edit-file button:hover {
-  background: rgba(244, 63, 94, 0.08);
-  color: var(--critical);
+  background: var(--critical);
+}
+
+#editImageAddTile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 86px;
+  height: 86px;
+  border: 1px dashed var(--border);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.image-edit-selection.is-empty #editImageAddTile {
+  justify-self: start;
+}
+
+#editImageAddTile:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.image-edit-selection.is-dragging-image,
+.image-edit-prompt-shell.is-dragging-image,
+#imagePromptModalTextarea.is-dragging-image {
+  border-color: var(--brand);
+  background: var(--brand-soft);
 }
 
 .image-edit-prompt {
   display: grid;
-  min-height: 96px;
   gap: 4px;
 }
 
@@ -1132,15 +1183,80 @@ html.dark #keySwitcherMenu {
   font-weight: 700;
 }
 
-.image-edit-prompt textarea {
-  width: 100%;
-  min-height: 80px;
-  padding: 8px;
-  resize: vertical;
+.image-edit-prompt-shell {
+  position: relative;
   border: 1px solid var(--border);
   background: var(--bg);
+}
+
+.image-edit-prompt textarea {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  padding: 10px 38px 10px 10px;
+  resize: none;
+  border: 0;
+  background: transparent;
   color: var(--text);
-  line-height: 1.5;
+  font-size: 10px;
+  line-height: 20px;
+}
+
+#expandImagePromptButton {
+  position: absolute;
+  z-index: 2;
+  right: 7px;
+  bottom: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+#expandImagePromptButton:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+#expandImagePromptButton[hidden] {
+  display: none !important;
+}
+
+.app-modal.image-prompt-modal {
+  padding: 0;
+}
+
+.app-modal > .image-prompt-modal-panel {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  max-height: none;
+  border: 0;
+  transform: none !important;
+}
+
+.image-prompt-modal.is-opening > .image-prompt-modal-panel,
+.image-prompt-modal.is-open > .image-prompt-modal-panel,
+.image-prompt-modal.is-closing > .image-prompt-modal-panel {
+  transform: none !important;
+}
+
+.image-prompt-modal-panel > textarea {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  padding: 16px;
+  resize: none;
+  border: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .image-edit-options {
@@ -3243,8 +3359,11 @@ html.dark #toast {
   min-height: 320px;
 }
 
-.width-micro #editImageList {
-  grid-template-columns: minmax(0, 1fr);
+.width-micro .image-edit-file,
+.width-micro #editImageAddTile {
+  width: 76px;
+  height: 76px;
+  flex-basis: 76px;
 }
 
 .width-micro .image-edit-options {
