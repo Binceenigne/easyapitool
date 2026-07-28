@@ -558,37 +558,23 @@ html.dark #keySwitcherMenu {
   gap: 4px;
 }
 
-#workspaceModeSwitch {
-  display: flex;
-  align-items: center;
-  height: 22px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  background: var(--surface-strong);
-}
-
 .workspace-mode-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 16px;
-  padding: 0 6px;
-  gap: 3px;
-  background: transparent;
+  width: 22px;
+  min-width: 22px;
+  padding: 0;
   color: var(--muted);
-  font-size: 9px;
 }
 
 .workspace-mode-button.is-active {
-  background: var(--bg);
+  border-color: color-mix(in srgb, var(--brand) 52%, var(--border));
+  background: color-mix(in srgb, var(--brand) 9%, var(--bg));
   color: var(--brand);
-  box-shadow: 0 0 0 1px var(--border-soft);
 }
 
 .workspace-mode-button [data-lucide],
 .workspace-mode-button svg {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
 }
 
 .toolbar-action-button {
@@ -1182,6 +1168,18 @@ html.dark #keySwitcherMenu {
   opacity: 0.48;
 }
 
+.image-edit-toggle-field {
+  align-content: start;
+}
+
+.image-edit-toggle-field input[type=checkbox] {
+  width: 16px;
+  height: 16px;
+  margin-top: 6px;
+  padding: 0;
+  accent-color: var(--brand);
+}
+
 .image-edit-actions {
   justify-content: space-between;
   margin-top: auto;
@@ -1249,11 +1247,10 @@ html.dark #keySwitcherMenu {
 }
 
 #imageEditResultMeta {
-  overflow: hidden;
+  min-width: 0;
   color: var(--muted);
-  font: 8px/1 var(--font-mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font: 8px/1.35 var(--font-mono);
+  overflow-wrap: anywhere;
 }
 
 .image-edit-preview {
@@ -1303,12 +1300,6 @@ html.dark #keySwitcherMenu {
 .image-edit-mode #dashboardGrid,
 .image-edit-mode #appFooter {
   display: none !important;
-}
-
-.image-edit-mode #manualRefreshButton,
-.image-edit-mode .toolbar-action-button[title=添加密钥],
-.image-edit-mode .toolbar-action-button[title=删除当前密钥] {
-  display: none;
 }
 
 #dashboardGrid {
@@ -3235,10 +3226,6 @@ html.dark #toast {
 .width-micro .toolbar-action-button {
   width: 22px;
   padding: 0;
-}
-
-.width-micro .workspace-mode-button span {
-  display: none;
 }
 
 .width-micro .workspace-mode-button {

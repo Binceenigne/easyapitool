@@ -2,7 +2,7 @@
 
 Windows API 密钥额度监控工具。桌面壳使用 Python 3.12、pywebview（Edge WebView2）、SQLite、系统托盘和 Windows 通知。
 
-当前 `imagen` 分支在主监控器之外额外提供图片编辑能力；`main` 分支仅维护额度监控器。图片请求校验、multipart 传输、响应解码和结果落盘集中在 `image_editor.py`，`app.py` 只负责凭据、窗口和 RPC 适配。
+当前 `imagen` 分支在主监控器之外额外提供图片生成功能；`main` 分支仅维护额度监控器。图片请求校验、JSON/multipart 传输、流式响应解析和结果落盘集中在 `image_editor.py`，`app.py` 只负责凭据、窗口和 RPC 适配。
 
 ## 功能
 
@@ -12,7 +12,8 @@ Windows API 密钥额度监控工具。桌面壳使用 Python 3.12、pywebview�
 - 总额度、5h、1d、7d 剩余比例进入 25% / 10% / 5% 时发送 Windows 通知。
 - SQLite 保留最近 30 天的用量采样和每日明细。
 - API Key 使用当前 Windows 用户的 DPAPI 加密后再写入 SQLite。
-- 图片编辑模式支持向 `/images/edits` 上传最多 16 张参考图，由 GPT Image 2 合成为新图并另存到本机。
+- 生图模式默认使用顶部当前选中的 API Key；无参考图时调用 `/images/generations`，添加最多 16 张参考图后调用 `/images/edits`。
+- 支持 PNG/JPEG/WebP、输出压缩、背景、审核、流式响应和 0–3 张 partial 预览参数；界面同时显示请求尺寸/质量与服务端实际尺寸/质量。
 - 关闭按钮可设置为关闭应用、最小化到系统托盘或每次询问。
 - 可设置随 Windows 开机自动启动。
 - 从 GitHub Release 检查、下载并安装新版本，下载进度使用自适应点阵进度条。
@@ -20,7 +21,11 @@ Windows API 密钥额度监控工具。桌面壳使用 Python 3.12、pywebview�
 
 ## 本地数据
 
-数据库位于 `%LOCALAPPDATA%\API_TOOLS\api_tools.db`。图片编辑结果暂存在 `%LOCALAPPDATA%\API_TOOLS\image-edits`，可在界面中另存到其他位置。密钥不会以明文写入数据库或日志。启动阶段耗时记录在 `%LOCALAPPDATA%\API_TOOLS\startup.log`，用于区分单文件解包、WebView 首屏与首次网络刷新耗时。
+数据库位于 `%LOCALAPPDATA%\API_TOOLS\api_tools.db`。图片生成结果暂存在 `%LOCALAPPDATA%\API_TOOLS\image-generations`，可在界面中另存到其他位置。密钥不会以明文写入数据库或日志。启动阶段耗时记录在 `%LOCALAPPDATA%\API_TOOLS\startup.log`，用于区分单文件解包、WebView 首屏与首次网络刷新耗时。
+
+## 生图参数兼容性
+
+EasyClin 会把图片请求转换到内部图片工具，并非所有 Images API 参数都会原样执行。当前实测：`output_format`、`output_compression`、`background`、`moderation`、`stream` 生效；`partial_images` 可用但实际返回数量可能不同；`size` 和 `quality` 可能被服务端覆盖。`n` 已确认不支持，`user` 疑似被忽略，因此界面不提供这两个参数。
 
 ## 开发运行
 

@@ -25,12 +25,15 @@ CONTENT_TYPES = {
 
 
 @dataclass(frozen=True)
-class ImageEditRequest:
+class ImageGenerationRequest:
     prompt: str
     image_paths: tuple[Path, ...]
-    fields: dict[str, str]
+    fields: dict[str, Any]
     output_format: str
     requested_size: str
+    requested_quality: str
+    stream: bool
+    partial_images: int
 
 
 def _number(value: Any, default: float) -> float:
@@ -40,18 +43,18 @@ def _number(value: Any, default: float) -> float:
         return default
 
 
-def prepare_image_edit(
+def prepare_image_generation(
     prompt: str,
     image_paths: list[str],
     options: dict[str, Any] | None = None,
-) -> ImageEditRequest:
+) -> ImageGenerationRequest:
     clean_prompt = str(prompt or "").strip()
     if not clean_prompt:
         raise ValueError("请输入图片编辑要求")
     if len(clean_prompt) > 32_000:
         raise ValueError("图片编辑要求不能超过 32000 个字符")
-    if not isinstance(image_paths, list) or not 1 <= len(image_paths) <= 16:
-        raise ValueError("请选择 1 到 16 张参考图片")
+    if not isinstance(image_paths, list) or len(image_paths) > 16:
+        raise ValueError("参考图片不能超过 16 张")
 
     valid_paths: list[Path] = []
     for raw_path in image_paths:
@@ -75,16 +78,32 @@ def prepare_image_edit(
     size = str(clean_options.get("size") or "auto").lower()
     background = str(clean_options.get("background") or "auto").lower()
     moderation = str(clean_options.get("moderation") or "auto").lower()
+    stream = bool(clean_options.get("stream"))
+    partial_images = int(_number(clean_options.get("partialImages"), 0))
     if output_format not in {"png", "jpeg", "webp"}:
         raise ValueError("无效的输出格式")
     if quality not in {"low", "medium", "high", "auto"}:
         raise ValueError("无效的图片质量")
-    if size not in {"1024x1024", "1536x1024", "1024x1536", "auto"}:
-        raise ValueError("无效的图片尺寸")
+    if size != "auto":
+        size_match = __import__("re").fullmatch(r"(\d+)x(\d+)", size)
+        if not size_match:
+            raise ValueError("图片尺寸必须是 auto 或 WIDTHxHEIGHT")
+        width, height = (int(value) for value in size_match.groups())
+        pixels = width * height
+        if (
+            width % 16
+            or height % 16
+            or max(width, height) / min(width, height) > 3
+            or max(width, height) > 3840
+            or not 655_360 <= pixels <= 8_294_400
+        ):
+            raise ValueError("图片尺寸不符合 GPT Image 2 的边长、比例或像素限制")
     if background not in {"opaque", "auto"}:
         raise ValueError("gpt-image-2 仅支持自动或不透明背景")
     if moderation not in {"low", "auto"}:
         raise ValueError("无效的审核级别")
+    if not 0 <= partial_images <= 3:
+        raise ValueError("流式预览图数量必须在 0 到 3 之间")
 
     fields = {
         "model": "gpt-image-2",
@@ -94,29 +113,116 @@ def prepare_image_edit(
         "output_format": output_format,
         "background": background,
         "moderation": moderation,
+        "stream": stream,
     }
+    if stream:
+        fields["partial_images"] = partial_images
     if output_format in {"jpeg", "webp"}:
         compression = int(_number(clean_options.get("outputCompression"), 90))
         if not 0 <= compression <= 100:
             raise ValueError("输出压缩率必须在 0 到 100 之间")
         fields["output_compression"] = str(compression)
 
-    return ImageEditRequest(
+    return ImageGenerationRequest(
         prompt=clean_prompt,
         image_paths=tuple(valid_paths),
         fields=fields,
         output_format=output_format,
         requested_size=size,
+        requested_quality=quality,
+        stream=stream,
+        partial_images=partial_images,
     )
 
 
-class ImageEditClient:
+class ImageGenerationClient:
+    @staticmethod
+    def _opener() -> urllib.request.OpenerDirector:
+        class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+                return None
+
+        return urllib.request.build_opener(NoRedirectHandler())
+
+    @staticmethod
+    def _error(exc: urllib.error.HTTPError, secret: str) -> RuntimeError:
+        body_text = exc.read().decode("utf-8", "replace")
+        try:
+            parsed = json.loads(body_text)
+            message = (parsed.get("error") or {}).get("message") or parsed.get("message")
+        except json.JSONDecodeError:
+            message = body_text[:200]
+        safe_message = str(message or exc.reason)
+        if secret:
+            safe_message = safe_message.replace(secret, "[REDACTED]")
+        return RuntimeError(f"HTTP {exc.code}: {safe_message}")
+
+    @staticmethod
+    def _read_response(response: Any, stream: bool) -> dict[str, Any]:
+        if not stream:
+            return json.loads(response.read().decode("utf-8"))
+
+        completed: dict[str, Any] | None = None
+        partial_count = 0
+        for raw_line in response:
+            line = raw_line.decode("utf-8", "replace").strip()
+            if not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if not payload or payload == "[DONE]":
+                continue
+            event = json.loads(payload)
+            event_type = str(event.get("type") or "")
+            if event_type == "image_generation.partial_image":
+                partial_count += 1
+            elif event_type == "image_generation.completed":
+                completed = event
+        if completed is None or not completed.get("b64_json"):
+            raise RuntimeError("流式生图接口未返回最终图片")
+        return {
+            "data": [{"b64_json": completed["b64_json"]}],
+            "background": completed.get("background"),
+            "output_format": completed.get("output_format"),
+            "quality": completed.get("quality"),
+            "size": completed.get("size"),
+            "usage": completed.get("usage"),
+            "partial_images_received": partial_count,
+        }
+
+    @classmethod
+    def generate_image(
+        cls,
+        base_url: str,
+        secret: str,
+        fields: dict[str, Any],
+        timeout: int = 600,
+    ) -> dict[str, Any]:
+        request = urllib.request.Request(
+            f"{base_url.rstrip('/')}/images/generations",
+            data=json.dumps(fields, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {secret}",
+                "Accept": "text/event-stream" if fields.get("stream") else "application/json",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            method="POST",
+        )
+        try:
+            with cls._opener().open(request, timeout=timeout) as response:
+                return cls._read_response(response, bool(fields.get("stream")))
+        except urllib.error.HTTPError as exc:
+            raise cls._error(exc, secret) from None
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise RuntimeError(
+                f"网络请求失败: {exc.reason if hasattr(exc, 'reason') else exc}"
+            ) from None
+
     @staticmethod
     def edit_images(
         base_url: str,
         secret: str,
         image_paths: tuple[Path, ...],
-        fields: dict[str, str],
+        fields: dict[str, Any],
         timeout: int = 600,
     ) -> dict[str, Any]:
         boundary = f"----API_TOOLS_{uuid.uuid4().hex}"
@@ -129,9 +235,10 @@ class ImageEditClient:
             body.write(b"\r\n")
 
         for name, value in fields.items():
+            field_value = str(value).lower() if isinstance(value, bool) else str(value)
             write_part(
                 [f'Content-Disposition: form-data; name="{name}"'],
-                value.encode("utf-8"),
+                field_value.encode("utf-8"),
             )
         for index, image_path in enumerate(image_paths, start=1):
             suffix = image_path.suffix.lower()
@@ -144,58 +251,47 @@ class ImageEditClient:
             )
         body.write(f"--{boundary}--\r\n".encode("ascii"))
 
-        class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, *args: Any, **kwargs: Any) -> None:
-                return None
-
         request = urllib.request.Request(
             f"{base_url.rstrip('/')}/images/edits",
             data=body.getvalue(),
             headers={
                 "Authorization": f"Bearer {secret}",
-                "Accept": "application/json",
+                "Accept": "text/event-stream" if fields.get("stream") else "application/json",
                 "Content-Type": f"multipart/form-data; boundary={boundary}",
             },
             method="POST",
         )
-        opener = urllib.request.build_opener(NoRedirectHandler())
         try:
-            with opener.open(request, timeout=timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
+            with ImageGenerationClient._opener().open(request, timeout=timeout) as response:
+                return ImageGenerationClient._read_response(response, bool(fields.get("stream")))
         except urllib.error.HTTPError as exc:
-            body_text = exc.read().decode("utf-8", "replace")
-            try:
-                parsed = json.loads(body_text)
-                message = (parsed.get("error") or {}).get("message") or parsed.get("message")
-            except json.JSONDecodeError:
-                message = body_text[:200]
-            safe_message = str(message or exc.reason)
-            if secret:
-                safe_message = safe_message.replace(secret, "[REDACTED]")
-            raise RuntimeError(f"HTTP {exc.code}: {safe_message}") from None
+            raise ImageGenerationClient._error(exc, secret) from None
         except (urllib.error.URLError, TimeoutError) as exc:
             raise RuntimeError(
                 f"网络请求失败: {exc.reason if hasattr(exc, 'reason') else exc}"
             ) from None
 
 
-class ImageEditorService:
-    def __init__(self, client: ImageEditClient | None = None) -> None:
-        self.client = client or ImageEditClient()
+class ImageGenerationService:
+    def __init__(self, client: ImageGenerationClient | None = None) -> None:
+        self.client = client or ImageGenerationClient()
 
-    def edit(
+    def generate(
         self,
         base_url: str,
         secret: str,
-        request: ImageEditRequest,
+        request: ImageGenerationRequest,
         output_dir: Path,
     ) -> dict[str, Any]:
-        response = self.client.edit_images(
-            base_url,
-            secret,
-            request.image_paths,
-            request.fields,
-        )
+        if request.image_paths:
+            response = self.client.edit_images(
+                base_url,
+                secret,
+                request.image_paths,
+                request.fields,
+            )
+        else:
+            response = self.client.generate_image(base_url, secret, request.fields)
         image_data = ((response.get("data") or [{}])[0] or {}).get("b64_json")
         if not image_data:
             raise RuntimeError("图片编辑接口未返回图片数据")
@@ -212,7 +308,7 @@ class ImageEditorService:
         output_dir.mkdir(parents=True, exist_ok=True)
         suffix = {"jpeg": ".jpg", "webp": ".webp"}.get(actual_format, ".png")
         output_path = output_dir / (
-            f"image-edit-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}{suffix}"
+            f"image-generation-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}{suffix}"
         )
         output_path.write_bytes(result_bytes)
         return {
@@ -224,6 +320,12 @@ class ImageEditorService:
             "sizeBytes": len(result_bytes),
             "format": verified_format,
             "quality": response.get("quality") or request.fields["quality"],
+            "requestedQuality": request.requested_quality,
             "requestedSize": request.requested_size,
             "actualSize": response.get("size") or f"{width}x{height}",
+            "background": response.get("background") or request.fields["background"],
+            "stream": request.stream,
+            "partialImagesRequested": request.partial_images if request.stream else 0,
+            "partialImagesReceived": int(response.get("partial_images_received") or 0),
+            "referenceCount": len(request.image_paths),
         }

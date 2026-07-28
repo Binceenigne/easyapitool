@@ -32,7 +32,7 @@ from multiprocessing.connection import Client, Listener
 PROCESS_STARTED_AT = time.perf_counter()
 
 import webview
-from image_editor import ImageEditorService, prepare_image_edit
+from image_editor import ImageGenerationService, prepare_image_generation
 from PIL import Image
 from winotify import Notification, audio
 
@@ -58,7 +58,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "33"
+STATIC_UI_VERSION = "34"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -942,7 +942,7 @@ RPC_METHODS = {
     "defer_update_restart",
     "dismiss_update_prompt",
     "download_update",
-    "edit_images",
+    "generate_image",
     "exit_app",
     "get_asset_status",
     "get_state",
@@ -1931,7 +1931,7 @@ class AppController:
         self.restart_ready_path = os.environ.pop(RESTART_READY_ENV, "").strip()
         self.active_title_bar_mode = self.store.get_title_bar_mode()
         self.client = EasyClinClient()
-        self.image_editor = ImageEditorService()
+        self.image_generator = ImageGenerationService()
         self.store.import_environment_key()
         self.window: webview.Window | None = None
         self.tray: Any = None
@@ -2004,7 +2004,7 @@ class AppController:
         if not self.window:
             return {"ok": False, "error": "应用窗口尚未就绪"}
         source = Path(str(source_path or "")).resolve()
-        output_root = (app_data_dir() / "image-edits").resolve()
+        output_root = (app_data_dir() / "image-generations").resolve()
         if not source.is_file() or source.parent != output_root:
             return {"ok": False, "error": "只能保存本应用生成的图片"}
         selected = self.window.create_file_dialog(
@@ -3063,7 +3063,7 @@ class AppController:
             return {"ok": False, "error": error}
         return {"ok": True, "activeKeyId": key_id, "state": self.get_state()}
 
-    def edit_images(
+    def generate_image(
         self,
         key_id: str,
         prompt: str,
@@ -3071,7 +3071,7 @@ class AppController:
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
-            request = prepare_image_edit(prompt, image_paths, options)
+            request = prepare_image_generation(prompt, image_paths, options)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -3079,11 +3079,11 @@ class AppController:
         if record is None:
             return {"ok": False, "error": "请选择有效的 API Key"}
         try:
-            return self.image_editor.edit(
+            return self.image_generator.generate(
                 record["base_url"],
                 self.store.get_secret(record["id"]),
                 request,
-                app_data_dir() / "image-edits",
+                app_data_dir() / "image-generations",
             )
         except (RuntimeError, OSError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
@@ -3443,14 +3443,14 @@ class WebApi:
     def delete_key(self, key_id: str) -> dict[str, Any]:
         return self._controller.delete_key(key_id)
 
-    def edit_images(
+    def generate_image(
         self,
         key_id: str,
         prompt: str,
         image_paths: list[str],
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return self._controller.edit_images(key_id, prompt, image_paths, options)
+        return self._controller.generate_image(key_id, prompt, image_paths, options)
 
     def refresh_now(self, trace_id: Any = None) -> dict[str, Any]:
         return self._controller.refresh_now(trace_id)
@@ -3719,14 +3719,14 @@ class RemoteWebApi(WebApi):
     def delete_key(self, key_id: str) -> dict[str, Any]:
         return self._remote("delete_key", key_id)
 
-    def edit_images(
+    def generate_image(
         self,
         key_id: str,
         prompt: str,
         image_paths: list[str],
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return self._remote("edit_images", key_id, prompt, image_paths, options)
+        return self._remote("generate_image", key_id, prompt, image_paths, options)
 
     def refresh_now(self, trace_id: Any = None) -> dict[str, Any]:
         return self._remote("refresh_now", trace_id)

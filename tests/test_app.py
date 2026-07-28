@@ -635,7 +635,7 @@ class UtilityTests(unittest.TestCase):
             opener = FakeOpener()
 
             with patch("image_editor.urllib.request.build_opener", return_value=opener) as build_opener:
-                result = image_editor.ImageEditClient.edit_images(
+                result = image_editor.ImageGenerationClient.edit_images(
                     "https://example.test/v1",
                     "secret-value",
                     (first, second),
@@ -732,7 +732,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=26">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=27">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -740,12 +740,15 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="trend10mButton"', page)
         self.assertIn("rates?.tenMinute2h", page)
         self.assertIn("openModelModal", page)
-        self.assertIn('id="imageEditModeButton"', page)
+        self.assertIn('id="workspaceModeButton"', page)
+        self.assertNotIn('id="imageEditModeButton"', page)
+        self.assertIn('<div id="widget-root" class="image-edit-mode">', page)
         self.assertIn('id="imageEditWorkspace"', page)
         self.assertIn('id="imageEditPrompt"', page)
         self.assertIn("choose_edit_images", page)
-        self.assertIn("edit_images", page)
+        self.assertIn("generate_image", page)
         self.assertIn("save_edited_image", page)
+        self.assertNotIn(".image-edit-mode #manualRefreshButton", scss_source)
         self.assertIn(
             'name="image[]"',
             (project_root / "image_editor.py").read_text(encoding="utf-8"),
@@ -948,19 +951,19 @@ class StaticAssetCacheTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
-    def test_edit_images_validates_inputs_and_writes_decoded_result(self):
+    def test_generate_image_uses_selected_key_and_generation_service(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             input_path = root / "reference.png"
             input_image = app.Image.new("RGB", (8, 8), "red")
             input_image.save(input_path, format="PNG")
             service = SimpleNamespace(
-                edit=__import__("unittest.mock").mock.Mock(
+                generate=__import__("unittest.mock").mock.Mock(
                     return_value={"ok": True, "path": str(root / "result.png")}
                 )
             )
             controller = app.AppController.__new__(app.AppController)
-            controller.image_editor = service
+            controller.image_generator = service
             controller.store = SimpleNamespace(
                 get_key_record=lambda key_id: {
                     "id": key_id,
@@ -970,7 +973,7 @@ class ControllerTests(unittest.TestCase):
             )
 
             with patch("app.app_data_dir", return_value=root / "data"):
-                result = controller.edit_images(
+                result = controller.generate_image(
                     "key-1",
                     "Combine this reference into a new image",
                     [str(input_path)],
@@ -984,19 +987,26 @@ class ControllerTests(unittest.TestCase):
                 )
 
         self.assertTrue(result["ok"])
-        args = service.edit.call_args.args
+        args = service.generate.call_args.args
         self.assertEqual(args[0:2], ("https://example.test/v1", "secret"))
         self.assertEqual(args[2].image_paths, (input_path.resolve(),))
         self.assertEqual(args[2].fields["model"], "gpt-image-2")
         self.assertEqual(args[2].fields["quality"], "low")
-        self.assertEqual(args[3], root / "data" / "image-edits")
+        self.assertEqual(args[3], root / "data" / "image-generations")
 
-    def test_edit_images_rejects_missing_reference_images(self):
+    def test_generate_image_accepts_missing_reference_images(self):
         controller = app.AppController.__new__(app.AppController)
+        controller.image_generator = SimpleNamespace(
+            generate=__import__("unittest.mock").mock.Mock(return_value={"ok": True})
+        )
+        controller.store = SimpleNamespace(
+            get_key_record=lambda key_id: {"id": key_id, "base_url": "https://example.test/v1"},
+            get_secret=lambda _key_id: "secret",
+        )
 
-        result = controller.edit_images("key-1", "Combine images", [], {})
+        result = controller.generate_image("key-1", "Generate image", [], {})
 
-        self.assertEqual(result, {"ok": False, "error": "请选择 1 到 16 张参考图片"})
+        self.assertTrue(result["ok"])
 
     def test_github_request_retries_without_system_proxy_when_proxy_refuses(self):
         request = app.urllib.request.Request("https://api.github.com/test")
@@ -2062,7 +2072,7 @@ class ControllerTests(unittest.TestCase):
                 "defer_update_restart",
                 "dismiss_update_prompt",
                 "download_update",
-                "edit_images",
+                "generate_image",
                 "get_asset_status",
                 "get_state",
                 "initialize_assets",
@@ -2134,7 +2144,7 @@ class ControllerTests(unittest.TestCase):
 
         state = api.get_state()
         refresh = api.refresh_now("trace-1")
-        edit = api.edit_images("key-1", "combine", ["a.png", "b.png"], {"quality": "low"})
+        generated = api.generate_image("key-1", "combine", ["a.png", "b.png"], {"quality": "low"})
         choose = api.choose_edit_images()
         save = api.save_edited_image("result.png")
         window_result = api.window_action("minimize")
@@ -2142,9 +2152,9 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(state["isForeground"])
         self.assertEqual(refresh, {"method": "refresh_now", "args": ("trace-1",)})
         self.assertEqual(
-            edit,
+            generated,
             {
-                "method": "edit_images",
+                "method": "generate_image",
                 "args": ("key-1", "combine", ["a.png", "b.png"], {"quality": "low"}),
             },
         )
