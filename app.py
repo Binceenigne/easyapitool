@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import concurrent.futures
 import ctypes
 import hashlib
 from html.parser import HTMLParser
@@ -59,7 +60,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "38"
+STATIC_UI_VERSION = "39"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -964,6 +965,52 @@ RPC_METHODS = {
 }
 
 
+class GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", wintypes.DWORD),
+        ("Data2", wintypes.WORD),
+        ("Data3", wintypes.WORD),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+    @classmethod
+    def from_string(cls, value: str) -> "GUID":
+        parsed = uuid.UUID(value)
+        return cls(
+            parsed.time_low,
+            parsed.time_mid,
+            parsed.time_hi_version,
+            (ctypes.c_ubyte * 8)(*parsed.bytes[8:]),
+        )
+
+
+def windows_pictures_dir() -> Path:
+    folder_id = GUID.from_string("33E28130-4E1E-4676-835A-98395C3BC3BB")
+    path_pointer = ctypes.c_wchar_p()
+    try:
+        result = ctypes.windll.shell32.SHGetKnownFolderPath(
+            ctypes.byref(folder_id),
+            0,
+            None,
+            ctypes.byref(path_pointer),
+        )
+        if result == 0 and path_pointer.value:
+            return Path(path_pointer.value)
+    except (AttributeError, OSError):
+        pass
+    finally:
+        if path_pointer.value:
+            try:
+                ctypes.windll.ole32.CoTaskMemFree(path_pointer)
+            except (AttributeError, OSError):
+                pass
+    return Path.home() / "Pictures"
+
+
+def generated_pictures_dir() -> Path:
+    return windows_pictures_dir() / APP_NAME
+
+
 class ControllerRpcServer:
     def __init__(self, controller: "AppController", address: str, authkey: bytes) -> None:
         self.controller = controller
@@ -1000,7 +1047,21 @@ class ControllerRpcServer:
             if method_name not in RPC_METHODS:
                 raise ValueError("不允许的后台调用")
             method = getattr(self.controller, method_name)
-            connection.send({"ok": True, "result": method(*arguments)})
+            if method_name == "generate_image":
+                send_lock = threading.Lock()
+
+                def send_event(event: dict[str, Any]) -> None:
+                    try:
+                        with send_lock:
+                            connection.send({"ok": True, "event": event})
+                    except (OSError, EOFError, BrokenPipeError):
+                        pass
+
+                result = method(*arguments, event_callback=send_event)
+                with send_lock:
+                    connection.send({"ok": True, "result": result})
+            else:
+                connection.send({"ok": True, "result": method(*arguments)})
         except Exception as exc:
             try:
                 connection.send({"ok": False, "error": str(exc)})
@@ -1026,6 +1087,28 @@ class ControllerRpcClient:
         try:
             connection.send({"method": method, "args": list(arguments)})
             response = connection.recv()
+        finally:
+            connection.close()
+        if not response.get("ok"):
+            raise RuntimeError(response.get("error") or "后台服务调用失败")
+        return response.get("result")
+
+    def call_with_events(
+        self,
+        method: str,
+        *arguments: Any,
+        on_event: Any = None,
+    ) -> Any:
+        connection = Client(self.address, family="AF_PIPE", authkey=self.authkey)
+        try:
+            connection.send({"method": method, "args": list(arguments)})
+            while True:
+                response = connection.recv()
+                if "event" in response:
+                    if on_event is not None:
+                        on_event(response["event"])
+                    continue
+                break
         finally:
             connection.close()
         if not response.get("ok"):
@@ -1984,7 +2067,7 @@ class AppController:
             return {"ok": False, "error": "应用窗口尚未就绪"}
         selected = self.window.create_file_dialog(
             webview.FileDialog.OPEN,
-            directory=str(Path.home() / "Pictures"),
+            directory=str(windows_pictures_dir()),
             allow_multiple=True,
             file_types=("图片文件 (*.png;*.jpg;*.jpeg;*.webp)",),
         )
@@ -2063,11 +2146,12 @@ class AppController:
             return {"ok": False, "error": "应用窗口尚未就绪"}
         source = Path(str(source_path or "")).resolve()
         output_root = (app_data_dir() / "image-generations").resolve()
-        if not source.is_file() or source.parent != output_root:
+        pictures_root = generated_pictures_dir().resolve()
+        if not source.is_file() or source.parent not in {output_root, pictures_root}:
             return {"ok": False, "error": "只能保存本应用生成的图片"}
         selected = self.window.create_file_dialog(
             webview.FileDialog.SAVE,
-            directory=str(Path.home() / "Pictures"),
+            directory=str(windows_pictures_dir()),
             save_filename=source.name,
             file_types=("PNG 图片 (*.png)", "JPEG 图片 (*.jpg;*.jpeg)", "WebP 图片 (*.webp)"),
         )
@@ -2077,6 +2161,15 @@ class AppController:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
         return {"ok": True, "path": str(destination)}
+
+    def open_generated_pictures(self) -> dict[str, Any]:
+        output_dir = generated_pictures_dir()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(str(output_dir))
+        except OSError as exc:
+            return {"ok": False, "error": f"无法打开图片文件夹：{exc}"}
+        return {"ok": True, "path": str(output_dir)}
 
     def start_workers(self) -> None:
         trace_startup("webview_start_callback")
@@ -3127,24 +3220,115 @@ class AppController:
         prompt: str,
         image_paths: list[str],
         options: dict[str, Any] | None = None,
+        event_callback: Any = None,
     ) -> dict[str, Any]:
+        clean_options = dict(options) if isinstance(options, dict) else {}
         try:
-            request = prepare_image_generation(prompt, image_paths, options)
+            image_count = int(clean_options.get("imageCount") or 1)
+        except (TypeError, ValueError):
+            image_count = 1
+        if not 1 <= image_count <= 9:
+            return {"ok": False, "error": "图片数量必须在 1 到 9 之间"}
+        request_id = str(clean_options.get("requestId") or uuid.uuid4().hex)[:80]
+        clean_options.update(
+            {
+                "background": "auto",
+                "moderation": "low",
+                "stream": True,
+                "partialImages": 3,
+            }
+        )
+        try:
+            request = prepare_image_generation(prompt, image_paths, clean_options)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
         record = self.store.get_key_record(str(key_id or ""))
         if record is None:
             return {"ok": False, "error": "请选择有效的 API Key"}
-        try:
-            return self.image_generator.generate(
-                record["base_url"],
-                self.store.get_secret(record["id"]),
-                request,
-                app_data_dir() / "image-generations",
-            )
-        except (RuntimeError, OSError, ValueError) as exc:
-            return {"ok": False, "error": str(exc)}
+        secret = self.store.get_secret(record["id"])
+        managed_output_dir = app_data_dir() / "image-generations"
+        pictures_output_dir = generated_pictures_dir()
+
+        def emit(event_type: str, item_index: int | None = None, **details: Any) -> None:
+            if event_callback is None:
+                return
+            event = {
+                "type": event_type,
+                "requestId": request_id,
+                "setId": request_id,
+                **details,
+            }
+            if item_index is not None:
+                event["itemIndex"] = item_index
+            try:
+                event_callback(event)
+            except Exception:
+                pass
+
+        emit(
+            "set_started",
+            requestedCount=image_count,
+            prompt=request.prompt,
+            referenceCount=len(request.image_paths),
+        )
+
+        def generate_one(item_index: int) -> dict[str, Any]:
+            emit("item_started", item_index)
+
+            def on_partial(partial: dict[str, Any]) -> None:
+                emit("item_partial", item_index, **partial)
+
+            try:
+                result = self.image_generator.generate(
+                    record["base_url"],
+                    secret,
+                    request,
+                    managed_output_dir,
+                    on_partial=on_partial,
+                )
+                source_path = Path(result["path"])
+                try:
+                    pictures_output_dir.mkdir(parents=True, exist_ok=True)
+                    saved_path = pictures_output_dir / source_path.name
+                    shutil.copy2(source_path, saved_path)
+                    result["managedPath"] = str(source_path)
+                    result["path"] = str(saved_path)
+                    result["uri"] = saved_path.as_uri()
+                    result["savedPath"] = str(saved_path)
+                except OSError as exc:
+                    result["saveWarning"] = f"自动保存到图片文件夹失败：{exc}"
+                result["itemIndex"] = item_index
+                emit("item_completed", item_index, result=result)
+                return result
+            except (RuntimeError, OSError, ValueError) as exc:
+                error = str(exc)
+                emit("item_failed", item_index, error=error)
+                return {"ok": False, "itemIndex": item_index, "error": error}
+
+        items: list[dict[str, Any]] = []
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(3, image_count),
+            thread_name_prefix="image-generation",
+        ) as executor:
+            futures = [executor.submit(generate_one, index) for index in range(image_count)]
+            for future in concurrent.futures.as_completed(futures):
+                items.append(future.result())
+        items.sort(key=lambda item: int(item.get("itemIndex") or 0))
+        successful = [item for item in items if item.get("ok")]
+        result = {
+            "ok": bool(successful),
+            "requestId": request_id,
+            "setId": request_id,
+            "requestedCount": image_count,
+            "items": items,
+            "prompt": request.prompt,
+            "referenceCount": len(request.image_paths),
+        }
+        if not successful:
+            result["error"] = "所有图片生成请求均失败"
+        emit("set_completed", items=items, ok=bool(successful))
+        return result
 
     def delete_key(self, key_id: str) -> dict[str, Any]:
         self.store.delete_key(key_id)
@@ -3498,6 +3682,9 @@ class WebApi:
     def import_reference_image(self, data_url: str, name: str = "") -> dict[str, Any]:
         return self._controller.import_reference_image(data_url, name)
 
+    def open_generated_pictures(self) -> dict[str, Any]:
+        return self._controller.open_generated_pictures()
+
     def add_key(self, name: str, value: str) -> dict[str, Any]:
         return self._controller.add_key(name, value)
 
@@ -3720,6 +3907,15 @@ class UiController(AppController):
             if self.window:
                 self.window.destroy()
 
+    def push_image_generation_event(self, event: dict[str, Any]) -> None:
+        if not self.window:
+            return
+        payload = json.dumps(event, ensure_ascii=False)
+        try:
+            self.window.evaluate_js(f"window.applyImageGenerationEvent({payload});")
+        except Exception:
+            pass
+
     def restart_app(self) -> dict[str, Any]:
         return self.rpc_client.call("restart_app")
 
@@ -3774,6 +3970,9 @@ class RemoteWebApi(WebApi):
     def get_asset_status(self) -> dict[str, Any]:
         return self._remote("get_asset_status")
 
+    def open_generated_pictures(self) -> dict[str, Any]:
+        return self._remote("open_generated_pictures")
+
     def add_key(self, name: str, value: str) -> dict[str, Any]:
         return self._remote("add_key", name, value)
 
@@ -3787,7 +3986,14 @@ class RemoteWebApi(WebApi):
         image_paths: list[str],
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return self._remote("generate_image", key_id, prompt, image_paths, options)
+        return self._rpc_client.call_with_events(
+            "generate_image",
+            key_id,
+            prompt,
+            image_paths,
+            options,
+            on_event=self._controller.push_image_generation_event,
+        )
 
     def refresh_now(self, trace_id: Any = None) -> dict[str, Any]:
         return self._remote("refresh_now", trace_id)

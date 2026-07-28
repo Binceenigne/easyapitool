@@ -15,8 +15,11 @@ Windows API 密钥额度监控工具。桌面壳使用 Python 3.12、pywebview�
 - 生图模式默认使用顶部当前选中的 API Key；无参考图时调用 `/images/generations`，添加最多 16 张参考图后调用 `/images/edits`。
 - 参考图支持文件选择、剪贴板粘贴和拖拽导入，并以缩略图展示；超过 16 张时仅导入剩余槽位，单张超过 50 MB 时跳过并提示。
 - 提示词输入框默认 7 行、最多自适应到 12 行，超出后内部滚动并提供全屏编辑。
-- 图片接口始终请求 PNG；本机可按无损 PNG、大（JPEG 90）、中（JPEG 75）、小（JPEG 55）四档落盘。透明背景强制使用无损 PNG。
-- 审核默认使用低强度，并默认开启流式响应和 3 张 partial 过程预览；界面同时显示请求尺寸/质量与服务端实际尺寸/质量。
+- 每次可生成 1–9 张图片；应用会发起相应数量的独立请求并限制为最多 3 路并发，不会向不支持 `n` 的 EasyClin 接口传递该参数。
+- 右侧按每次提交创建一个图片集，每张图片的排队、生成、partial 过程预览、完成或失败状态都会实时更新。
+- 图片接口始终请求 PNG；本机可按无损 PNG、大（JPEG 90）、中（JPEG 75）、小（JPEG 55）四档保存。背景在后台固定为自动，审核固定为低，并默认开启流式响应和 3 张 partial 过程预览。
+- 最终图片自动保存到 Windows“图片”目录下的 `DJYX_APITOOL` 文件夹，可从结果区直接打开文件夹或将单图另存为其他位置。
+- 点击结果集可将本组完成图片加入参考图；点击单张完成图会加入参考图并打开查看器，随后可追加提示词继续编辑。
 - 关闭按钮可设置为关闭应用、最小化到系统托盘或每次询问。
 - 可设置随 Windows 开机自动启动。
 - 从 GitHub Release 检查、下载并安装新版本，下载进度使用自适应点阵进度条。
@@ -24,13 +27,13 @@ Windows API 密钥额度监控工具。桌面壳使用 Python 3.12、pywebview�
 
 ## 本地数据
 
-数据库位于 `%LOCALAPPDATA%\API_TOOLS\api_tools.db`。图片生成结果暂存在 `%LOCALAPPDATA%\API_TOOLS\image-generations`，可在界面中另存到其他位置。密钥不会以明文写入数据库或日志。启动阶段耗时记录在 `%LOCALAPPDATA%\API_TOOLS\startup.log`，用于区分单文件解包、WebView 首屏与首次网络刷新耗时。
+数据库位于 `%LOCALAPPDATA%\API_TOOLS\api_tools.db`。流式 partial 过程图暂存在 `%LOCALAPPDATA%\API_TOOLS\image-generations\partials`，最终图片自动保存到 Windows“图片”目录下的 `DJYX_APITOOL` 文件夹。密钥不会以明文写入数据库或日志。启动阶段耗时记录在 `%LOCALAPPDATA%\API_TOOLS\startup.log`，用于区分单文件解包、WebView 首屏与首次网络刷新耗时。
 
 ## 生图参数兼容性
 
-EasyClin 会把图片请求转换到内部图片工具，并非所有 Images API 参数都会原样执行。当前实测：`background`、`moderation`、`stream` 生效；`partial_images` 可用但实际返回数量可能不同。尺寸支持提交符合 GPT Image 2 限制的自定义宽高，但 EasyClin 可能重写请求值，例如 `768x1024` 实测返回 `1254x1254`，因此不能视为严格透传。`quality` 表示模型生成细节/推理强度，主要影响视觉质量、耗时和成本，并不直接指定像素分辨率；EasyClin 也可能覆盖该值，例如 `low` 实测变为 `auto`。`n` 已确认不支持，`user` 疑似被忽略，因此界面不提供这两个参数。
+EasyClin 会把图片请求转换到内部图片工具，并非所有 Images API 参数都会原样执行。当前实测：`background`、`moderation`、`stream` 生效；`partial_images` 可用但实际返回数量可能不同。应用在后台固定使用 `background=auto`、`moderation=low`、`stream=true` 和 `partial_images=3`。尺寸支持提交符合 GPT Image 2 限制的自定义宽高，但 EasyClin 可能重写请求值，例如 `768x1024` 实测返回 `1254x1254`，因此不能视为严格透传。`quality` 表示模型生成细节/推理强度，主要影响视觉质量、耗时和成本，并不直接指定像素分辨率；EasyClin 也可能覆盖该值，例如 `low` 实测变为 `auto`。`n` 已确认不支持，图片数量由应用编排独立请求实现；`user` 疑似被忽略，因此界面不提供这两个参数。
 
-为保证透明通道与输出大小行为稳定，应用向 EasyClin 固定发送 `output_format=png`，收到最终图后再由本机执行 PNG 无损保存或 JPEG 90/75/55 压缩。选择透明背景时，界面和后端都会强制使用无损 PNG，避免 JPEG 丢失 Alpha 通道。
+为保证输出大小行为稳定，应用向 EasyClin 固定发送 `output_format=png`，收到最终图后再由本机执行 PNG 无损保存或 JPEG 90/75/55 压缩。
 
 ## 开发运行
 

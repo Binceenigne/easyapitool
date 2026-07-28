@@ -974,79 +974,66 @@
                         </div>
                     </label>
 
-                    <div class="image-edit-options">
-                        <label>
-                            <span>尺寸</span>
-                            <input id="imageEditSize" list="imageEditSizeOptions" value="auto" pattern="auto|[0-9]+x[0-9]+" title="请求尺寸；EasyClin 可能改写实际宽高">
-                            <datalist id="imageEditSizeOptions">
-                                <option value="auto">自动</option>
-                                <option value="1024x1024">1024 × 1024</option>
-                                <option value="1536x1024">1536 × 1024</option>
-                                <option value="1024x1536">1024 × 1536</option>
-                                <option value="768x1024">768 × 1024</option>
-                            </datalist>
-                        </label>
-                        <label>
-                            <span>质量</span>
-                            <select id="imageEditQuality" title="模型生成细节强度，不直接控制像素分辨率">
-                                <option value="auto">自动</option>
-                                <option value="low">低</option>
-                                <option value="medium">中</option>
-                                <option value="high">高</option>
-                            </select>
-                        </label>
-                        <label>
-                            <span>输出大小</span>
-                            <select id="imageEditOutputPreset" title="API 固定请求 PNG，此选项控制本地保存格式和 JPEG 压缩" onchange="updateImageEditOutputState()">
-                                <option value="lossless">无损</option>
-                                <option value="large">大</option>
-                                <option value="medium">中</option>
-                                <option value="small">小</option>
-                            </select>
-                        </label>
-                        <label>
-                            <span>背景</span>
-                            <select id="imageEditBackground" onchange="updateImageEditOutputState()">
-                                <option value="auto">自动</option>
-                                <option value="opaque">不透明</option>
-                                <option value="transparent">透明</option>
-                            </select>
-                        </label>
-                        <label>
-                            <span>审核</span>
-                            <select id="imageEditModeration">
-                                <option value="auto">标准</option>
-                                <option value="low" selected>低</option>
-                            </select>
-                        </label>
-                    </div>
-
-                    <div class="image-edit-actions">
+                    <div class="image-generation-footer">
                         <span id="imageEditStatus" role="status">填写提示词即可生成，参考图可选</span>
-                        <button type="submit" id="generateEditedImageButton">
-                            <i data-lucide="sparkles" aria-hidden="true"></i>
-                            生成图片
-                        </button>
+                        <div class="image-generation-command-bar">
+                            <div class="image-generation-controls-wrap">
+                                <button type="button" id="imageGenerationControlsButton" aria-expanded="false" onclick="toggleImageGenerationControls()">
+                                    <i data-lucide="settings-2" aria-hidden="true"></i>
+                                    <span id="imageGenerationControlSummary">自动 · 自动 · 无损 · 1 张</span>
+                                    <i data-lucide="chevron-up" aria-hidden="true"></i>
+                                </button>
+                                <div id="imageGenerationControlPanel" hidden>
+                                    <div class="image-generation-control-grid">
+                                        <label><span>尺寸</span><input id="imageEditSize" list="imageEditSizeOptions" value="auto" pattern="auto|[0-9]+x[0-9]+" title="请求尺寸；EasyClin 可能改写实际宽高" oninput="updateImageGenerationControlSummary()"></label>
+                                        <datalist id="imageEditSizeOptions">
+                                            <option value="auto">自动</option>
+                                            <option value="1024x1024">1024 × 1024</option>
+                                            <option value="1536x1024">1536 × 1024</option>
+                                            <option value="1024x1536">1024 × 1536</option>
+                                            <option value="768x1024">768 × 1024</option>
+                                        </datalist>
+                                        <label>
+                                            <span>质量</span>
+                                            <select id="imageEditQuality" title="模型生成细节强度，不直接控制像素分辨率" onchange="updateImageGenerationControlSummary()">
+                                                <option value="auto">自动</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option>
+                                            </select>
+                                        </label>
+                                        <label>
+                                            <span>输出大小</span>
+                                            <select id="imageEditOutputPreset" title="API 固定请求 PNG，此选项控制本地保存格式和 JPEG 压缩" onchange="updateImageGenerationControlSummary()">
+                                                <option value="lossless">无损</option><option value="large">大</option><option value="medium">中</option><option value="small">小</option>
+                                            </select>
+                                        </label>
+                                    </div>
+                                    <div class="image-count-control">
+                                        <span>图片数量</span>
+                                        <div id="imageGenerationCountButtons" role="radiogroup" aria-label="图片数量">
+                                            <button type="button" class="is-active" data-count="1" aria-pressed="true" onclick="setImageGenerationCount(1)">1</button>
+                                            <button type="button" data-count="2" aria-pressed="false" onclick="setImageGenerationCount(2)">2</button>
+                                            <button type="button" data-count="3" aria-pressed="false" onclick="setImageGenerationCount(3)">3</button>
+                                            <button type="button" data-count="4" aria-pressed="false" onclick="setImageGenerationCount(4)">4</button>
+                                            <button type="button" data-count="5" aria-pressed="false" onclick="setImageGenerationCount(5)">5</button>
+                                            <button type="button" data-count="6" aria-pressed="false" onclick="setImageGenerationCount(6)">6</button>
+                                            <button type="button" data-count="7" aria-pressed="false" onclick="setImageGenerationCount(7)">7</button>
+                                            <button type="button" data-count="8" aria-pressed="false" onclick="setImageGenerationCount(8)">8</button>
+                                            <button type="button" data-count="9" aria-pressed="false" onclick="setImageGenerationCount(9)">9</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="submit" id="generateEditedImageButton"><i data-lucide="sparkles" aria-hidden="true"></i><span>生成 1 张</span></button>
+                        </div>
                     </div>
                 </form>
 
-                <section id="imageEditResult" class="is-empty" aria-labelledby="imageEditResultHeading">
-                    <div>
-                        <div>
-                            <span id="imageEditResultHeading">生成结果</span>
-                            <span id="imageEditResultMeta"></span>
-                        </div>
-                        <button type="button" id="saveEditedImageButton" onclick="saveEditedImage()">
-                            <i data-lucide="download" aria-hidden="true"></i>
-                            另存为
-                        </button>
+                <section id="imageEditResult" aria-labelledby="imageEditResultHeading">
+                    <div class="image-results-header">
+                        <div><i data-lucide="images" aria-hidden="true"></i><span id="imageEditResultHeading">图片生成</span></div>
+                        <button type="button" onclick="openGeneratedPictures()"><i data-lucide="folder-open" aria-hidden="true"></i><small>Windows 图片文件夹</small></button>
                     </div>
-                    <div class="image-edit-preview">
-                        <div id="imageEditResultEmpty">
-                            <i data-lucide="scan-line" aria-hidden="true"></i>
-                            <span>图片生成结果将在这里显示</span>
-                        </div>
-                        <img id="imageEditResultImage" alt="多图合成结果">
+                    <div id="imageGenerationSets" class="is-empty">
+                        <div id="imageEditResultEmpty"><i data-lucide="scan-line" aria-hidden="true"></i><span>每次生成都会在这里创建一个图片集</span></div>
                     </div>
                 </section>
             </section>
@@ -1503,6 +1490,20 @@
             </div>
         </div>
 
+        <div id="imageResultModal" class="app-modal animated-modal image-result-modal" hidden role="dialog" aria-modal="true" aria-labelledby="imageResultModalTitle" onclick="handleImageResultModalBackdrop(event)">
+            <div class="app-modal-panel image-result-modal-panel">
+                <div class="app-modal-header">
+                    <div><i data-lucide="image" class="icon-14 color-brand" aria-hidden="true"></i><div><h2 id="imageResultModalTitle">生成图片</h2><p id="imageResultModalMeta">已自动保存</p></div></div>
+                    <div class="image-result-modal-actions">
+                        <button type="button" onclick="useViewerImageAsReference()" title="作为参考继续编辑" aria-label="作为参考继续编辑"><i data-lucide="image-plus" aria-hidden="true"></i></button>
+                        <button type="button" onclick="saveEditedImage()" title="另存为" aria-label="另存为"><i data-lucide="download" aria-hidden="true"></i></button>
+                        <button type="button" onclick="closeImageResultModal()" title="关闭图片" aria-label="关闭图片"><i data-lucide="x" aria-hidden="true"></i></button>
+                    </div>
+                </div>
+                <div class="image-result-modal-canvas"><img id="imageResultModalImage" alt="生成图片"></div>
+            </div>
+        </div>
+
         <div id="updateModal" class="app-modal animated-modal" hidden role="dialog" aria-modal="true" aria-labelledby="updateModalTitle" onclick="handleAppModalBackdrop(event)">
             <div class="app-modal-panel update-modal-panel">
                 <div class="app-modal-header">
@@ -1653,7 +1654,9 @@
 
         window.imageEditState = {
             files: [],
-            result: null,
+            resultSets: [],
+            viewerResult: null,
+            imageCount: 1,
             busy: false,
             mode: 'image-edit'
         };
@@ -1824,6 +1827,7 @@
             const prompt = document.getElementById('imageEditPrompt');
             prompt.value = document.getElementById('imagePromptModalTextarea').value;
             resizeImagePrompt();
+            updateImageGenerationControlSummary();
             await closeAnimatedModal(modal);
         }
 
@@ -1839,14 +1843,261 @@
                 : '填写提示词即可生成，参考图可选';
         }
 
-        function updateImageEditOutputState() {
-            const output = document.getElementById('imageEditOutputPreset');
-            const transparent = document.getElementById('imageEditBackground').value === 'transparent';
-            if (transparent) output.value = 'lossless';
-            [...output.options].forEach(option => {
-                option.disabled = transparent && option.value !== 'lossless';
+        function toggleImageGenerationControls() {
+            const panel = document.getElementById('imageGenerationControlPanel');
+            const button = document.getElementById('imageGenerationControlsButton');
+            panel.hidden = !panel.hidden;
+            button.setAttribute('aria-expanded', String(!panel.hidden));
+            const icon = button.querySelector('[data-lucide="chevron-up"], [data-lucide="chevron-down"], svg:last-child');
+            if (icon) setLucideIcon(icon, panel.hidden ? 'chevron-up' : 'chevron-down');
+        }
+
+        function setImageGenerationCount(count) {
+            window.imageEditState.imageCount = Math.max(1, Math.min(9, Number(count) || 1));
+            document.querySelectorAll('#imageGenerationCountButtons button').forEach(button => {
+                const active = Number(button.dataset.count) === window.imageEditState.imageCount;
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-pressed', String(active));
             });
-            output.title = transparent ? '透明背景必须使用无损 PNG' : '';
+            updateImageGenerationControlSummary();
+        }
+
+        function updateImageGenerationControlSummary() {
+            const size = document.getElementById('imageEditSize')?.value || 'auto';
+            const quality = document.getElementById('imageEditQuality');
+            const output = document.getElementById('imageEditOutputPreset');
+            const qualityLabel = quality?.selectedOptions[0]?.textContent || '自动';
+            const outputLabel = output?.selectedOptions[0]?.textContent || '无损';
+            document.getElementById('imageGenerationControlSummary').textContent =
+                `${size === 'auto' ? '自动' : size} · ${qualityLabel} · ${outputLabel} · ${window.imageEditState.imageCount} 张`;
+            const buttonLabel = document.querySelector('#generateEditedImageButton span');
+            if (buttonLabel && !window.imageEditState.busy) {
+                buttonLabel.textContent = `生成 ${window.imageEditState.imageCount} 张`;
+            }
+        }
+
+        function createImageGenerationSet(requestId, requestedCount, prompt) {
+            let set = window.imageEditState.resultSets.find(item => item.setId === requestId);
+            if (set) return set;
+            set = {
+                setId: requestId,
+                requestId,
+                requestedCount,
+                prompt,
+                createdAt: Date.now(),
+                status: 'running',
+                items: Array.from({ length: requestedCount }, (_, itemIndex) => ({
+                    itemIndex,
+                    status: 'queued',
+                    uri: '',
+                    result: null,
+                    error: ''
+                }))
+            };
+            window.imageEditState.resultSets.unshift(set);
+            renderImageGenerationSets();
+            return set;
+        }
+
+        function imageGenerationSetById(setId) {
+            return window.imageEditState.resultSets.find(item => item.setId === setId);
+        }
+
+        function renderImageGenerationSets() {
+            const container = document.getElementById('imageGenerationSets');
+            const sets = window.imageEditState.resultSets;
+            container.classList.toggle('is-empty', sets.length === 0);
+            container.replaceChildren();
+            if (!sets.length) {
+                const empty = document.createElement('div');
+                empty.id = 'imageEditResultEmpty';
+                empty.innerHTML = `${iconMarkup('scan-line', 'icon-20')}<span>每次生成都会在这里创建一个图片集</span>`;
+                container.append(empty);
+                renderLucideIcons();
+                return;
+            }
+            sets.forEach(set => {
+                const section = document.createElement('article');
+                section.className = `image-generation-set is-${set.status}`;
+                section.dataset.setId = set.setId;
+
+                const header = document.createElement('div');
+                header.className = 'image-generation-set-header';
+                header.title = '点击将本组完成图片加入参考图继续编辑';
+                const heading = document.createElement('div');
+                const title = document.createElement('strong');
+                title.textContent = set.prompt || '图片生成';
+                const completedCount = set.items.filter(item => item.status === 'completed').length;
+                const meta = document.createElement('small');
+                meta.textContent = set.status === 'running'
+                    ? `生成中 · ${completedCount}/${set.requestedCount}`
+                    : `${completedCount}/${set.requestedCount} 张 · 已保存`;
+                heading.append(title, meta);
+                const continueButton = document.createElement('button');
+                continueButton.type = 'button';
+                continueButton.title = '整组作为参考继续编辑';
+                continueButton.setAttribute('aria-label', continueButton.title);
+                continueButton.innerHTML = iconMarkup('image-plus', 'icon-13');
+                continueButton.addEventListener('click', event => {
+                    event.stopPropagation();
+                    useResultSetAsReferences(set.setId);
+                });
+                header.append(heading, continueButton);
+                header.addEventListener('click', () => useResultSetAsReferences(set.setId));
+
+                const grid = document.createElement('div');
+                grid.className = 'image-generation-set-grid';
+                grid.dataset.count = String(set.requestedCount);
+                set.items.forEach(item => {
+                    const card = document.createElement('button');
+                    card.type = 'button';
+                    card.className = `image-generation-item is-${item.status}`;
+                    card.dataset.itemIndex = String(item.itemIndex);
+                    if (item.uri) {
+                        const image = document.createElement('img');
+                        image.src = cacheBustedImageUri(item.uri);
+                        image.alt = item.status === 'completed' ? '生成图片' : '过程预览';
+                        card.append(image);
+                    }
+                    const overlay = document.createElement('span');
+                    if (item.status === 'completed') {
+                        overlay.textContent = '打开并继续编辑';
+                        card.addEventListener('click', () => {
+                            appendGeneratedReferences([item.result]);
+                            openImageResultModal(item.result);
+                        });
+                    } else if (item.status === 'failed') {
+                        overlay.textContent = item.error || '生成失败';
+                        card.disabled = true;
+                    } else {
+                        overlay.innerHTML = `${iconMarkup('loader-circle', 'icon-16 is-spinning')}<em>${item.status === 'partial' ? '生成中' : '等待生成'}</em>`;
+                        card.disabled = true;
+                    }
+                    card.append(overlay);
+                    grid.append(card);
+                });
+                section.append(header, grid);
+                container.append(section);
+            });
+            renderLucideIcons();
+        }
+
+        window.applyImageGenerationEvent = function(event) {
+            if (!event?.setId) return;
+            const set = createImageGenerationSet(
+                event.setId,
+                Number(event.requestedCount) || 1,
+                event.prompt || ''
+            );
+            if (event.type === 'set_started') {
+                set.requestedCount = Number(event.requestedCount) || set.requestedCount;
+                set.prompt = event.prompt || set.prompt;
+                while (set.items.length < set.requestedCount) {
+                    set.items.push({ itemIndex: set.items.length, status: 'queued', uri: '', result: null, error: '' });
+                }
+            } else if (Number.isInteger(event.itemIndex) && set.items[event.itemIndex]) {
+                const item = set.items[event.itemIndex];
+                if (event.type === 'item_started') item.status = 'running';
+                if (event.type === 'item_partial') {
+                    item.status = 'partial';
+                    item.uri = event.uri || item.uri;
+                }
+                if (event.type === 'item_completed') {
+                    item.status = 'completed';
+                    item.result = event.result;
+                    item.uri = event.result?.uri || item.uri;
+                }
+                if (event.type === 'item_failed') {
+                    item.status = 'failed';
+                    item.error = event.error || '生成失败';
+                }
+            }
+            if (event.type === 'set_completed') set.status = 'completed';
+            renderImageGenerationSets();
+        };
+
+        function syncImageGenerationResult(result) {
+            if (!result?.setId) return;
+            const set = createImageGenerationSet(result.setId, result.requestedCount || 1, result.prompt || '');
+            set.status = 'completed';
+            set.items = (result.items || []).map((item, itemIndex) => ({
+                itemIndex,
+                status: item.ok ? 'completed' : 'failed',
+                uri: item.uri || '',
+                result: item.ok ? item : null,
+                error: item.error || ''
+            }));
+            renderImageGenerationSets();
+        }
+
+        function generatedResultReference(result) {
+            if (!result?.path) return null;
+            return {
+                path: result.path,
+                uri: result.uri,
+                name: result.path.split(/[\\/]/).pop(),
+                sizeBytes: result.sizeBytes || 0
+            };
+        }
+
+        function appendGeneratedReferences(results) {
+            let added = 0;
+            results.forEach(result => {
+                const reference = generatedResultReference(result);
+                if (reference && appendReferenceImage(reference)) added += 1;
+            });
+            renderEditImageList();
+            if (added) {
+                document.getElementById('imageEditStatus').textContent = `已追加 ${added} 张生成图作为参考`;
+                document.getElementById('imageEditPrompt').focus();
+                showToast(`已追加 ${added} 张参考图，可继续输入修改指令`, 'info');
+            }
+        }
+
+        function useResultSetAsReferences(setId) {
+            const set = imageGenerationSetById(setId);
+            if (!set) return;
+            appendGeneratedReferences(set.items.filter(item => item.result).map(item => item.result));
+        }
+
+        function openImageResultModal(result) {
+            if (!result?.uri) return;
+            window.imageEditState.viewerResult = result;
+            document.getElementById('imageResultModalImage').src = cacheBustedImageUri(result.uri);
+            document.getElementById('imageResultModalMeta').textContent =
+                `${result.actualSize || `${result.width}x${result.height}`} · ${String(result.format || '').toUpperCase()} · 已自动保存`;
+            openAnimatedModal(document.getElementById('imageResultModal'));
+            renderLucideIcons();
+        }
+
+        async function closeImageResultModal() {
+            await closeAnimatedModal(document.getElementById('imageResultModal'));
+        }
+
+        function handleImageResultModalBackdrop(event) {
+            if (event.target === event.currentTarget) closeImageResultModal();
+        }
+
+        async function useViewerImageAsReference() {
+            const result = window.imageEditState.viewerResult;
+            if (!result) return;
+            appendGeneratedReferences([result]);
+            await closeImageResultModal();
+        }
+
+        function cacheBustedImageUri(uri) {
+            const value = String(uri || '');
+            if (!value || value.startsWith('data:') || value.startsWith('blob:')) return value;
+            return `${value}${value.includes('?') ? '&' : '?'}t=${Date.now()}`;
+        }
+
+        async function openGeneratedPictures() {
+            try {
+                const result = await window.pywebview.api.open_generated_pictures();
+                if (!result.ok) throw new Error(result.error || '无法打开图片文件夹');
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+            }
         }
 
         async function submitImageEdit(event) {
@@ -1860,9 +2111,12 @@
 
             const button = document.getElementById('generateEditedImageButton');
             const status = document.getElementById('imageEditStatus');
+            const requestId = globalThis.crypto?.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            const imageCount = window.imageEditState.imageCount;
+            createImageGenerationSet(requestId, imageCount, prompt);
             window.imageEditState.busy = true;
             button.disabled = true;
-            setIconLabel(button, 'loader-circle', '正在生成');
+            setIconLabel(button, 'loader-circle', `正在生成 ${imageCount} 张`);
             button.querySelector('[data-lucide], svg')?.classList.add('is-spinning');
             status.textContent = files.length
                 ? `正在参考 ${files.length} 张图片生成新图`
@@ -1876,35 +2130,38 @@
                         size: document.getElementById('imageEditSize').value,
                         quality: document.getElementById('imageEditQuality').value,
                         outputPreset: document.getElementById('imageEditOutputPreset').value,
-                        background: document.getElementById('imageEditBackground').value,
-                        moderation: document.getElementById('imageEditModeration').value,
-                        stream: true,
-                        partialImages: 3
+                        imageCount,
+                        requestId
                     }
                 );
                 if (!result.ok) throw new Error(result.error || '图片生成失败');
-                window.imageEditState.result = result;
-                const image = document.getElementById('imageEditResultImage');
-                image.src = `${result.uri}?t=${Date.now()}`;
-                const requested = `${result.requestedSize} / ${result.requestedQuality}`;
-                const actual = `${result.actualSize} / ${result.quality}`;
-                document.getElementById('imageEditResultMeta').textContent =
-                    `请求 ${requested} → 实际 ${actual} · ${String(result.format).toUpperCase()} · ${formatImageFileSize(result.sizeBytes)}`;
-                document.getElementById('imageEditResult').classList.remove('is-empty');
-                status.textContent = '生成完成';
-                showToast('图片生成完成');
+                syncImageGenerationResult(result);
+                const successCount = result.items.filter(item => item.ok).length;
+                status.textContent = `已生成 ${successCount}/${result.requestedCount} 张图片`;
+                showToast(`图片生成完成，已保存 ${successCount} 张`);
             } catch (error) {
+                const failedSet = imageGenerationSetById(requestId);
+                if (failedSet) {
+                    failedSet.status = 'completed';
+                    failedSet.items.forEach(item => {
+                        if (!['completed', 'failed'].includes(item.status)) {
+                            item.status = 'failed';
+                            item.error = error.message || String(error);
+                        }
+                    });
+                    renderImageGenerationSets();
+                }
                 status.textContent = error.message || String(error);
                 showToast(status.textContent, 'error');
             } finally {
                 window.imageEditState.busy = false;
                 button.disabled = false;
-                setIconLabel(button, 'sparkles', '生成图片');
+                setIconLabel(button, 'sparkles', `生成 ${window.imageEditState.imageCount} 张`);
             }
         }
 
         async function saveEditedImage() {
-            const result = window.imageEditState.result;
+            const result = window.imageEditState.viewerResult;
             if (!result?.path) return;
             try {
                 const saved = await window.pywebview.api.save_edited_image(result.path);
@@ -2163,6 +2420,7 @@
                     closeModelModal();
                     closeUpdateModal();
                     closeImagePromptModal();
+                    closeImageResultModal();
                 }
                 handleDevToolsSequence(event);
             });

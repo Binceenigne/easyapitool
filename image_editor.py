@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PIL import Image
 
@@ -163,7 +163,11 @@ class ImageGenerationClient:
         return RuntimeError(f"HTTP {exc.code}: {safe_message}")
 
     @staticmethod
-    def _read_response(response: Any, stream: bool) -> dict[str, Any]:
+    def _read_response(
+        response: Any,
+        stream: bool,
+        on_partial: Callable[[str, int], None] | None = None,
+    ) -> dict[str, Any]:
         if not stream:
             return json.loads(response.read().decode("utf-8"))
 
@@ -180,6 +184,9 @@ class ImageGenerationClient:
             event_type = str(event.get("type") or "")
             if event_type == "image_generation.partial_image":
                 partial_count += 1
+                partial_data = str(event.get("b64_json") or "")
+                if partial_data and on_partial is not None:
+                    on_partial(partial_data, partial_count)
             elif event_type == "image_generation.completed":
                 completed = event
         if completed is None or not completed.get("b64_json"):
@@ -201,6 +208,7 @@ class ImageGenerationClient:
         secret: str,
         fields: dict[str, Any],
         timeout: int = 600,
+        on_partial: Callable[[str, int], None] | None = None,
     ) -> dict[str, Any]:
         request = urllib.request.Request(
             f"{base_url.rstrip('/')}/images/generations",
@@ -214,7 +222,11 @@ class ImageGenerationClient:
         )
         try:
             with cls._opener().open(request, timeout=timeout) as response:
-                return cls._read_response(response, bool(fields.get("stream")))
+                return cls._read_response(
+                    response,
+                    bool(fields.get("stream")),
+                    on_partial,
+                )
         except urllib.error.HTTPError as exc:
             raise cls._error(exc, secret) from None
         except (urllib.error.URLError, TimeoutError) as exc:
@@ -229,6 +241,7 @@ class ImageGenerationClient:
         image_paths: tuple[Path, ...],
         fields: dict[str, Any],
         timeout: int = 600,
+        on_partial: Callable[[str, int], None] | None = None,
     ) -> dict[str, Any]:
         boundary = f"----API_TOOLS_{uuid.uuid4().hex}"
         body = io.BytesIO()
@@ -268,7 +281,11 @@ class ImageGenerationClient:
         )
         try:
             with ImageGenerationClient._opener().open(request, timeout=timeout) as response:
-                return ImageGenerationClient._read_response(response, bool(fields.get("stream")))
+                return ImageGenerationClient._read_response(
+                    response,
+                    bool(fields.get("stream")),
+                    on_partial,
+                )
         except urllib.error.HTTPError as exc:
             raise ImageGenerationClient._error(exc, secret) from None
         except (urllib.error.URLError, TimeoutError) as exc:
@@ -287,16 +304,47 @@ class ImageGenerationService:
         secret: str,
         request: ImageGenerationRequest,
         output_dir: Path,
+        on_partial: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        generation_id = uuid.uuid4().hex[:12]
+
+        def persist_partial(image_data: str, partial_index: int) -> None:
+            if on_partial is None:
+                return
+            try:
+                partial_bytes = base64.b64decode(image_data, validate=True)
+                with Image.open(io.BytesIO(partial_bytes)) as partial_image:
+                    partial_image.verify()
+                partial_dir = output_dir / "partials"
+                partial_dir.mkdir(parents=True, exist_ok=True)
+                partial_path = partial_dir / f"{generation_id}-{partial_index}.png"
+                partial_path.write_bytes(partial_bytes)
+                on_partial(
+                    {
+                        "partialIndex": partial_index,
+                        "path": str(partial_path),
+                        "uri": partial_path.as_uri(),
+                    }
+                )
+            except (binascii.Error, OSError, ValueError):
+                return
+
         if request.image_paths:
             response = self.client.edit_images(
                 base_url,
                 secret,
                 request.image_paths,
                 request.fields,
+                on_partial=persist_partial,
             )
         else:
-            response = self.client.generate_image(base_url, secret, request.fields)
+            response = self.client.generate_image(
+                base_url,
+                secret,
+                request.fields,
+                on_partial=persist_partial,
+            )
         image_data = ((response.get("data") or [{}])[0] or {}).get("b64_json")
         if not image_data:
             raise RuntimeError("生图接口未返回图片数据")
@@ -310,7 +358,6 @@ class ImageGenerationService:
             result_image = source_image.copy()
             width, height = result_image.size
 
-        output_dir.mkdir(parents=True, exist_ok=True)
         suffix = ".png" if request.output_format == "png" else ".jpg"
         output_path = output_dir / (
             f"image-generation-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}{suffix}"

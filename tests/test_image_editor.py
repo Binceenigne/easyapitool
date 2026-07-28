@@ -254,11 +254,55 @@ class ImageEditorTests(unittest.TestCase):
             b"data: [DONE]\n",
         ]
 
-        result = image_editor.ImageGenerationClient._read_response(lines, stream=True)
+        partials = []
+        result = image_editor.ImageGenerationClient._read_response(
+            lines,
+            stream=True,
+            on_partial=lambda image_data, index: partials.append((index, image_data)),
+        )
 
         self.assertEqual(result["partial_images_received"], 2)
+        self.assertEqual(partials, [(1, "part-1"), (2, "part-2")])
         self.assertEqual(result["output_format"], "webp")
         self.assertEqual(result["quality"], "auto")
+
+    def test_service_persists_partial_before_returning_final_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            partial_buffer = io.BytesIO()
+            final_buffer = io.BytesIO()
+            Image.new("RGB", (4, 4), "blue").save(partial_buffer, format="PNG")
+            Image.new("RGB", (8, 8), "green").save(final_buffer, format="PNG")
+            partial_encoded = base64.b64encode(partial_buffer.getvalue()).decode("ascii")
+            final_encoded = base64.b64encode(final_buffer.getvalue()).decode("ascii")
+
+            def generate_image(_base_url, _secret, _fields, on_partial=None, **_kwargs):
+                on_partial(partial_encoded, 1)
+                return {"data": [{"b64_json": final_encoded}], "partial_images_received": 1}
+
+            service = image_editor.ImageGenerationService(
+                SimpleNamespace(generate_image=generate_image, edit_images=Mock())
+            )
+            request = image_editor.prepare_image_generation(
+                "Generate with preview",
+                [],
+                {"stream": True, "partialImages": 3},
+            )
+            partial_events = []
+
+            result = service.generate(
+                "https://example.test/v1",
+                "secret",
+                request,
+                root,
+                on_partial=partial_events.append,
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(len(partial_events), 1)
+            self.assertEqual(partial_events[0]["partialIndex"], 1)
+            self.assertTrue(Path(partial_events[0]["path"]).is_file())
+            self.assertTrue(partial_events[0]["uri"].startswith("file:"))
 
 
 if __name__ == "__main__":

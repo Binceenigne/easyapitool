@@ -758,8 +758,6 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("resize: none", scss_source)
         self.assertNotIn('id="imageEditStream"', page)
         self.assertNotIn('id="imageEditPartialImages"', page)
-        self.assertIn("stream: true", page)
-        self.assertIn("partialImages: 3", page)
         self.assertNotIn("partialImagesReceived", page)
         self.assertNotIn("image-edit-toggle-field", scss_source)
         self.assertIn('id="imageEditOutputPreset"', page)
@@ -767,9 +765,14 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('<option value="large">大</option>', page)
         self.assertIn('<option value="medium">中</option>', page)
         self.assertIn('<option value="small">小</option>', page)
-        self.assertIn('<option value="transparent">透明</option>', page)
-        self.assertIn('<option value="low" selected>低</option>', page)
-        self.assertIn("if (transparent) output.value = 'lossless'", page)
+        self.assertNotIn('id="imageEditBackground"', page)
+        self.assertNotIn('id="imageEditModeration"', page)
+        self.assertIn('id="imageGenerationCountButtons"', page)
+        self.assertIn('data-count="9"', page)
+        self.assertIn('id="imageGenerationSets"', page)
+        self.assertIn("window.applyImageGenerationEvent", page)
+        self.assertIn("useResultSetAsReferences", page)
+        self.assertIn('id="imageResultModal"', page)
         self.assertNotIn('id="imageEditCompression"', page)
         self.assertNotIn('id="imageEditFormat"', page)
         self.assertIn("choose_edit_images", page)
@@ -1035,9 +1038,16 @@ class ControllerTests(unittest.TestCase):
             input_path = root / "reference.png"
             input_image = app.Image.new("RGB", (8, 8), "red")
             input_image.save(input_path, format="PNG")
+            result_counter = __import__("itertools").count()
+
+            def generate_result(*_args, **_kwargs):
+                result_path = root / f"result-{next(result_counter)}.png"
+                result_path.write_bytes(b"image")
+                return {"ok": True, "path": str(result_path), "uri": result_path.as_uri()}
+
             service = SimpleNamespace(
                 generate=__import__("unittest.mock").mock.Mock(
-                    return_value={"ok": True, "path": str(root / "result.png")}
+                    side_effect=generate_result
                 )
             )
             controller = app.AppController.__new__(app.AppController)
@@ -1050,7 +1060,11 @@ class ControllerTests(unittest.TestCase):
                 get_secret=lambda _key_id: "secret",
             )
 
-            with patch("app.app_data_dir", return_value=root / "data"):
+            events = []
+            with patch("app.app_data_dir", return_value=root / "data"), patch(
+                "app.generated_pictures_dir",
+                return_value=root / "Pictures" / app.APP_NAME,
+            ):
                 result = controller.generate_image(
                     "key-1",
                     "Combine this reference into a new image",
@@ -1060,30 +1074,55 @@ class ControllerTests(unittest.TestCase):
                         "quality": "low",
                         "outputPreset": "lossless",
                         "background": "opaque",
-                        "moderation": "low",
+                        "moderation": "auto",
+                        "imageCount": 2,
+                        "requestId": "request-1",
                     },
+                    event_callback=events.append,
+                )
+                saved_paths_exist = all(
+                    Path(item["savedPath"]).is_file() for item in result["items"]
                 )
 
         self.assertTrue(result["ok"])
-        args = service.generate.call_args.args
+        self.assertEqual(result["setId"], "request-1")
+        self.assertEqual(len(result["items"]), 2)
+        self.assertEqual(service.generate.call_count, 2)
+        args = service.generate.call_args_list[0].args
         self.assertEqual(args[0:2], ("https://example.test/v1", "secret"))
         self.assertEqual(args[2].image_paths, (input_path.resolve(),))
         self.assertEqual(args[2].fields["model"], "gpt-image-2")
         self.assertEqual(args[2].fields["quality"], "low")
         self.assertEqual(args[2].fields["output_format"], "png")
+        self.assertEqual(args[2].fields["background"], "auto")
+        self.assertEqual(args[2].fields["moderation"], "low")
+        self.assertNotIn("imageCount", args[2].fields)
         self.assertEqual(args[3], root / "data" / "image-generations")
+        self.assertTrue(saved_paths_exist)
+        self.assertEqual(events[0]["type"], "set_started")
+        self.assertEqual(events[-1]["type"], "set_completed")
+        self.assertEqual(
+            sum(event["type"] == "item_completed" for event in events),
+            2,
+        )
 
     def test_generate_image_accepts_missing_reference_images(self):
-        controller = app.AppController.__new__(app.AppController)
-        controller.image_generator = SimpleNamespace(
-            generate=__import__("unittest.mock").mock.Mock(return_value={"ok": True})
-        )
-        controller.store = SimpleNamespace(
-            get_key_record=lambda key_id: {"id": key_id, "base_url": "https://example.test/v1"},
-            get_secret=lambda _key_id: "secret",
-        )
+        with tempfile.TemporaryDirectory() as temp:
+            result_path = Path(temp) / "result.png"
+            result_path.write_bytes(b"image")
+            controller = app.AppController.__new__(app.AppController)
+            controller.image_generator = SimpleNamespace(
+                generate=__import__("unittest.mock").mock.Mock(
+                    return_value={"ok": True, "path": str(result_path), "uri": result_path.as_uri()}
+                )
+            )
+            controller.store = SimpleNamespace(
+                get_key_record=lambda key_id: {"id": key_id, "base_url": "https://example.test/v1"},
+                get_secret=lambda _key_id: "secret",
+            )
 
-        result = controller.generate_image("key-1", "Generate image", [], {})
+            with patch("app.generated_pictures_dir", return_value=Path(temp) / "Pictures"):
+                result = controller.generate_image("key-1", "Generate image", [], {})
 
         self.assertTrue(result["ok"])
 
@@ -2159,6 +2198,7 @@ class ControllerTests(unittest.TestCase):
                 "import_reference_image",
                 "native_drag",
                 "open_devtools",
+                "open_generated_pictures",
                 "refresh_now",
                 "report_startup",
                 "restart_app",
@@ -2207,18 +2247,53 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(allowed.closed)
         self.assertTrue(blocked.closed)
 
+    def test_rpc_server_streams_generation_events_before_result(self):
+        class FakeConnection:
+            def __init__(self):
+                self.responses = []
+                self.closed = False
+
+            def recv(self):
+                return {"method": "generate_image", "args": ["key", "prompt", [], {}]}
+
+            def send(self, response):
+                self.responses.append(response)
+
+            def close(self):
+                self.closed = True
+
+        def generate_image(*_args, event_callback=None):
+            event_callback({"type": "item_partial", "setId": "set-1", "itemIndex": 0})
+            return {"ok": True, "setId": "set-1", "items": []}
+
+        connection = FakeConnection()
+        controller = SimpleNamespace(generate_image=generate_image)
+        server = app.ControllerRpcServer(controller, "pipe", b"secret")
+
+        server._handle_connection(connection)
+
+        self.assertEqual(connection.responses[0]["event"]["type"], "item_partial")
+        self.assertEqual(connection.responses[1]["result"]["setId"], "set-1")
+        self.assertTrue(connection.closed)
+
     def test_remote_web_api_routes_data_calls_and_keeps_window_calls_local(self):
-        rpc = SimpleNamespace(call=__import__("unittest.mock").mock.Mock())
+        mock = __import__("unittest.mock").mock
+        rpc = SimpleNamespace(call=mock.Mock(), call_with_events=mock.Mock())
         rpc.call.side_effect = lambda method, *args: (
             {"keys": [], "isForeground": False}
             if method == "get_state"
             else {"method": method, "args": args}
         )
+        rpc.call_with_events.side_effect = lambda method, *args, **_kwargs: {
+            "method": method,
+            "args": args,
+        }
         controller = SimpleNamespace(
             window_action=lambda action: {"local": action},
             complete_initialization=lambda: {"local": "init"},
             choose_edit_images=lambda: {"local": "choose"},
             save_edited_image=lambda path: {"local": path},
+            push_image_generation_event=mock.Mock(),
         )
         api = app.RemoteWebApi(controller, rpc)
 
@@ -2237,6 +2312,10 @@ class ControllerTests(unittest.TestCase):
                 "method": "generate_image",
                 "args": ("key-1", "combine", ["a.png", "b.png"], {"quality": "low"}),
             },
+        )
+        self.assertIs(
+            rpc.call_with_events.call_args.kwargs["on_event"],
+            controller.push_image_generation_event,
         )
         self.assertEqual(choose, {"local": "choose"})
         self.assertEqual(save, {"local": "result.png"})

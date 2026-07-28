@@ -747,9 +747,10 @@ html.dark #keySwitcherMenu {
 
 .image-edit-header,
 .image-edit-header > div,
-.image-edit-actions,
-#imageEditResult > div:first-child,
-#imageEditResult > div:first-child > div {
+.image-generation-command-bar,
+.image-results-header,
+.image-results-header > div,
+.image-generation-set-header {
     display: flex;
     align-items: center;
 }
@@ -870,7 +871,8 @@ html.dark #keySwitcherMenu {
 
 .image-edit-prompt { display: grid; gap: 4px; }
 .image-edit-prompt > span,
-.image-edit-options label > span { color: var(--muted); font-size: 8px; font-weight: 700; }
+.image-generation-control-grid label > span,
+.image-count-control > span { color: var(--muted); font-size: 8px; font-weight: 700; }
 .image-edit-prompt-shell { position: relative; border: 1px solid var(--border); background: var(--bg); }
 .image-edit-prompt textarea {
     display: block;
@@ -927,21 +929,51 @@ html.dark #keySwitcherMenu {
     line-height: 1.7;
 }
 
-.image-edit-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.image-edit-options label { display: grid; min-width: 0; gap: 3px; }
-.image-edit-options select,
-.image-edit-options input { width: 100%; height: 28px; padding: 4px 6px; border: 1px solid var(--border); background: var(--bg); }
-.image-edit-options .is-disabled { opacity: 0.48; }
-
-.image-edit-actions { justify-content: space-between; margin-top: auto; gap: 10px; }
+.image-generation-footer { display: grid; margin-top: auto; gap: 6px; }
 #imageEditStatus { min-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.image-generation-command-bar { position: relative; justify-content: space-between; gap: 8px; }
+.image-generation-controls-wrap { position: relative; flex: 1 1 auto; min-width: 0; }
+#imageGenerationControlsButton {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 34px;
+    padding: 6px 8px;
+    gap: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-soft);
+}
+#imageGenerationControlsButton > span { flex: 1 1 auto; overflow: hidden; font-size: 9px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+#imageGenerationControlPanel {
+    position: absolute;
+    z-index: 12;
+    right: 0;
+    bottom: calc(100% + 7px);
+    left: 0;
+    padding: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+#imageGenerationControlPanel[hidden] { display: none !important; }
+.image-generation-control-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.image-generation-control-grid label { display: grid; min-width: 0; gap: 4px; }
+.image-generation-control-grid select,
+.image-generation-control-grid input { width: 100%; height: 30px; padding: 4px 7px; border: 1px solid var(--border); background: var(--bg); }
+.image-count-control { display: grid; margin-top: 10px; gap: 5px; }
+#imageGenerationCountButtons { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border); }
+#imageGenerationCountButtons button { min-width: 0; height: 30px; border-right: 1px solid var(--border-soft); background: var(--bg); color: var(--muted); }
+#imageGenerationCountButtons button:last-child { border-right: 0; }
+#imageGenerationCountButtons button.is-active { background: var(--text); color: var(--bg); font-weight: 700; }
 #generateEditedImageButton {
     display: inline-flex;
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    min-height: 32px;
-    padding: 6px 12px;
+    min-width: 120px;
+    min-height: 34px;
+    padding: 6px 14px;
     gap: 5px;
     background: var(--text);
     color: var(--bg);
@@ -956,25 +988,51 @@ html.dark #keySwitcherMenu {
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    background:
-        linear-gradient(45deg, var(--border-soft) 25%, transparent 25%, transparent 75%, var(--border-soft) 75%),
-        linear-gradient(45deg, var(--border-soft) 25%, var(--bg) 25%, var(--bg) 75%, var(--border-soft) 75%);
-    background-position: 0 0, 8px 8px;
-    background-size: 16px 16px;
+    background: var(--bg);
 }
-#imageEditResult > div:first-child { flex: 0 0 42px; justify-content: space-between; padding: 7px 10px; gap: 8px; border-bottom: 1px solid var(--border); background: var(--surface); }
-#imageEditResult > div:first-child > div { min-width: 0; gap: 8px; }
+.image-results-header { flex: 0 0 42px; justify-content: space-between; padding: 7px 10px; gap: 8px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.image-results-header > div { min-width: 0; gap: 6px; }
+.image-results-header > button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border: 0; background: transparent; color: var(--muted); }
+.image-results-header > button:hover { color: var(--accent); }
+.image-results-header > button svg { width: 12px; height: 12px; }
+.image-results-header small { color: var(--muted); font-size: 8px; }
 #imageEditResultHeading { font-weight: 700; }
-#imageEditResultMeta { min-width: 0; color: var(--muted); font: 8px/1.35 var(--font-mono); overflow-wrap: anywhere; }
-.image-edit-preview { display: flex; flex: 1 1 auto; align-items: center; justify-content: center; min-height: 0; padding: 12px; overflow: auto; }
-#imageEditResultEmpty { display: none; align-items: center; justify-content: center; flex-direction: column; gap: 8px; color: var(--muted); font-size: 10px; }
+#imageGenerationSets { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+#imageEditResultEmpty { display: none; min-height: 100%; align-items: center; justify-content: center; flex-direction: column; gap: 8px; color: var(--muted); font-size: 10px; }
 #imageEditResultEmpty [data-lucide],
 #imageEditResultEmpty svg { width: 28px; height: 28px; }
-#imageEditResult.is-empty #imageEditResultEmpty { display: flex; }
-#imageEditResult.is-empty #imageEditResultImage,
-#imageEditResult.is-empty #saveEditedImageButton,
-#imageEditResult.is-empty #imageEditResultMeta { display: none; }
-#imageEditResultImage { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18); }
+#imageGenerationSets.is-empty #imageEditResultEmpty { display: flex; }
+.image-generation-set { border-bottom: 1px solid var(--border); }
+.image-generation-set-header { justify-content: space-between; padding: 9px 10px; gap: 10px; background: var(--surface-soft); cursor: pointer; }
+.image-generation-set-header > div { display: grid; min-width: 0; gap: 2px; }
+.image-generation-set-header strong { overflow: hidden; color: var(--text-soft); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.image-generation-set-header small { color: var(--muted); font: 8px/1.3 var(--font-mono); }
+.image-generation-set-header > button { display: flex; align-items: center; justify-content: center; flex: 0 0 28px; width: 28px; height: 28px; background: transparent; color: var(--muted); }
+.image-generation-set-header > button:hover { background: var(--surface-strong); color: var(--brand); }
+.image-generation-set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--border); }
+.image-generation-item {
+    position: relative;
+    display: block;
+    width: 100%;
+    min-width: 0;
+    aspect-ratio: 1;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--muted);
+}
+.image-generation-item img { width: 100%; height: 100%; object-fit: contain; background: var(--bg); }
+.image-generation-item > span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 7px; padding: 12px; background: rgba(2, 6, 23, 0.28); color: #fff; font-size: 9px; }
+.image-generation-item > span em { font-style: normal; }
+.image-generation-item.is-completed > span { opacity: 0; background: rgba(2, 6, 23, 0.42); transition: opacity 140ms ease; }
+.image-generation-item.is-completed:hover > span,
+.image-generation-item.is-completed:focus-visible > span { opacity: 1; }
+.image-generation-item.is-failed > span { background: rgba(127, 29, 29, 0.55); color: #fff; }
+
+.image-result-modal { padding: 0; }
+.app-modal > .image-result-modal-panel { position: absolute; inset: 0; width: auto; height: auto; max-height: none; border: 0; transform: none !important; }
+.image-result-modal-actions { display: flex; gap: 4px; }
+.image-result-modal-canvas { display: flex; flex: 1 1 auto; align-items: center; justify-content: center; min-height: 0; padding: 12px; overflow: auto; background: var(--bg); }
+.image-result-modal-canvas img { max-width: 100%; max-height: 100%; object-fit: contain; }
 
 .image-edit-mode #microSummary,
 .image-edit-mode #dashboardGrid,
@@ -1949,7 +2007,9 @@ html.dark #toast { border-color: #e2e8f0; background: #fff; color: #0f172a; }
 .width-narrow #imageEditResult { min-height: 320px; }
 .width-micro .image-edit-file,
 .width-micro #editImageAddTile { width: 76px; height: 76px; flex-basis: 76px; }
-.width-micro .image-edit-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.width-micro .image-generation-control-grid { grid-template-columns: minmax(0, 1fr); }
+.width-micro #imageGenerationCountButtons { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.width-micro #generateEditedImageButton { min-width: 104px; }
 
 :is(.height-summary-2, .height-summary-4, .height-summary-countdown, .height-details, .height-details-metrics).image-edit-mode #appMain {
     flex: 1 1 auto;
