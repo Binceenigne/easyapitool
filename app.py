@@ -46,6 +46,8 @@ GITHUB_REPOSITORY = os.environ.get(
 )
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPOSITORY}"
 RELEASE_ASSET_NAME = "API_TOOLS.exe"
+RELEASE_BRANCH = "imagen"
+RELEASE_TAG_PREFIX = "imagen-v"
 MUTEX_NAME = "Local\\API_TOOLS_EasyClin_Quota_Monitor"
 SHOW_EVENT_NAME = "Local\\API_TOOLS_EasyClin_Show_Window"
 DEFAULT_BASE_URL = "https://work.easyclin.cn/v1"
@@ -415,6 +417,30 @@ def is_newer_version(candidate: Any, current: Any = APP_VERSION) -> bool:
     )
 
 
+def release_version(tag_name: Any) -> str:
+    match = __import__("re").fullmatch(
+        rf"{__import__('re').escape(RELEASE_TAG_PREFIX)}(\d+(?:\.\d+)+)",
+        str(tag_name or "").strip(),
+        flags=__import__("re").I,
+    )
+    return match.group(1) if match else ""
+
+
+def release_matches_channel(release: dict[str, Any]) -> bool:
+    return bool(release_version(release.get("tag_name"))) and str(
+        release.get("target_commitish") or ""
+    ).strip().lower() == RELEASE_BRANCH.lower()
+
+
+def ignored_release_key(version: Any) -> str:
+    clean = str(version or "").strip()
+    if not clean:
+        return ""
+    if clean.lower().startswith(RELEASE_TAG_PREFIX.lower()):
+        return clean
+    return f"{RELEASE_TAG_PREFIX}{clean.lstrip('v')}"
+
+
 def startup_command() -> str:
     executable = Path(sys.executable).resolve()
     if getattr(sys, "frozen", False):
@@ -517,7 +543,8 @@ def release_notes_since(releases: list[dict[str, Any]], current_version: Any) ->
     pending.sort(key=lambda release: version_tuple(release.get("tag_name")), reverse=True)
     sections: list[str] = []
     for release in pending:
-        version = str(release.get("tag_name") or "").strip().lstrip("v")
+        tag_name = str(release.get("tag_name") or "").strip()
+        version = release_version(tag_name) or tag_name.lstrip("v")
         notes = str(release.get("body") or "").strip()
         if not notes:
             notes = "- 本版本暂无更新说明。"
@@ -591,7 +618,7 @@ def parse_github_release_feed(payload: bytes) -> list[dict[str, Any]]:
             "",
         )
         tag_name = release_url.rsplit("/", 1)[-1].strip()
-        if not __import__("re").fullmatch(r"v?\d+(?:\.\d+)+", tag_name):
+        if not release_version(tag_name):
             continue
         parser = ReleaseNotesHtmlParser()
         parser.feed(entry.findtext("atom:content", default="", namespaces=namespace))
@@ -602,6 +629,7 @@ def parse_github_release_feed(payload: bytes) -> list[dict[str, Any]]:
                 "body": parser.markdown(),
                 "draft": False,
                 "prerelease": False,
+                "target_commitish": RELEASE_BRANCH,
                 "assets": [
                     {
                         "name": RELEASE_ASSET_NAME,
@@ -2351,30 +2379,18 @@ class AppController:
             self._set_update_state(
                 status="checking",
                 percent=8,
-                message="正在检查 GitHub Release",
+                message="正在检查 imagen 更新通道",
                 showPrompt=manual,
             )
             try:
                 try:
                     release_payload = self._github_json("/releases?per_page=20")
                 except Exception as list_error:
-                    if self._github_api_rate_limited(list_error) or self._github_transport_failed(
-                        list_error
-                    ):
-                        self._set_update_state(
-                            percent=38,
-                            message="主检查通道不可用，正在尝试备用通道",
-                        )
-                        release_payload = self._github_release_feed()
-                    else:
-                        try:
-                            release_payload = self._github_json("/releases/latest")
-                        except Exception:
-                            self._set_update_state(
-                                percent=38,
-                                message="主检查通道不可用，正在尝试备用通道",
-                            )
-                            release_payload = self._github_release_feed()
+                    self._set_update_state(
+                        percent=38,
+                        message="主检查通道不可用，正在尝试 imagen 备用通道",
+                    )
+                    release_payload = self._github_release_feed()
                 releases = (
                     [item for item in release_payload if isinstance(item, dict)]
                     if isinstance(release_payload, list)
@@ -2385,16 +2401,19 @@ class AppController:
                 stable_releases = [
                     item
                     for item in releases
-                    if not item.get("draft") and not item.get("prerelease")
+                    if not item.get("draft")
+                    and not item.get("prerelease")
+                    and release_matches_channel(item)
                 ]
                 if not stable_releases:
-                    raise RuntimeError("GitHub 没有可用的正式版本")
+                    raise RuntimeError("GitHub 没有可用的 imagen 正式版本")
                 release = max(
                     stable_releases,
                     key=lambda item: version_tuple(item.get("tag_name")),
                 )
                 self.store.set_last_update_check(time.time())
-                latest = str(release.get("tag_name") or "").lstrip("v")
+                release_tag = str(release.get("tag_name") or "")
+                latest = release_version(release_tag)
                 assets = {
                     str(asset.get("name")): asset
                     for asset in release.get("assets") or []
@@ -2446,7 +2465,7 @@ class AppController:
                     fullReleaseNotes=complete_notes,
                     available=available,
                     showPrompt=available and (
-                        manual or self.store.get_ignored_update_version() != latest
+                        manual or self.store.get_ignored_update_version() != release_tag
                     ),
                 )
                 if manual and not available:
@@ -2465,8 +2484,8 @@ class AppController:
                 )
 
     def ignore_update_version(self, version: Any) -> dict[str, Any]:
-        clean = self.store.set_ignored_update_version(version)
-        if clean and clean == str(self.update_state.get("latestVersion") or ""):
+        clean = self.store.set_ignored_update_version(ignored_release_key(version))
+        if clean and clean == ignored_release_key(self.update_state.get("latestVersion")):
             self._set_update_state(showPrompt=False)
         return {"ok": True, "ignoredVersion": clean, "update": dict(self.update_state)}
 
@@ -3004,6 +3023,8 @@ class AppController:
             "rateLimitProgressMode": self.store.get_rate_limit_progress_mode(),
             "appVersion": APP_VERSION,
             "githubRepository": GITHUB_REPOSITORY,
+            "releaseBranch": RELEASE_BRANCH,
+            "releaseTagPrefix": RELEASE_TAG_PREFIX,
             "updateFrequency": self.store.get_update_frequency(),
             "ignoredUpdateVersion": (
                 self.store.get_ignored_update_version()

@@ -368,6 +368,18 @@ class UtilityTests(unittest.TestCase):
         self.assertTrue(app.is_newer_version("v1.1.0", "1.0.9"))
         self.assertFalse(app.is_newer_version("1.0", "1.0.0"))
         self.assertFalse(app.is_newer_version("preview", "1.0.0"))
+        self.assertEqual(app.release_version("imagen-v1.2.3"), "1.2.3")
+        self.assertEqual(app.release_version("v1.2.3"), "")
+        self.assertTrue(
+            app.release_matches_channel(
+                {"tag_name": "imagen-v1.2.3", "target_commitish": "imagen"}
+            )
+        )
+        self.assertFalse(
+            app.release_matches_channel(
+                {"tag_name": "imagen-v1.2.3", "target_commitish": "main"}
+            )
+        )
 
     def test_parse_timestamp(self):
         self.assertIsNotNone(app.parse_timestamp("2026-09-09T00:18:00+08:00"))
@@ -1091,7 +1103,8 @@ class ControllerTests(unittest.TestCase):
             controller._github_release_feed = __import__("unittest.mock").mock.Mock(
                 return_value=[
                     {
-                        "tag_name": "v9.9.9",
+                        "tag_name": "imagen-v9.9.9",
+                        "target_commitish": "imagen",
                         "body": "- TLS 后备成功",
                         "draft": False,
                         "prerelease": False,
@@ -1386,13 +1399,14 @@ class ControllerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             controller = app.AppController.__new__(app.AppController)
             controller.store = app.Store(Path(temp) / "test.db")
-            controller.store.set_ignored_update_version("9.9.9")
+            controller.store.set_ignored_update_version("imagen-v9.9.9")
             controller.update_lock = __import__("threading").Lock()
             controller.update_state = {}
             controller.window = None
             controller.visible = False
             controller._github_json = lambda _path: {
-                "tag_name": "v9.9.9",
+                "tag_name": "imagen-v9.9.9",
+                "target_commitish": "imagen",
                 "body": "## 更新日志",
                 "assets": [{"name": app.RELEASE_ASSET_NAME, "url": "api", "browser_download_url": "web"}],
             }
@@ -1406,13 +1420,14 @@ class ControllerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             controller = app.AppController.__new__(app.AppController)
             controller.store = app.Store(Path(temp) / "test.db")
-            controller.store.set_ignored_update_version("9.9.9")
+            controller.store.set_ignored_update_version("imagen-v9.9.9")
             controller.update_lock = __import__("threading").Lock()
             controller.update_state = {}
             controller.window = None
             controller.visible = False
             controller._github_json = lambda _path: {
-                "tag_name": "v9.9.9",
+                "tag_name": "imagen-v9.9.9",
+                "target_commitish": "imagen",
                 "body": "## 更新日志",
                 "assets": [{"name": app.RELEASE_ASSET_NAME, "url": "api", "browser_download_url": "web"}],
             }
@@ -1422,7 +1437,7 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(controller.update_state["available"])
             self.assertTrue(controller.update_state["showPrompt"])
 
-    def test_update_check_falls_back_to_latest_release_when_list_fails(self):
+    def test_update_check_falls_back_to_imagen_feed_when_list_fails(self):
         with tempfile.TemporaryDirectory() as temp:
             controller = app.AppController.__new__(app.AppController)
             controller.store = app.Store(Path(temp) / "test.db")
@@ -1434,11 +1449,14 @@ class ControllerTests(unittest.TestCase):
 
             def github_json(path):
                 requested_paths.append(path)
-                if path.startswith("/releases?"):
-                    raise RuntimeError("release list unavailable")
-                return {
-                    "tag_name": "v9.9.9",
-                    "body": "- 最新版本内容",
+                raise RuntimeError("release list unavailable")
+
+            controller._github_json = github_json
+            controller._github_release_feed = lambda: [
+                {
+                    "tag_name": "imagen-v9.9.9",
+                    "target_commitish": "imagen",
+                    "body": "- imagen 备用通道版本内容",
                     "assets": [
                         {
                             "name": app.RELEASE_ASSET_NAME,
@@ -1447,13 +1465,12 @@ class ControllerTests(unittest.TestCase):
                         }
                     ],
                 }
-
-            controller._github_json = github_json
+            ]
             controller._check_for_updates_worker(manual=True)
 
-            self.assertEqual(requested_paths, ["/releases?per_page=20", "/releases/latest"])
+            self.assertEqual(requested_paths, ["/releases?per_page=20"])
             self.assertTrue(controller.update_state["available"])
-            self.assertIn("最新版本内容", controller.update_state["releaseNotes"])
+            self.assertIn("imagen 备用通道版本内容", controller.update_state["releaseNotes"])
 
     def test_update_check_uses_atom_feed_when_github_api_is_rate_limited(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1472,7 +1489,8 @@ class ControllerTests(unittest.TestCase):
             controller._github_release_feed = __import__("unittest.mock").mock.Mock(
                 return_value=[
                     {
-                        "tag_name": "v9.9.9",
+                        "tag_name": "imagen-v9.9.9",
+                        "target_commitish": "imagen",
                         "body": "- 来自 Release feed",
                         "draft": False,
                         "prerelease": False,
@@ -1498,8 +1516,8 @@ class ControllerTests(unittest.TestCase):
         payload = """<?xml version="1.0" encoding="UTF-8"?>
         <feed xmlns="http://www.w3.org/2005/Atom">
           <entry>
-            <link rel="alternate" href="https://github.com/Binceenigne/easyapitool/releases/tag/v9.9.9" />
-            <title>v9.9.9</title>
+            <link rel="alternate" href="https://github.com/Binceenigne/easyapitool/releases/tag/imagen-v9.9.9" />
+            <title>imagen-v9.9.9</title>
             <content type="html">&lt;h2&gt;9.9.9&lt;/h2&gt;&lt;ul&gt;&lt;li&gt;修复检查更新&lt;/li&gt;&lt;/ul&gt;</content>
           </entry>
           <entry>
@@ -1511,12 +1529,13 @@ class ControllerTests(unittest.TestCase):
         releases = app.parse_github_release_feed(payload)
 
         self.assertEqual(len(releases), 1)
-        self.assertEqual(releases[0]["tag_name"], "v9.9.9")
+        self.assertEqual(releases[0]["tag_name"], "imagen-v9.9.9")
+        self.assertEqual(releases[0]["target_commitish"], "imagen")
         self.assertEqual(releases[0]["body"], "## 9.9.9\n- \u4fee\u590d\u68c0\u67e5\u66f4\u65b0")
         assets = {asset["name"]: asset for asset in releases[0]["assets"]}
         self.assertEqual(
             assets[app.RELEASE_ASSET_NAME]["browser_download_url"],
-            f"https://github.com/{app.GITHUB_REPOSITORY}/releases/download/v9.9.9/{app.RELEASE_ASSET_NAME}",
+            f"https://github.com/{app.GITHUB_REPOSITORY}/releases/download/imagen-v9.9.9/{app.RELEASE_ASSET_NAME}",
         )
         self.assertIn(f"{app.RELEASE_ASSET_NAME}.sha256", assets)
 
@@ -1530,7 +1549,8 @@ class ControllerTests(unittest.TestCase):
             controller.visible = False
             controller._github_json = lambda _path: [
                 {
-                    "tag_name": "v9.9.9",
+                    "tag_name": "imagen-v9.9.9",
+                    "target_commitish": "imagen",
                     "body": "- 最新版本内容",
                     "assets": [
                         {
@@ -1540,8 +1560,24 @@ class ControllerTests(unittest.TestCase):
                         }
                     ],
                 },
-                {"tag_name": "v9.9.8", "body": "- 中间版本内容", "assets": []},
-                {"tag_name": app.APP_VERSION, "body": "- 已安装版本内容", "assets": []},
+                {
+                    "tag_name": "imagen-v9.9.8",
+                    "target_commitish": "imagen",
+                    "body": "- 中间版本内容",
+                    "assets": [],
+                },
+                {
+                    "tag_name": f"imagen-v{app.APP_VERSION}",
+                    "target_commitish": "imagen",
+                    "body": "- 已安装版本内容",
+                    "assets": [],
+                },
+                {
+                    "tag_name": "v99.0.0",
+                    "target_commitish": "main",
+                    "body": "- 主分支版本，不应出现",
+                    "assets": [{"name": app.RELEASE_ASSET_NAME}],
+                },
             ]
 
             controller._check_for_updates_worker(manual=True)
@@ -1553,6 +1589,7 @@ class ControllerTests(unittest.TestCase):
             self.assertIn("## 9.9.8", notes)
             self.assertIn("中间版本内容", notes)
             self.assertNotIn("已安装版本内容", notes)
+            self.assertNotIn("主分支版本", notes)
 
     def test_limit_change_notifications_report_increase_and_decrease_once(self):
         notifications = []

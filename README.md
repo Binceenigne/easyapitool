@@ -32,9 +32,15 @@ Windows API 密钥额度监控工具。桌面壳使用 Python 3.12、pywebview�
 
 ## 发布与自动更新
 
-GitHub Release 的标签使用 `vMAJOR.MINOR.PATCH`，例如 `v1.0.0`。每个 Release 必须上传以下两个同名资产：
+`imagen` 分支使用独立更新通道，只接受同时满足以下条件的 GitHub Release：
+
+- 标签使用 `imagen-vMAJOR.MINOR.PATCH`，例如 `imagen-v1.0.17`。
+- Release 的目标分支（`target_commitish`）必须是 `imagen`。
+- `main` 分支使用的 `vMAJOR.MINOR.PATCH` Release 不会被本分支识别。
+
+每个 `imagen` Release 必须上传以下两个同名资产：
 
 - `API_TOOLS.exe`
 - `API_TOOLS.exe.sha256`
 
-应用只从配置的 GitHub 仓库读取最新正式 Release。下载完成后会校验 SHA-256，通过后由独立 PowerShell 进程替换当前 EXE 并重启。每次发布前需要更新 `APP_VERSION` 和 `CHANGELOG.md`，Release 描述填写该版本的简要更新日志。
+应用只从配置的 GitHub 仓库读取目标为 `imagen` 且带 `imagen-v` 标签前缀的最新正式 Release。GitHub API 不可用时，Atom 备用通道仍只接受 `imagen-v` 标签。下载完成后会校验 SHA-256，通过后由独立 PowerShell 进程替换当前 EXE 并重启。每次发布前需要更新 `APP_VERSION` 和 `CHANGELOG.md`，Release 描述填写该版本的简要更新日志。
