@@ -1168,18 +1168,6 @@ html.dark #keySwitcherMenu {
   opacity: 0.48;
 }
 
-.image-edit-toggle-field {
-  align-content: start;
-}
-
-.image-edit-toggle-field input[type=checkbox] {
-  width: 16px;
-  height: 16px;
-  margin-top: 6px;
-  padding: 0;
-  accent-color: var(--brand);
-}
-
 .image-edit-actions {
   justify-content: space-between;
   margin-top: auto;
