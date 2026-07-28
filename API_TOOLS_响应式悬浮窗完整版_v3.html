@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="assets/app.css?v=25">
+    <link rel="stylesheet" href="assets/app.css?v=26">
     <script defer src="vendor/lucide/lucide.min.js"></script>
     <style media="not all" data-legacy-styles-disabled>
         /* 强制无圆角 */
@@ -870,6 +870,16 @@
             </div>
 
             <div class="toolbar-actions">
+                <div id="workspaceModeSwitch" role="group" aria-label="工作模式">
+                    <button type="button" id="monitorModeButton" class="workspace-mode-button is-active" onclick="setWorkspaceMode('monitor')" title="额度监控" aria-label="额度监控" aria-pressed="true">
+                        <i data-lucide="activity" aria-hidden="true"></i>
+                        <span>监控</span>
+                    </button>
+                    <button type="button" id="imageEditModeButton" class="workspace-mode-button" onclick="setWorkspaceMode('image-edit')" title="图片编辑" aria-label="图片编辑" aria-pressed="false">
+                        <i data-lucide="images" aria-hidden="true"></i>
+                        <span>图片</span>
+                    </button>
+                </div>
                 <button type="button" id="manualRefreshButton" class="toolbar-action-button" title="立即刷新" aria-label="立即刷新">
                     <i id="manualRefreshIcon" data-lucide="refresh-cw" aria-hidden="true"></i>
                     <span id="manualRefreshCountdown" aria-hidden="true" hidden></span>
@@ -938,6 +948,111 @@
         </div>
 
         <div id="appMain">
+            <section id="imageEditWorkspace" hidden aria-labelledby="imageEditHeading">
+                <form id="imageEditForm" onsubmit="submitImageEdit(event)">
+                    <div class="image-edit-header">
+                        <div>
+                            <i data-lucide="wand-sparkles" class="icon-14 color-brand" aria-hidden="true"></i>
+                            <div>
+                                <h2 id="imageEditHeading">多图合成</h2>
+                                <p>GPT Image 2 · 最多 16 张参考图</p>
+                            </div>
+                        </div>
+                        <button type="button" id="chooseEditImagesButton" onclick="chooseEditImages()">
+                            <i data-lucide="image-plus" aria-hidden="true"></i>
+                            选择图片
+                        </button>
+                    </div>
+
+                    <div id="editImageSelection" class="image-edit-selection is-empty">
+                        <div id="editImageEmpty">
+                            <i data-lucide="images" aria-hidden="true"></i>
+                            <span>选择需要组合或参考的图片</span>
+                        </div>
+                        <div id="editImageList"></div>
+                    </div>
+
+                    <label class="image-edit-prompt">
+                        <span>编辑要求</span>
+                        <textarea id="imageEditPrompt" maxlength="32000" required placeholder="例如：保留第一张图的主体和第二张图的配色，合成为一张横向产品海报"></textarea>
+                    </label>
+
+                    <div class="image-edit-options">
+                        <label>
+                            <span>尺寸</span>
+                            <select id="imageEditSize">
+                                <option value="auto">自动</option>
+                                <option value="1024x1024">1024 × 1024</option>
+                                <option value="1536x1024">1536 × 1024</option>
+                                <option value="1024x1536">1024 × 1536</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>质量</span>
+                            <select id="imageEditQuality">
+                                <option value="auto">自动</option>
+                                <option value="low">低</option>
+                                <option value="medium">中</option>
+                                <option value="high">高</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>格式</span>
+                            <select id="imageEditFormat" onchange="updateImageEditCompressionState()">
+                                <option value="png">PNG</option>
+                                <option value="jpeg">JPEG</option>
+                                <option value="webp">WebP</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>背景</span>
+                            <select id="imageEditBackground">
+                                <option value="auto">自动</option>
+                                <option value="opaque">不透明</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>审核</span>
+                            <select id="imageEditModeration">
+                                <option value="auto">标准</option>
+                                <option value="low">较低</option>
+                            </select>
+                        </label>
+                        <label id="imageEditCompressionField">
+                            <span>压缩质量</span>
+                            <input id="imageEditCompression" type="number" min="0" max="100" value="90" disabled>
+                        </label>
+                    </div>
+
+                    <div class="image-edit-actions">
+                        <span id="imageEditStatus" role="status">请选择参考图片并填写编辑要求</span>
+                        <button type="submit" id="generateEditedImageButton">
+                            <i data-lucide="sparkles" aria-hidden="true"></i>
+                            生成合成图
+                        </button>
+                    </div>
+                </form>
+
+                <section id="imageEditResult" class="is-empty" aria-labelledby="imageEditResultHeading">
+                    <div>
+                        <div>
+                            <span id="imageEditResultHeading">生成结果</span>
+                            <span id="imageEditResultMeta"></span>
+                        </div>
+                        <button type="button" id="saveEditedImageButton" onclick="saveEditedImage()">
+                            <i data-lucide="download" aria-hidden="true"></i>
+                            另存为
+                        </button>
+                    </div>
+                    <div class="image-edit-preview">
+                        <div id="imageEditResultEmpty">
+                            <i data-lucide="scan-line" aria-hidden="true"></i>
+                            <span>生成结果将在这里显示</span>
+                        </div>
+                        <img id="imageEditResultImage" alt="多图合成结果">
+                    </div>
+                </section>
+            </section>
             
             <!-- 1. 微型视图专用面板 (仅在高度极小时激活) -->
             <div id="microSummary" class="micro-only">
@@ -1520,6 +1635,156 @@
             averagePeriod: 'today',
             trendPeriod: '1h'
         };
+
+        window.imageEditState = {
+            files: [],
+            result: null,
+            busy: false
+        };
+
+        function setWorkspaceMode(mode) {
+            const imageMode = mode === 'image-edit';
+            document.getElementById('widget-root').classList.toggle('image-edit-mode', imageMode);
+            document.getElementById('imageEditWorkspace').hidden = !imageMode;
+            document.getElementById('monitorModeButton').classList.toggle('is-active', !imageMode);
+            document.getElementById('monitorModeButton').setAttribute('aria-pressed', String(!imageMode));
+            document.getElementById('imageEditModeButton').classList.toggle('is-active', imageMode);
+            document.getElementById('imageEditModeButton').setAttribute('aria-pressed', String(imageMode));
+            closeKeySwitcher();
+            handleResponsiveLayout();
+        }
+
+        function formatImageFileSize(bytes) {
+            const value = Number(bytes) || 0;
+            return value >= 1024 * 1024
+                ? `${(value / (1024 * 1024)).toFixed(1)} MB`
+                : `${Math.max(1, Math.round(value / 1024))} KB`;
+        }
+
+        function renderEditImageList() {
+            const files = window.imageEditState.files;
+            const selection = document.getElementById('editImageSelection');
+            const list = document.getElementById('editImageList');
+            selection.classList.toggle('is-empty', files.length === 0);
+            list.replaceChildren();
+            files.forEach((file, index) => {
+                const item = document.createElement('div');
+                item.className = 'image-edit-file';
+                const order = document.createElement('span');
+                order.className = 'image-edit-file-order';
+                order.textContent = String(index + 1).padStart(2, '0');
+                const details = document.createElement('div');
+                const name = document.createElement('span');
+                name.textContent = file.name;
+                name.title = file.path;
+                const size = document.createElement('small');
+                size.textContent = formatImageFileSize(file.sizeBytes);
+                details.append(name, size);
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.title = `移除 ${file.name}`;
+                remove.setAttribute('aria-label', remove.title);
+                remove.innerHTML = iconMarkup('x', 'icon-11');
+                remove.addEventListener('click', () => removeEditImage(index));
+                item.append(order, details, remove);
+                list.append(item);
+            });
+            renderLucideIcons();
+        }
+
+        async function chooseEditImages() {
+            if (!window.pywebview?.api?.choose_edit_images) return;
+            try {
+                const result = await window.pywebview.api.choose_edit_images();
+                if (!result.ok) throw new Error(result.error || '无法选择图片');
+                if (!Array.isArray(result.paths) || result.paths.length === 0) return;
+                window.imageEditState.files = result.paths.map((path, index) => ({
+                    path,
+                    name: result.files?.[index]?.name || path.split(/[\\/]/).pop(),
+                    sizeBytes: result.files?.[index]?.sizeBytes || 0
+                }));
+                renderEditImageList();
+                document.getElementById('imageEditStatus').textContent = `已选择 ${result.paths.length} 张参考图片`;
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+            }
+        }
+
+        function removeEditImage(index) {
+            window.imageEditState.files.splice(index, 1);
+            renderEditImageList();
+            document.getElementById('imageEditStatus').textContent = window.imageEditState.files.length
+                ? `已选择 ${window.imageEditState.files.length} 张参考图片`
+                : '请选择参考图片并填写编辑要求';
+        }
+
+        function updateImageEditCompressionState() {
+            const format = document.getElementById('imageEditFormat').value;
+            document.getElementById('imageEditCompression').disabled = format === 'png';
+            document.getElementById('imageEditCompressionField').classList.toggle('is-disabled', format === 'png');
+        }
+
+        async function submitImageEdit(event) {
+            event.preventDefault();
+            if (window.imageEditState.busy) return;
+            const files = window.imageEditState.files;
+            const activeKey = getActiveKey();
+            const prompt = document.getElementById('imageEditPrompt').value.trim();
+            if (!activeKey) return showToast('请先添加并选择一个有效的 API Key', 'error');
+            if (!files.length) return showToast('请至少选择一张参考图片', 'error');
+            if (!prompt) return showToast('请输入图片编辑要求', 'error');
+
+            const button = document.getElementById('generateEditedImageButton');
+            const status = document.getElementById('imageEditStatus');
+            window.imageEditState.busy = true;
+            button.disabled = true;
+            setIconLabel(button, 'loader-circle', '正在生成');
+            button.querySelector('[data-lucide], svg')?.classList.add('is-spinning');
+            status.textContent = `正在分析 ${files.length} 张参考图片并生成新图`;
+            try {
+                const result = await window.pywebview.api.edit_images(
+                    activeKey.id,
+                    prompt,
+                    files.map(file => file.path),
+                    {
+                        size: document.getElementById('imageEditSize').value,
+                        quality: document.getElementById('imageEditQuality').value,
+                        outputFormat: document.getElementById('imageEditFormat').value,
+                        outputCompression: document.getElementById('imageEditCompression').value,
+                        background: document.getElementById('imageEditBackground').value,
+                        moderation: document.getElementById('imageEditModeration').value
+                    }
+                );
+                if (!result.ok) throw new Error(result.error || '图片编辑失败');
+                window.imageEditState.result = result;
+                const image = document.getElementById('imageEditResultImage');
+                image.src = `${result.uri}?t=${Date.now()}`;
+                document.getElementById('imageEditResultMeta').textContent =
+                    `${result.actualSize} · ${String(result.format).toUpperCase()} · ${formatImageFileSize(result.sizeBytes)}`;
+                document.getElementById('imageEditResult').classList.remove('is-empty');
+                status.textContent = '合成完成';
+                showToast('图片合成完成');
+            } catch (error) {
+                status.textContent = error.message || String(error);
+                showToast(status.textContent, 'error');
+            } finally {
+                window.imageEditState.busy = false;
+                button.disabled = false;
+                setIconLabel(button, 'sparkles', '生成合成图');
+            }
+        }
+
+        async function saveEditedImage() {
+            const result = window.imageEditState.result;
+            if (!result?.path) return;
+            try {
+                const saved = await window.pywebview.api.save_edited_image(result.path);
+                if (!saved.ok) throw new Error(saved.error || '保存图片失败');
+                if (!saved.cancelled) showToast(`已保存到 ${saved.path}`);
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+            }
+        }
 
         try {
             const savedThresholds = JSON.parse(localStorage.getItem('api-tools-thresholds') || 'null');

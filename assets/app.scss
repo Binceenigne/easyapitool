@@ -76,7 +76,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
     min-width: 0;
     margin: 0;
     border: 0;
@@ -88,7 +89,8 @@ select {
 button { cursor: pointer; }
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+textarea:focus-visible {
     outline: 1px solid var(--brand);
     outline-offset: -1px;
 }
@@ -427,6 +429,36 @@ html.dark #keySwitcherMenu {
     gap: 4px;
 }
 
+#workspaceModeSwitch {
+    display: flex;
+    align-items: center;
+    height: 22px;
+    padding: 2px;
+    border: 1px solid var(--border);
+    background: var(--surface-strong);
+}
+
+.workspace-mode-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 16px;
+    padding: 0 6px;
+    gap: 3px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 9px;
+}
+
+.workspace-mode-button.is-active {
+    background: var(--bg);
+    color: var(--brand);
+    box-shadow: 0 0 0 1px var(--border-soft);
+}
+
+.workspace-mode-button [data-lucide],
+.workspace-mode-button svg { width: 10px; height: 10px; }
+
 .toolbar-action-button {
     display: inline-flex;
     align-items: center;
@@ -443,9 +475,9 @@ html.dark #keySwitcherMenu {
     transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 
-.toolbar-action-button:first-child,
-.toolbar-action-button:nth-child(3) { width: 22px; padding: 0; }
-.toolbar-action-button:first-child { color: var(--brand); }
+.toolbar-action-button#manualRefreshButton,
+.toolbar-action-button[title="删除当前密钥"] { width: 22px; padding: 0; }
+.toolbar-action-button#manualRefreshButton { color: var(--brand); }
 #manualRefreshButton { position: relative; overflow: hidden; }
 #manualRefreshButton:disabled { cursor: default; }
 #manualRefreshCountdown {
@@ -467,10 +499,10 @@ html.dark #keySwitcherMenu {
 #manualRefreshButton.is-refresh-cooldown [data-lucide] { display: none !important; }
 #manualRefreshButton.is-refresh-cooldown.is-refresh-success { color: var(--good) !important; }
 #manualRefreshButton.is-refresh-cooldown.is-refresh-error { color: var(--critical) !important; }
-.toolbar-action-button:nth-child(2) { border-color: var(--brand); background: var(--brand); color: #fff; }
-.toolbar-action-button:nth-child(2):hover { background: var(--brand-strong); }
-.toolbar-action-button:nth-child(3) { color: var(--muted); }
-.toolbar-action-button:nth-child(3):hover { background: rgba(244, 63, 94, 0.08); color: var(--critical); }
+.toolbar-action-button[title="添加密钥"] { border-color: var(--brand); background: var(--brand); color: #fff; }
+.toolbar-action-button[title="添加密钥"]:hover { background: var(--brand-strong); }
+.toolbar-action-button[title="删除当前密钥"] { color: var(--muted); }
+.toolbar-action-button[title="删除当前密钥"]:hover { background: rgba(244, 63, 94, 0.08); color: var(--critical); }
 .toolbar-action-button:hover { background: var(--surface-strong); }
 .toolbar-button-text { font-size: 10px; }
 
@@ -702,6 +734,158 @@ html.dark #keySwitcherMenu {
     flex-direction: column;
     overflow: hidden;
 }
+
+#imageEditWorkspace {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: minmax(310px, 0.82fr) minmax(320px, 1.18fr);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--bg);
+}
+
+#imageEditWorkspace[hidden] { display: none !important; }
+
+#imageEditForm {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    padding: 12px;
+    gap: 10px;
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+    background: var(--surface-soft);
+}
+
+.image-edit-header,
+.image-edit-header > div,
+.image-edit-actions,
+#imageEditResult > div:first-child,
+#imageEditResult > div:first-child > div {
+    display: flex;
+    align-items: center;
+}
+
+.image-edit-header { justify-content: space-between; gap: 10px; }
+.image-edit-header > div { min-width: 0; gap: 7px; }
+.image-edit-header h2 { font-size: 14px; }
+.image-edit-header p { color: var(--muted); font-size: 9px; }
+.image-edit-header > button,
+#saveEditedImageButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    padding: 5px 9px;
+    gap: 5px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-soft);
+}
+.image-edit-header > button:hover,
+#saveEditedImageButton:hover { border-color: var(--brand); color: var(--brand); }
+
+.image-edit-selection {
+    flex: 0 0 auto;
+    min-height: 76px;
+    max-height: 148px;
+    overflow-y: auto;
+    border: 1px dashed var(--border);
+    background: var(--bg);
+}
+
+#editImageEmpty {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    min-height: 74px;
+    gap: 7px;
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.image-edit-selection.is-empty #editImageEmpty { display: flex; }
+.image-edit-selection.is-empty #editImageList { display: none; }
+#editImageList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 5px; gap: 4px; }
+.image-edit-file { display: flex; align-items: center; min-width: 0; min-height: 34px; padding: 4px 5px; gap: 6px; border: 1px solid var(--border-soft); background: var(--surface); }
+.image-edit-file-order { flex: 0 0 22px; color: var(--brand); font: 700 9px/1 var(--font-mono); }
+.image-edit-file > div { display: grid; flex: 1 1 auto; min-width: 0; gap: 1px; }
+.image-edit-file > div > span { overflow: hidden; color: var(--text-soft); font-size: 9px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.image-edit-file small { color: var(--muted); font: 7px/1.2 var(--font-mono); }
+.image-edit-file button { display: flex; flex: 0 0 22px; align-items: center; justify-content: center; width: 22px; height: 22px; background: transparent; color: var(--muted); }
+.image-edit-file button:hover { background: rgba(244, 63, 94, 0.08); color: var(--critical); }
+
+.image-edit-prompt { display: grid; min-height: 96px; gap: 4px; }
+.image-edit-prompt > span,
+.image-edit-options label > span { color: var(--muted); font-size: 8px; font-weight: 700; }
+.image-edit-prompt textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 8px;
+    resize: vertical;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+}
+
+.image-edit-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.image-edit-options label { display: grid; min-width: 0; gap: 3px; }
+.image-edit-options select,
+.image-edit-options input { width: 100%; height: 28px; padding: 4px 6px; border: 1px solid var(--border); background: var(--bg); }
+.image-edit-options .is-disabled { opacity: 0.48; }
+
+.image-edit-actions { justify-content: space-between; margin-top: auto; gap: 10px; }
+#imageEditStatus { min-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+#generateEditedImageButton {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    min-height: 32px;
+    padding: 6px 12px;
+    gap: 5px;
+    background: var(--text);
+    color: var(--bg);
+    font-weight: 700;
+}
+#generateEditedImageButton:disabled { cursor: wait; opacity: 0.65; }
+.is-spinning { animation: manualRefreshSpin 0.72s linear infinite; }
+
+#imageEditResult {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background:
+        linear-gradient(45deg, var(--border-soft) 25%, transparent 25%, transparent 75%, var(--border-soft) 75%),
+        linear-gradient(45deg, var(--border-soft) 25%, var(--bg) 25%, var(--bg) 75%, var(--border-soft) 75%);
+    background-position: 0 0, 8px 8px;
+    background-size: 16px 16px;
+}
+#imageEditResult > div:first-child { flex: 0 0 42px; justify-content: space-between; padding: 7px 10px; gap: 8px; border-bottom: 1px solid var(--border); background: var(--surface); }
+#imageEditResult > div:first-child > div { min-width: 0; gap: 8px; }
+#imageEditResultHeading { font-weight: 700; }
+#imageEditResultMeta { overflow: hidden; color: var(--muted); font: 8px/1 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.image-edit-preview { display: flex; flex: 1 1 auto; align-items: center; justify-content: center; min-height: 0; padding: 12px; overflow: auto; }
+#imageEditResultEmpty { display: none; align-items: center; justify-content: center; flex-direction: column; gap: 8px; color: var(--muted); font-size: 10px; }
+#imageEditResultEmpty [data-lucide],
+#imageEditResultEmpty svg { width: 28px; height: 28px; }
+#imageEditResult.is-empty #imageEditResultEmpty { display: flex; }
+#imageEditResult.is-empty #imageEditResultImage,
+#imageEditResult.is-empty #saveEditedImageButton,
+#imageEditResult.is-empty #imageEditResultMeta { display: none; }
+#imageEditResultImage { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18); }
+
+.image-edit-mode #microSummary,
+.image-edit-mode #dashboardGrid,
+.image-edit-mode #appFooter { display: none !important; }
+.image-edit-mode #manualRefreshButton,
+.image-edit-mode .toolbar-action-button[title="添加密钥"],
+.image-edit-mode .toolbar-action-button[title="删除当前密钥"] { display: none; }
 
 #dashboardGrid {
     display: grid;
@@ -1664,7 +1848,19 @@ html.dark #toast { border-color: #e2e8f0; background: #fff; color: #0f172a; }
 .width-micro #keyToolbar { gap: 4px; }
 .width-micro .toolbar-actions { gap: 2px; }
 .width-micro .toolbar-action-button { width: 22px; padding: 0; }
+.width-micro .workspace-mode-button span { display: none; }
+.width-micro .workspace-mode-button { width: 20px; padding: 0; }
 .width-micro #toast { left: 6px; right: 6px; bottom: 6px; }
+
+.width-narrow #imageEditWorkspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(260px, 1fr); overflow-y: auto; }
+.width-narrow #imageEditForm { overflow: visible; border-right: 0; border-bottom: 1px solid var(--border); }
+.width-narrow #imageEditResult { min-height: 320px; }
+.width-micro #editImageList { grid-template-columns: minmax(0, 1fr); }
+.width-micro .image-edit-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+:is(.height-summary-2, .height-summary-4, .height-summary-countdown, .height-details, .height-details-metrics).image-edit-mode #appMain {
+    flex: 1 1 auto;
+}
 
 .height-summary-2 #keyFormPanel,
 .height-summary-4 #keyFormPanel,

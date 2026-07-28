@@ -32,6 +32,7 @@ from multiprocessing.connection import Client, Listener
 PROCESS_STARTED_AT = time.perf_counter()
 
 import webview
+from image_editor import ImageEditorService, prepare_image_edit
 from PIL import Image
 from winotify import Notification, audio
 
@@ -55,7 +56,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "32"
+STATIC_UI_VERSION = "33"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -913,6 +914,7 @@ RPC_METHODS = {
     "defer_update_restart",
     "dismiss_update_prompt",
     "download_update",
+    "edit_images",
     "exit_app",
     "get_asset_status",
     "get_state",
@@ -1888,7 +1890,6 @@ class EasyClinClient:
                 model_ids.append(model_id)
         return usage, model_ids
 
-
 class AppController:
     def __init__(
         self,
@@ -1902,6 +1903,7 @@ class AppController:
         self.restart_ready_path = os.environ.pop(RESTART_READY_ENV, "").strip()
         self.active_title_bar_mode = self.store.get_title_bar_mode()
         self.client = EasyClinClient()
+        self.image_editor = ImageEditorService()
         self.store.import_environment_key()
         self.window: webview.Window | None = None
         self.tray: Any = None
@@ -1947,6 +1949,48 @@ class AppController:
         window.events.maximized += self._on_maximized
         window.events.restored += self._on_restored
         window.events.closing += self._on_closing
+
+    def choose_edit_images(self) -> dict[str, Any]:
+        if not self.window:
+            return {"ok": False, "error": "应用窗口尚未就绪"}
+        selected = self.window.create_file_dialog(
+            webview.FileDialog.OPEN,
+            directory=str(Path.home() / "Pictures"),
+            allow_multiple=True,
+            file_types=("图片文件 (*.png;*.jpg;*.jpeg;*.webp)",),
+        )
+        paths = [str(Path(path).resolve()) for path in selected or []]
+        if len(paths) > 16:
+            return {"ok": False, "error": "一次最多选择 16 张参考图片"}
+        return {
+            "ok": True,
+            "paths": paths,
+            "files": [
+                {"name": Path(path).name, "sizeBytes": Path(path).stat().st_size}
+                for path in paths
+                if Path(path).is_file()
+            ],
+        }
+
+    def save_edited_image(self, source_path: str) -> dict[str, Any]:
+        if not self.window:
+            return {"ok": False, "error": "应用窗口尚未就绪"}
+        source = Path(str(source_path or "")).resolve()
+        output_root = (app_data_dir() / "image-edits").resolve()
+        if not source.is_file() or source.parent != output_root:
+            return {"ok": False, "error": "只能保存本应用生成的图片"}
+        selected = self.window.create_file_dialog(
+            webview.FileDialog.SAVE,
+            directory=str(Path.home() / "Pictures"),
+            save_filename=source.name,
+            file_types=("PNG 图片 (*.png)", "JPEG 图片 (*.jpg;*.jpeg)", "WebP 图片 (*.webp)"),
+        )
+        if not selected:
+            return {"ok": True, "cancelled": True}
+        destination = Path(selected[0]).resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        return {"ok": True, "path": str(destination)}
 
     def start_workers(self) -> None:
         trace_startup("webview_start_callback")
@@ -2998,6 +3042,31 @@ class AppController:
             return {"ok": False, "error": error}
         return {"ok": True, "activeKeyId": key_id, "state": self.get_state()}
 
+    def edit_images(
+        self,
+        key_id: str,
+        prompt: str,
+        image_paths: list[str],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        try:
+            request = prepare_image_edit(prompt, image_paths, options)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        record = self.store.get_key_record(str(key_id or ""))
+        if record is None:
+            return {"ok": False, "error": "请选择有效的 API Key"}
+        try:
+            return self.image_editor.edit(
+                record["base_url"],
+                self.store.get_secret(record["id"]),
+                request,
+                app_data_dir() / "image-edits",
+            )
+        except (RuntimeError, OSError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+
     def delete_key(self, key_id: str) -> dict[str, Any]:
         self.store.delete_key(key_id)
         return {"ok": True, "state": self.get_state()}
@@ -3344,11 +3413,23 @@ class WebApi:
     def complete_initialization(self) -> dict[str, Any]:
         return self._controller.complete_initialization()
 
+    def choose_edit_images(self) -> dict[str, Any]:
+        return self._controller.choose_edit_images()
+
     def add_key(self, name: str, value: str) -> dict[str, Any]:
         return self._controller.add_key(name, value)
 
     def delete_key(self, key_id: str) -> dict[str, Any]:
         return self._controller.delete_key(key_id)
+
+    def edit_images(
+        self,
+        key_id: str,
+        prompt: str,
+        image_paths: list[str],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._controller.edit_images(key_id, prompt, image_paths, options)
 
     def refresh_now(self, trace_id: Any = None) -> dict[str, Any]:
         return self._controller.refresh_now(trace_id)
@@ -3419,6 +3500,9 @@ class WebApi:
 
     def report_startup(self, stage: str, navigation_ms: Any = 0) -> dict[str, Any]:
         return self._controller.report_startup(stage, navigation_ms)
+
+    def save_edited_image(self, source_path: str) -> dict[str, Any]:
+        return self._controller.save_edited_image(source_path)
 
 
 class BackgroundApp:
@@ -3613,6 +3697,15 @@ class RemoteWebApi(WebApi):
 
     def delete_key(self, key_id: str) -> dict[str, Any]:
         return self._remote("delete_key", key_id)
+
+    def edit_images(
+        self,
+        key_id: str,
+        prompt: str,
+        image_paths: list[str],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._remote("edit_images", key_id, prompt, image_paths, options)
 
     def refresh_now(self, trace_id: Any = None) -> dict[str, Any]:
         return self._remote("refresh_now", trace_id)

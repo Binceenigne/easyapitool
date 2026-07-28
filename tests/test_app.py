@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import app
+import image_editor
 
 
 class StoreTests(unittest.TestCase):
@@ -593,6 +594,62 @@ class UtilityTests(unittest.TestCase):
         self.assertEqual(usage["usage"]["total"]["cost"], 5)
         self.assertIsNone(models)
 
+    def test_client_posts_multiple_edit_images_as_multipart(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"data":[{"b64_json":"aW1hZ2U="}]}'
+
+        class FakeOpener:
+            def __init__(self):
+                self.request = None
+                self.timeout = None
+
+            def open(self, request, timeout):
+                self.request = request
+                self.timeout = timeout
+                return FakeResponse()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            first = Path(temp_dir) / "first.png"
+            second = Path(temp_dir) / "second.webp"
+            first.write_bytes(b"first-image")
+            second.write_bytes(b"second-image")
+            opener = FakeOpener()
+
+            with patch("image_editor.urllib.request.build_opener", return_value=opener) as build_opener:
+                result = image_editor.ImageEditClient.edit_images(
+                    "https://example.test/v1",
+                    "secret-value",
+                    (first, second),
+                    {
+                        "model": "gpt-image-2",
+                        "prompt": "Combine both references",
+                        "quality": "auto",
+                    },
+                )
+
+        request = opener.request
+        self.assertEqual(result["data"][0]["b64_json"], "aW1hZ2U=")
+        self.assertEqual(request.full_url, "https://example.test/v1/images/edits")
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(request.headers["Authorization"], "Bearer secret-value")
+        self.assertEqual(opener.timeout, 600)
+        self.assertEqual(build_opener.call_count, 1)
+        content_type = request.headers["Content-type"]
+        self.assertTrue(content_type.startswith("multipart/form-data; boundary="))
+        body = request.data
+        self.assertEqual(body.count(b'name="image[]"'), 2)
+        self.assertIn(b'name="prompt"', body)
+        self.assertIn(b"Combine both references", body)
+        self.assertIn(b'filename="image-1.png"', body)
+        self.assertIn(b'filename="image-2.webp"', body)
+
 
 class StaticAssetCacheTests(unittest.TestCase):
     def setUp(self):
@@ -663,7 +720,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=25">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=26">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -671,6 +728,16 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="trend10mButton"', page)
         self.assertIn("rates?.tenMinute2h", page)
         self.assertIn("openModelModal", page)
+        self.assertIn('id="imageEditModeButton"', page)
+        self.assertIn('id="imageEditWorkspace"', page)
+        self.assertIn('id="imageEditPrompt"', page)
+        self.assertIn("choose_edit_images", page)
+        self.assertIn("edit_images", page)
+        self.assertIn("save_edited_image", page)
+        self.assertIn(
+            'name="image[]"',
+            (project_root / "image_editor.py").read_text(encoding="utf-8"),
+        )
         self.assertIn('id="keyToolbar"', page)
         self.assertIn('id="keySwitcherButton"', page)
         self.assertIn('id="keySwitcherMenu" role="listbox"', page)
@@ -869,6 +936,56 @@ class StaticAssetCacheTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_edit_images_validates_inputs_and_writes_decoded_result(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_path = root / "reference.png"
+            input_image = app.Image.new("RGB", (8, 8), "red")
+            input_image.save(input_path, format="PNG")
+            service = SimpleNamespace(
+                edit=__import__("unittest.mock").mock.Mock(
+                    return_value={"ok": True, "path": str(root / "result.png")}
+                )
+            )
+            controller = app.AppController.__new__(app.AppController)
+            controller.image_editor = service
+            controller.store = SimpleNamespace(
+                get_key_record=lambda key_id: {
+                    "id": key_id,
+                    "base_url": "https://example.test/v1",
+                },
+                get_secret=lambda _key_id: "secret",
+            )
+
+            with patch("app.app_data_dir", return_value=root / "data"):
+                result = controller.edit_images(
+                    "key-1",
+                    "Combine this reference into a new image",
+                    [str(input_path)],
+                    {
+                        "size": "1024x1024",
+                        "quality": "low",
+                        "outputFormat": "png",
+                        "background": "opaque",
+                        "moderation": "auto",
+                    },
+                )
+
+        self.assertTrue(result["ok"])
+        args = service.edit.call_args.args
+        self.assertEqual(args[0:2], ("https://example.test/v1", "secret"))
+        self.assertEqual(args[2].image_paths, (input_path.resolve(),))
+        self.assertEqual(args[2].fields["model"], "gpt-image-2")
+        self.assertEqual(args[2].fields["quality"], "low")
+        self.assertEqual(args[3], root / "data" / "image-edits")
+
+    def test_edit_images_rejects_missing_reference_images(self):
+        controller = app.AppController.__new__(app.AppController)
+
+        result = controller.edit_images("key-1", "Combine images", [], {})
+
+        self.assertEqual(result, {"ok": False, "error": "请选择 1 到 16 张参考图片"})
+
     def test_github_request_retries_without_system_proxy_when_proxy_refuses(self):
         request = app.urllib.request.Request("https://api.github.com/test")
         response = object()
@@ -1902,11 +2019,13 @@ class ControllerTests(unittest.TestCase):
             {
                 "add_key",
                 "check_for_updates",
+                "choose_edit_images",
                 "complete_initialization",
                 "delete_key",
                 "defer_update_restart",
                 "dismiss_update_prompt",
                 "download_update",
+                "edit_images",
                 "get_asset_status",
                 "get_state",
                 "initialize_assets",
@@ -1918,6 +2037,7 @@ class ControllerTests(unittest.TestCase):
                 "restart_app",
                 "restart_update",
                 "resolve_close_action",
+                "save_edited_image",
                 "set_always_on_top",
                 "set_window_background",
                 "update_app_preferences",
@@ -1970,18 +2090,40 @@ class ControllerTests(unittest.TestCase):
         controller = SimpleNamespace(
             window_action=lambda action: {"local": action},
             complete_initialization=lambda: {"local": "init"},
+            choose_edit_images=lambda: {"local": "choose"},
+            save_edited_image=lambda path: {"local": path},
         )
         api = app.RemoteWebApi(controller, rpc)
 
         state = api.get_state()
         refresh = api.refresh_now("trace-1")
+        edit = api.edit_images("key-1", "combine", ["a.png", "b.png"], {"quality": "low"})
+        choose = api.choose_edit_images()
+        save = api.save_edited_image("result.png")
         window_result = api.window_action("minimize")
 
         self.assertTrue(state["isForeground"])
         self.assertEqual(refresh, {"method": "refresh_now", "args": ("trace-1",)})
+        self.assertEqual(
+            edit,
+            {
+                "method": "edit_images",
+                "args": ("key-1", "combine", ["a.png", "b.png"], {"quality": "low"}),
+            },
+        )
+        self.assertEqual(choose, {"local": "choose"})
+        self.assertEqual(save, {"local": "result.png"})
         self.assertEqual(window_result, {"local": "minimize"})
         self.assertNotIn(
             __import__("unittest.mock").mock.call("window_action", "minimize"),
+            rpc.call.call_args_list,
+        )
+        self.assertNotIn(
+            __import__("unittest.mock").mock.call("choose_edit_images"),
+            rpc.call.call_args_list,
+        )
+        self.assertNotIn(
+            __import__("unittest.mock").mock.call("save_edited_image", "result.png"),
             rpc.call.call_args_list,
         )
 
