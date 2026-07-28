@@ -748,6 +748,12 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="imageEditStream" type="checkbox" checked', page)
         self.assertIn('id="imageEditPartialImages">', page)
         self.assertIn('<option value="3" selected>3</option>', page)
+        self.assertIn('id="imageEditOutputPreset"', page)
+        self.assertIn('<option value="transparent">透明</option>', page)
+        self.assertIn('<option value="low" selected>低</option>', page)
+        self.assertIn("if (transparent) output.value = 'lossless'", page)
+        self.assertNotIn('id="imageEditCompression"', page)
+        self.assertNotIn('id="imageEditFormat"', page)
         self.assertIn("choose_edit_images", page)
         self.assertIn("generate_image", page)
         self.assertIn("save_edited_image", page)
@@ -983,9 +989,9 @@ class ControllerTests(unittest.TestCase):
                     {
                         "size": "1024x1024",
                         "quality": "low",
-                        "outputFormat": "png",
+                        "outputPreset": "lossless",
                         "background": "opaque",
-                        "moderation": "auto",
+                        "moderation": "low",
                     },
                 )
 
@@ -995,6 +1001,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(args[2].image_paths, (input_path.resolve(),))
         self.assertEqual(args[2].fields["model"], "gpt-image-2")
         self.assertEqual(args[2].fields["quality"], "low")
+        self.assertEqual(args[2].fields["output_format"], "png")
         self.assertEqual(args[3], root / "data" / "image-generations")
 
     def test_generate_image_accepts_missing_reference_images(self):

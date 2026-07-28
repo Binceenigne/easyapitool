@@ -973,7 +973,7 @@
                     <div class="image-edit-options">
                         <label>
                             <span>尺寸</span>
-                            <input id="imageEditSize" list="imageEditSizeOptions" value="auto" pattern="auto|[0-9]+x[0-9]+" title="auto 或 WIDTHxHEIGHT">
+                            <input id="imageEditSize" list="imageEditSizeOptions" value="auto" pattern="auto|[0-9]+x[0-9]+" title="请求尺寸；EasyClin 可能改写实际宽高">
                             <datalist id="imageEditSizeOptions">
                                 <option value="auto">自动</option>
                                 <option value="1024x1024">1024 × 1024</option>
@@ -984,7 +984,7 @@
                         </label>
                         <label>
                             <span>质量</span>
-                            <select id="imageEditQuality">
+                            <select id="imageEditQuality" title="模型生成细节强度，不直接控制像素分辨率">
                                 <option value="auto">自动</option>
                                 <option value="low">低</option>
                                 <option value="medium">中</option>
@@ -992,30 +992,28 @@
                             </select>
                         </label>
                         <label>
-                            <span>格式</span>
-                            <select id="imageEditFormat" onchange="updateImageEditCompressionState()">
-                                <option value="png">PNG</option>
-                                <option value="jpeg">JPEG</option>
-                                <option value="webp">WebP</option>
+                            <span>输出大小</span>
+                            <select id="imageEditOutputPreset" title="API 固定请求 PNG，此选项控制本地保存格式和 JPEG 压缩" onchange="updateImageEditOutputState()">
+                                <option value="lossless">无损 · PNG</option>
+                                <option value="large">大 · JPEG 90</option>
+                                <option value="medium">中 · JPEG 75</option>
+                                <option value="small">小 · JPEG 55</option>
                             </select>
                         </label>
                         <label>
                             <span>背景</span>
-                            <select id="imageEditBackground">
+                            <select id="imageEditBackground" onchange="updateImageEditOutputState()">
                                 <option value="auto">自动</option>
                                 <option value="opaque">不透明</option>
+                                <option value="transparent">透明</option>
                             </select>
                         </label>
                         <label>
                             <span>审核</span>
                             <select id="imageEditModeration">
                                 <option value="auto">标准</option>
-                                <option value="low">较低</option>
+                                <option value="low" selected>低</option>
                             </select>
-                        </label>
-                        <label id="imageEditCompressionField">
-                            <span>压缩质量</span>
-                            <input id="imageEditCompression" type="number" min="0" max="100" value="90" disabled>
                         </label>
                         <label class="image-edit-toggle-field">
                             <span>流式响应</span>
@@ -1734,10 +1732,14 @@
                 : '填写提示词即可生成，参考图可选';
         }
 
-        function updateImageEditCompressionState() {
-            const format = document.getElementById('imageEditFormat').value;
-            document.getElementById('imageEditCompression').disabled = format === 'png';
-            document.getElementById('imageEditCompressionField').classList.toggle('is-disabled', format === 'png');
+        function updateImageEditOutputState() {
+            const output = document.getElementById('imageEditOutputPreset');
+            const transparent = document.getElementById('imageEditBackground').value === 'transparent';
+            if (transparent) output.value = 'lossless';
+            [...output.options].forEach(option => {
+                option.disabled = transparent && option.value !== 'lossless';
+            });
+            output.title = transparent ? '透明背景必须使用无损 PNG' : '';
         }
 
         function updateImageEditStreamState() {
@@ -1753,7 +1755,7 @@
             const activeKey = getActiveKey();
             const prompt = document.getElementById('imageEditPrompt').value.trim();
             if (!activeKey) return showToast('请先添加并选择一个有效的 API Key', 'error');
-            if (!prompt) return showToast('请输入图片编辑要求', 'error');
+            if (!prompt) return showToast('请输入生图提示词', 'error');
 
             const button = document.getElementById('generateEditedImageButton');
             const status = document.getElementById('imageEditStatus');
@@ -1772,15 +1774,14 @@
                     {
                         size: document.getElementById('imageEditSize').value,
                         quality: document.getElementById('imageEditQuality').value,
-                        outputFormat: document.getElementById('imageEditFormat').value,
-                        outputCompression: document.getElementById('imageEditCompression').value,
+                        outputPreset: document.getElementById('imageEditOutputPreset').value,
                         background: document.getElementById('imageEditBackground').value,
                         moderation: document.getElementById('imageEditModeration').value,
                         stream: document.getElementById('imageEditStream').checked,
                         partialImages: document.getElementById('imageEditPartialImages').value
                     }
                 );
-                if (!result.ok) throw new Error(result.error || '图片编辑失败');
+                if (!result.ok) throw new Error(result.error || '图片生成失败');
                 window.imageEditState.result = result;
                 const image = document.getElementById('imageEditResultImage');
                 image.src = `${result.uri}?t=${Date.now()}`;
@@ -1792,8 +1793,8 @@
                 document.getElementById('imageEditResultMeta').textContent =
                     `请求 ${requested} → 实际 ${actual} · ${String(result.format).toUpperCase()} · ${formatImageFileSize(result.sizeBytes)}${partial}`;
                 document.getElementById('imageEditResult').classList.remove('is-empty');
-                status.textContent = '合成完成';
-                showToast('图片合成完成');
+                status.textContent = '生成完成';
+                showToast('图片生成完成');
             } catch (error) {
                 status.textContent = error.message || String(error);
                 showToast(status.textContent, 'error');

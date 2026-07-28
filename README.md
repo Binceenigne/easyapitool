@@ -13,7 +13,8 @@ Windows API 密钥额度监控工具。桌面壳使用 Python 3.12、pywebview�
 - SQLite 保留最近 30 天的用量采样和每日明细。
 - API Key 使用当前 Windows 用户的 DPAPI 加密后再写入 SQLite。
 - 生图模式默认使用顶部当前选中的 API Key；无参考图时调用 `/images/generations`，添加最多 16 张参考图后调用 `/images/edits`。
-- 支持 PNG/JPEG/WebP、输出压缩、背景、审核、流式响应和 0–3 张 partial 预览参数；界面同时显示请求尺寸/质量与服务端实际尺寸/质量。
+- 图片接口始终请求 PNG；本机可按无损 PNG、大（JPEG 90）、中（JPEG 75）、小（JPEG 55）四档落盘。透明背景强制使用无损 PNG。
+- 审核默认使用低强度，并默认开启流式响应和 3 张 partial 过程预览；界面同时显示请求尺寸/质量与服务端实际尺寸/质量。
 - 关闭按钮可设置为关闭应用、最小化到系统托盘或每次询问。
 - 可设置随 Windows 开机自动启动。
 - 从 GitHub Release 检查、下载并安装新版本，下载进度使用自适应点阵进度条。
@@ -25,7 +26,9 @@ Windows API 密钥额度监控工具。桌面壳使用 Python 3.12、pywebview�
 
 ## 生图参数兼容性
 
-EasyClin 会把图片请求转换到内部图片工具，并非所有 Images API 参数都会原样执行。当前实测：`output_format`、`output_compression`、`background`、`moderation`、`stream` 生效；`partial_images` 可用但实际返回数量可能不同；`size` 和 `quality` 可能被服务端覆盖。`n` 已确认不支持，`user` 疑似被忽略，因此界面不提供这两个参数。
+EasyClin 会把图片请求转换到内部图片工具，并非所有 Images API 参数都会原样执行。当前实测：`background`、`moderation`、`stream` 生效；`partial_images` 可用但实际返回数量可能不同。尺寸支持提交符合 GPT Image 2 限制的自定义宽高，但 EasyClin 可能重写请求值，例如 `768x1024` 实测返回 `1254x1254`，因此不能视为严格透传。`quality` 表示模型生成细节/推理强度，主要影响视觉质量、耗时和成本，并不直接指定像素分辨率；EasyClin 也可能覆盖该值，例如 `low` 实测变为 `auto`。`n` 已确认不支持，`user` 疑似被忽略，因此界面不提供这两个参数。
+
+为保证透明通道与输出大小行为稳定，应用向 EasyClin 固定发送 `output_format=png`，收到最终图后再由本机执行 PNG 无损保存或 JPEG 90/75/55 压缩。选择透明背景时，界面和后端都会强制使用无损 PNG，避免 JPEG 丢失 Alpha 通道。
 
 ## 开发运行
 

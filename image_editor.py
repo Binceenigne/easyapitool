@@ -22,6 +22,12 @@ CONTENT_TYPES = {
     ".png": "image/png",
     ".webp": "image/webp",
 }
+OUTPUT_PRESETS = {
+    "lossless": ("png", None),
+    "large": ("jpeg", 90),
+    "medium": ("jpeg", 75),
+    "small": ("jpeg", 55),
+}
 
 
 @dataclass(frozen=True)
@@ -29,6 +35,7 @@ class ImageGenerationRequest:
     prompt: str
     image_paths: tuple[Path, ...]
     fields: dict[str, Any]
+    output_preset: str
     output_format: str
     requested_size: str
     requested_quality: str
@@ -50,9 +57,9 @@ def prepare_image_generation(
 ) -> ImageGenerationRequest:
     clean_prompt = str(prompt or "").strip()
     if not clean_prompt:
-        raise ValueError("请输入图片编辑要求")
+        raise ValueError("请输入生图提示词")
     if len(clean_prompt) > 32_000:
-        raise ValueError("图片编辑要求不能超过 32000 个字符")
+        raise ValueError("生图提示词不能超过 32000 个字符")
     if not isinstance(image_paths, list) or len(image_paths) > 16:
         raise ValueError("参考图片不能超过 16 张")
 
@@ -73,15 +80,16 @@ def prepare_image_generation(
         valid_paths.append(image_path)
 
     clean_options = options if isinstance(options, dict) else {}
-    output_format = str(clean_options.get("outputFormat") or "png").lower()
+    output_preset = str(clean_options.get("outputPreset") or "lossless").lower()
     quality = str(clean_options.get("quality") or "auto").lower()
     size = str(clean_options.get("size") or "auto").lower()
     background = str(clean_options.get("background") or "auto").lower()
-    moderation = str(clean_options.get("moderation") or "auto").lower()
+    moderation = str(clean_options.get("moderation") or "low").lower()
     stream = bool(clean_options.get("stream"))
     partial_images = int(_number(clean_options.get("partialImages"), 0))
-    if output_format not in {"png", "jpeg", "webp"}:
-        raise ValueError("无效的输出格式")
+    if output_preset not in OUTPUT_PRESETS:
+        raise ValueError("无效的输出大小")
+    output_format, _jpeg_quality = OUTPUT_PRESETS[output_preset]
     if quality not in {"low", "medium", "high", "auto"}:
         raise ValueError("无效的图片质量")
     if size != "auto":
@@ -98,8 +106,10 @@ def prepare_image_generation(
             or not 655_360 <= pixels <= 8_294_400
         ):
             raise ValueError("图片尺寸不符合 GPT Image 2 的边长、比例或像素限制")
-    if background not in {"opaque", "auto"}:
-        raise ValueError("gpt-image-2 仅支持自动或不透明背景")
+    if background not in {"transparent", "opaque", "auto"}:
+        raise ValueError("无效的背景模式")
+    if background == "transparent" and output_preset != "lossless":
+        raise ValueError("透明背景只能使用无损 PNG 输出")
     if moderation not in {"low", "auto"}:
         raise ValueError("无效的审核级别")
     if not 0 <= partial_images <= 3:
@@ -110,23 +120,18 @@ def prepare_image_generation(
         "prompt": clean_prompt,
         "quality": quality,
         "size": size,
-        "output_format": output_format,
+        "output_format": "png",
         "background": background,
         "moderation": moderation,
         "stream": stream,
     }
     if stream:
         fields["partial_images"] = partial_images
-    if output_format in {"jpeg", "webp"}:
-        compression = int(_number(clean_options.get("outputCompression"), 90))
-        if not 0 <= compression <= 100:
-            raise ValueError("输出压缩率必须在 0 到 100 之间")
-        fields["output_compression"] = str(compression)
-
     return ImageGenerationRequest(
         prompt=clean_prompt,
         image_paths=tuple(valid_paths),
         fields=fields,
+        output_preset=output_preset,
         output_format=output_format,
         requested_size=size,
         requested_quality=quality,
@@ -294,31 +299,50 @@ class ImageGenerationService:
             response = self.client.generate_image(base_url, secret, request.fields)
         image_data = ((response.get("data") or [{}])[0] or {}).get("b64_json")
         if not image_data:
-            raise RuntimeError("图片编辑接口未返回图片数据")
+            raise RuntimeError("生图接口未返回图片数据")
         try:
             result_bytes = base64.b64decode(image_data, validate=True)
         except binascii.Error as exc:
-            raise RuntimeError("图片编辑接口返回了无效图片数据") from exc
+            raise RuntimeError("生图接口返回了无效图片数据") from exc
 
-        actual_format = str(response.get("output_format") or request.output_format).lower()
-        with Image.open(io.BytesIO(result_bytes)) as result_image:
+        with Image.open(io.BytesIO(result_bytes)) as source_image:
+            source_image.load()
+            result_image = source_image.copy()
             width, height = result_image.size
-            verified_format = str(result_image.format or actual_format).lower()
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        suffix = {"jpeg": ".jpg", "webp": ".webp"}.get(actual_format, ".png")
+        suffix = ".png" if request.output_format == "png" else ".jpg"
         output_path = output_dir / (
             f"image-generation-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}{suffix}"
         )
-        output_path.write_bytes(result_bytes)
+        output_buffer = io.BytesIO()
+        if request.output_format == "png":
+            result_image.save(output_buffer, format="PNG")
+        else:
+            if result_image.mode in {"RGBA", "LA"} or "transparency" in result_image.info:
+                rgba_image = result_image.convert("RGBA")
+                flattened = Image.new("RGB", rgba_image.size, "white")
+                flattened.paste(rgba_image, mask=rgba_image.getchannel("A"))
+                result_image = flattened
+            else:
+                result_image = result_image.convert("RGB")
+            result_image.save(
+                output_buffer,
+                format="JPEG",
+                quality=OUTPUT_PRESETS[request.output_preset][1],
+                optimize=True,
+            )
+        output_bytes = output_buffer.getvalue()
+        output_path.write_bytes(output_bytes)
         return {
             "ok": True,
             "path": str(output_path),
             "uri": output_path.as_uri(),
             "width": width,
             "height": height,
-            "sizeBytes": len(result_bytes),
-            "format": verified_format,
+            "sizeBytes": len(output_bytes),
+            "format": request.output_format,
+            "outputPreset": request.output_preset,
             "quality": response.get("quality") or request.fields["quality"],
             "requestedQuality": request.requested_quality,
             "requestedSize": request.requested_size,

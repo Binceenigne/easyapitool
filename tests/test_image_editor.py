@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import tempfile
 import unittest
@@ -12,6 +13,26 @@ import image_editor
 
 
 class ImageEditorTests(unittest.TestCase):
+    def test_output_presets_use_fixed_png_api_requests(self):
+        self.assertEqual(
+            image_editor.OUTPUT_PRESETS,
+            {
+                "lossless": ("png", None),
+                "large": ("jpeg", 90),
+                "medium": ("jpeg", 75),
+                "small": ("jpeg", 55),
+            },
+        )
+        for preset, (output_format, _quality) in image_editor.OUTPUT_PRESETS.items():
+            request = image_editor.prepare_image_generation(
+                "Generate an image",
+                [],
+                {"outputPreset": preset},
+            )
+            self.assertEqual(request.fields["output_format"], "png")
+            self.assertEqual(request.output_format, output_format)
+            self.assertEqual(request.output_preset, preset)
+
     def test_client_posts_all_supported_generation_parameters_as_json(self):
         class FakeResponse:
             def __enter__(self):
@@ -29,8 +50,7 @@ class ImageEditorTests(unittest.TestCase):
             "prompt": "Generate a test image",
             "size": "768x1024",
             "quality": "low",
-            "output_format": "webp",
-            "output_compression": 73,
+            "output_format": "png",
             "background": "opaque",
             "moderation": "low",
             "stream": False,
@@ -115,8 +135,7 @@ class ImageEditorTests(unittest.TestCase):
                 {
                     "size": "768x1024",
                     "quality": "low",
-                    "outputFormat": "webp",
-                    "outputCompression": 73,
+                    "outputPreset": "medium",
                     "background": "opaque",
                     "moderation": "low",
                 },
@@ -136,12 +155,79 @@ class ImageEditorTests(unittest.TestCase):
             self.assertEqual(result["requestedQuality"], "low")
             self.assertEqual(result["quality"], "auto")
             self.assertEqual(result["referenceCount"], 0)
-            self.assertEqual(request.fields["output_format"], "webp")
-            self.assertEqual(request.fields["output_compression"], "73")
+            self.assertEqual(request.fields["output_format"], "png")
+            self.assertNotIn("output_compression", request.fields)
             self.assertEqual(request.fields["background"], "opaque")
             self.assertEqual(request.fields["moderation"], "low")
+            self.assertEqual(result["format"], "jpeg")
+            self.assertEqual(result["outputPreset"], "medium")
+            self.assertEqual(Path(result["path"]).suffix, ".jpg")
+            with Image.open(result["path"]) as saved_image:
+                self.assertEqual(saved_image.format, "JPEG")
             client.generate_image.assert_called_once()
             client.edit_images.assert_not_called()
+
+    def test_jpeg_presets_use_backend_compression_quality(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = io.BytesIO()
+            Image.new("RGBA", (64, 64), (20, 40, 60, 128)).save(source, format="PNG")
+            encoded = base64.b64encode(source.getvalue()).decode("ascii")
+            client = SimpleNamespace(
+                generate_image=Mock(return_value={"data": [{"b64_json": encoded}]}),
+                edit_images=Mock(),
+            )
+            service = image_editor.ImageGenerationService(client)
+
+            for preset, expected_quality in {"large": 90, "medium": 75, "small": 55}.items():
+                request = image_editor.prepare_image_generation(
+                    "Generate an image",
+                    [],
+                    {"outputPreset": preset},
+                )
+                with __import__("unittest.mock").mock.patch.object(
+                    Image.Image,
+                    "save",
+                    autospec=True,
+                    wraps=Image.Image.save,
+                ) as save_image:
+                    result = service.generate(
+                        "https://example.test/v1",
+                        "secret",
+                        request,
+                        root / preset,
+                    )
+
+                jpeg_calls = [
+                    call for call in save_image.call_args_list
+                    if call.kwargs.get("format") == "JPEG"
+                ]
+                self.assertEqual(len(jpeg_calls), 1)
+                self.assertEqual(jpeg_calls[0].kwargs["quality"], expected_quality)
+                self.assertEqual(result["format"], "jpeg")
+                self.assertEqual(result["outputPreset"], preset)
+
+    def test_transparent_background_requires_lossless_output(self):
+        with self.assertRaisesRegex(ValueError, "透明背景只能使用无损 PNG 输出"):
+            image_editor.prepare_image_generation(
+                "Generate a transparent image",
+                [],
+                {"background": "transparent", "outputPreset": "large"},
+            )
+
+        request = image_editor.prepare_image_generation(
+            "Generate a transparent image",
+            [],
+            {"background": "transparent", "outputPreset": "lossless"},
+        )
+        self.assertEqual(request.fields["background"], "transparent")
+        self.assertEqual(request.fields["output_format"], "png")
+        self.assertEqual(request.output_format, "png")
+
+    def test_moderation_defaults_to_low(self):
+        request = image_editor.prepare_image_generation("Generate an image", [], {})
+
+        self.assertEqual(request.fields["moderation"], "low")
 
     def test_prepare_accepts_stream_and_partial_images(self):
         request = image_editor.prepare_image_generation(
