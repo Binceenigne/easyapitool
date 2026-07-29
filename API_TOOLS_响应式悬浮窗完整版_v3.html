@@ -936,10 +936,16 @@
                             <strong>参考图 <span>（可选）</span></strong>
                             <small id="editImageCount">0/16</small>
                         </div>
-                        <div id="editImageList"></div>
-                        <button type="button" id="editImageAddTile" onclick="chooseEditImages()" title="添加参考图" aria-label="添加参考图">
-                            <i data-lucide="image-plus" aria-hidden="true"></i>
-                        </button>
+                        <div class="image-edit-track">
+                            <div id="editImageList">
+                                <button type="button" id="editImageAddTile" onclick="chooseEditImages()" title="添加参考图" aria-label="添加参考图">
+                                    <i data-lucide="image-plus" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                            <div id="editImageScrollbar" class="image-edit-scrollbar" hidden aria-hidden="true">
+                                <span id="editImageScrollbarThumb"></span>
+                            </div>
+                        </div>
                     </div>
 
                     <label class="image-edit-prompt">
@@ -1717,13 +1723,90 @@
                 : `${Math.max(1, Math.round(value / 1024))} KB`;
         }
 
-        function renderEditImageList() {
+        function syncEditImageScrollbar() {
+            const list = document.getElementById('editImageList');
+            const scrollbar = document.getElementById('editImageScrollbar');
+            const thumb = document.getElementById('editImageScrollbarThumb');
+            if (!list || !scrollbar || !thumb) return;
+            const maximumScrollLeft = Math.max(0, list.scrollWidth - list.clientWidth);
+            scrollbar.hidden = maximumScrollLeft <= 1;
+            if (scrollbar.hidden) return;
+            const trackWidth = scrollbar.clientWidth;
+            const thumbWidth = Math.max(24, trackWidth * list.clientWidth / list.scrollWidth);
+            const maximumThumbLeft = Math.max(0, trackWidth - thumbWidth);
+            const thumbLeft = maximumScrollLeft
+                ? list.scrollLeft / maximumScrollLeft * maximumThumbLeft
+                : 0;
+            thumb.style.width = `${thumbWidth}px`;
+            thumb.style.transform = `translateX(${thumbLeft}px)`;
+        }
+
+        function initializeEditImageScrollbar() {
+            const list = document.getElementById('editImageList');
+            const scrollbar = document.getElementById('editImageScrollbar');
+            const thumb = document.getElementById('editImageScrollbarThumb');
+            if (!list || !scrollbar || !thumb || scrollbar.dataset.ready) return;
+            scrollbar.dataset.ready = 'true';
+            list.addEventListener('scroll', syncEditImageScrollbar, { passive: true });
+            list.addEventListener('wheel', event => {
+                const maximumScrollLeft = Math.max(0, list.scrollWidth - list.clientWidth);
+                if (!maximumScrollLeft) return;
+                const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+                const nextScrollLeft = Math.max(0, Math.min(maximumScrollLeft, list.scrollLeft + delta));
+                if (nextScrollLeft === list.scrollLeft) return;
+                list.scrollLeft = nextScrollLeft;
+                syncEditImageScrollbar();
+                event.preventDefault();
+            }, { passive: false });
+
+            let dragging = false;
+            let pointerOffset = 0;
+            const moveThumb = clientX => {
+                const trackRect = scrollbar.getBoundingClientRect();
+                const thumbWidth = thumb.getBoundingClientRect().width;
+                const maximumThumbLeft = Math.max(0, trackRect.width - thumbWidth);
+                const thumbLeft = Math.max(0, Math.min(maximumThumbLeft, clientX - trackRect.left - pointerOffset));
+                const maximumScrollLeft = Math.max(0, list.scrollWidth - list.clientWidth);
+                list.scrollLeft = maximumThumbLeft
+                    ? thumbLeft / maximumThumbLeft * maximumScrollLeft
+                    : 0;
+                syncEditImageScrollbar();
+            };
+            scrollbar.addEventListener('pointerdown', event => {
+                event.preventDefault();
+                dragging = true;
+                const thumbRect = thumb.getBoundingClientRect();
+                pointerOffset = event.target === thumb
+                    ? event.clientX - thumbRect.left
+                    : thumbRect.width / 2;
+                scrollbar.setPointerCapture(event.pointerId);
+                moveThumb(event.clientX);
+            });
+            scrollbar.addEventListener('pointermove', event => {
+                if (dragging) moveThumb(event.clientX);
+            });
+            const stopDragging = event => {
+                dragging = false;
+                if (scrollbar.hasPointerCapture(event.pointerId)) scrollbar.releasePointerCapture(event.pointerId);
+            };
+            scrollbar.addEventListener('pointerup', stopDragging);
+            scrollbar.addEventListener('pointercancel', stopDragging);
+            if ('ResizeObserver' in window) {
+                const observer = new ResizeObserver(syncEditImageScrollbar);
+                observer.observe(list);
+                window.__editImageScrollbarResizeObserver = observer;
+            }
+            syncEditImageScrollbar();
+        }
+
+        function renderEditImageList(scrollToEnd = false) {
             const files = window.imageEditState.files;
             const selection = document.getElementById('editImageSelection');
             const list = document.getElementById('editImageList');
+            const addTile = document.getElementById('editImageAddTile');
+            const previousScrollLeft = list.scrollLeft;
             selection.classList.toggle('is-empty', files.length === 0);
             document.getElementById('editImageCount').textContent = `${files.length}/16`;
-            document.getElementById('editImageAddTile').hidden = files.length >= 16;
             list.replaceChildren();
             files.forEach((file, index) => {
                 const item = document.createElement('div');
@@ -1744,7 +1827,14 @@
                 item.append(preview, name, remove);
                 list.append(item);
             });
+            addTile.hidden = files.length >= 16;
+            list.append(addTile);
             renderLucideIcons();
+            const maximumScrollLeft = Math.max(0, list.scrollWidth - list.clientWidth);
+            list.scrollLeft = scrollToEnd
+                ? maximumScrollLeft
+                : Math.min(previousScrollLeft, maximumScrollLeft);
+            syncEditImageScrollbar();
         }
 
         function appendReferenceImage(file) {
@@ -1771,7 +1861,7 @@
                     sizeBytes: result.files?.[index]?.sizeBytes || 0,
                     uri: result.files?.[index]?.uri || `file:///${path.replace(/\\/g, '/')}`
                 }));
-                renderEditImageList();
+                renderEditImageList(true);
                 if (result.warning) showToast(result.warning, 'info');
                 else if (result.paths.length > available) {
                     showToast(`参考图片最多 16 张，已仅导入前 ${available} 张`, 'info');
@@ -1823,7 +1913,7 @@
                     showToast(error.message || String(error), 'error');
                 }
             }
-            renderEditImageList();
+            renderEditImageList(true);
             document.getElementById('imageEditStatus').textContent = window.imageEditState.files.length
                 ? `已选择 ${window.imageEditState.files.length} 张参考图片`
                 : '填写提示词即可生成，参考图可选';
@@ -2768,6 +2858,7 @@
             runAuthAndInitialize();
             void loadImageGenerationHistory();
             initializeImageViewerInteractions();
+            initializeEditImageScrollbar();
             updateImageGenerationControlSummary();
 
             window.addEventListener('pywebviewready', () => {
