@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="assets/app.css?v=30">
+    <link rel="stylesheet" href="assets/app.css?v=31">
     <script defer src="vendor/lucide/lucide.min.js"></script>
     <style media="not all" data-legacy-styles-disabled>
         * {
@@ -1477,13 +1477,9 @@
             <div class="app-modal-panel image-prompt-modal-panel">
                 <div class="app-modal-header">
                     <div>
-                        <button type="button" class="image-prompt-back-button" onclick="closeImagePromptModal()" title="返回图片生成" aria-label="返回图片生成">
-                            <i data-lucide="arrow-left" aria-hidden="true"></i><span>返回</span>
-                        </button>
                         <i data-lucide="text-cursor-input" class="icon-14 color-brand" aria-hidden="true"></i>
                         <div>
                             <h2 id="imagePromptModalTitle">编辑提示词</h2>
-                            <p>支持粘贴或拖入参考图片</p>
                         </div>
                     </div>
                     <button type="button" onclick="closeImagePromptModal()" title="关闭提示词编辑器" aria-label="关闭提示词编辑器">
@@ -2090,13 +2086,8 @@
                         overlay.textContent = '查看图片';
                         card.addEventListener('click', () => openImageResultModal(item.result, set.setId, item.itemIndex));
                     } else if (item.status === 'partial') {
-                        overlay.innerHTML = `${iconMarkup('loader-circle', 'icon-16 is-spinning')}<em>查看过程图</em>`;
-                        card.addEventListener('click', () => openImageResultModal({
-                            path: item.path,
-                            previewUri: item.previewUri,
-                            uri: item.uri,
-                            status: 'partial'
-                        }, set.setId, item.itemIndex));
+                        overlay.innerHTML = `${iconMarkup('loader-circle', 'icon-16 is-spinning')}<em>生成中</em>`;
+                        card.disabled = true;
                     } else if (item.status === 'failed') {
                         overlay.textContent = item.error || '生成失败';
                         card.disabled = true;

@@ -268,6 +268,93 @@ class ImageEditorTests(unittest.TestCase):
         self.assertEqual(result["output_format"], "webp")
         self.assertEqual(result["quality"], "auto")
 
+    def test_stream_parser_accepts_nested_completed_image(self):
+        final_image = base64.b64encode(b"nested-final").decode("ascii")
+        lines = [
+            (
+                'data: {"type":"image_generation.completed","data":[{"b64_json":"'
+                + final_image
+                + '"}],"output_format":"png"}\n'
+            ).encode("utf-8"),
+            b"data: [DONE]\n",
+        ]
+
+        result = image_editor.ImageGenerationClient._read_response(lines, stream=True)
+
+        self.assertEqual(result["data"][0]["b64_json"], final_image)
+        self.assertEqual(result["output_format"], "png")
+
+    def test_stream_parser_accepts_plain_json_final_payload(self):
+        final_image = base64.b64encode(b"plain-final").decode("ascii")
+        lines = [
+            ('{"data":[{"b64_json":"' + final_image + '"}]}\n').encode("utf-8")
+        ]
+
+        result = image_editor.ImageGenerationClient._read_response(lines, stream=True)
+
+        self.assertEqual(result["data"][0]["b64_json"], final_image)
+
+    def test_stream_parser_accepts_named_sse_completed_event(self):
+        final_image = base64.b64encode(b"named-final").decode("ascii")
+        lines = [
+            b"event: image_generation.completed\n",
+            ('data: {"data":[{"b64_json":"' + final_image + '"}]}\n').encode("utf-8"),
+            b"\n",
+        ]
+
+        result = image_editor.ImageGenerationClient._read_response(lines, stream=True)
+
+        self.assertEqual(result["data"][0]["b64_json"], final_image)
+
+    def test_stream_parser_never_uses_partial_as_final_image(self):
+        partial_image = base64.b64encode(b"last-partial").decode("ascii")
+        lines = [
+            (
+                'data: {"type":"image_generation.partial_image","b64_json":"'
+                + partial_image
+                + '"}\n'
+            ).encode("utf-8"),
+            b"data: [DONE]\n",
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "未返回最终图片"):
+            image_editor.ImageGenerationClient._read_response(lines, stream=True)
+
+    def test_stream_parser_promotes_last_partial_after_explicit_completion(self):
+        final_image = base64.b64encode(b"completed-partial").decode("ascii")
+        lines = [
+            (
+                'data: {"type":"image_generation.partial_image","b64_json":"'
+                + final_image
+                + '"}\n'
+            ).encode("utf-8"),
+            b'event: image_generation.completed\n',
+            b'data: {"usage":{"total_tokens":42}}\n',
+            b"\n",
+        ]
+
+        result = image_editor.ImageGenerationClient._read_response(lines, stream=True)
+
+        self.assertEqual(result["data"][0]["b64_json"], final_image)
+        self.assertEqual(result["usage"], {"total_tokens": 42})
+
+    def test_stream_parser_accepts_named_completion_with_done_payload(self):
+        final_image = base64.b64encode(b"named-done-final").decode("ascii")
+        lines = [
+            (
+                'data: {"type":"image_generation.partial_image","b64_json":"'
+                + final_image
+                + '"}\n'
+            ).encode("utf-8"),
+            b"event: image_generation.completed\n",
+            b"data: [DONE]\n",
+            b"\n",
+        ]
+
+        result = image_editor.ImageGenerationClient._read_response(lines, stream=True)
+
+        self.assertEqual(result["data"][0]["b64_json"], final_image)
+
     def test_service_persists_partial_before_returning_final_image(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

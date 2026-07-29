@@ -1301,35 +1301,6 @@ html.dark #keySwitcherMenu {
   line-height: 1.7;
 }
 
-.image-prompt-back-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: auto !important;
-  height: 30px;
-  min-width: 66px;
-  padding: 0 10px;
-  gap: 5px;
-  border-right: 1px solid var(--border-soft);
-  color: var(--text-soft) !important;
-}
-
-.image-prompt-back-button:hover {
-  background: var(--surface-strong) !important;
-  color: var(--brand) !important;
-}
-
-.image-prompt-back-button svg {
-  width: 14px;
-  height: 14px;
-}
-
-.image-prompt-back-button span {
-  font-size: 10px;
-  font-weight: 700;
-}
-
 .image-generation-footer {
   display: grid;
   margin-top: auto;
@@ -1798,18 +1769,23 @@ html.dark #keySwitcherMenu {
   font-style: normal;
 }
 
-.image-generation-item.is-completed > span,
-.image-generation-item.is-partial > span {
+.image-generation-item.is-completed > span {
   opacity: 0;
   background: rgba(2, 6, 23, 0.42);
   transition: opacity 140ms ease;
 }
 
 .image-generation-item.is-completed:hover > span,
-.image-generation-item.is-completed:focus-visible > span,
-.image-generation-item.is-partial:hover > span,
-.image-generation-item.is-partial:focus-visible > span {
+.image-generation-item.is-completed:focus-visible > span {
   opacity: 1;
+}
+
+.image-generation-item:is(.is-queued, .is-running, .is-partial) {
+  cursor: wait;
+}
+
+.image-generation-item.is-partial > span {
+  background: rgba(2, 6, 23, 0.46);
 }
 
 .image-generation-item.is-failed > span {

@@ -520,28 +520,97 @@ class ImageGenerationClient:
         if not stream:
             return json.loads(response.read().decode("utf-8"))
 
+        def image_data(payload: Any) -> str:
+            if isinstance(payload, dict):
+                direct = payload.get("b64_json")
+                if isinstance(direct, str) and direct:
+                    return direct
+                for key in ("data", "result", "image", "output", "response"):
+                    nested = image_data(payload.get(key))
+                    if nested:
+                        return nested
+            elif isinstance(payload, list):
+                for item in payload:
+                    nested = image_data(item)
+                    if nested:
+                        return nested
+            return ""
+
         completed: dict[str, Any] | None = None
+        completed_image = ""
+        last_partial_image = ""
         partial_count = 0
-        for raw_line in response:
-            line = raw_line.decode("utf-8", "replace").strip()
-            if not line.startswith("data:"):
-                continue
-            payload = line[5:].strip()
-            if not payload or payload == "[DONE]":
-                continue
+
+        def process_event(payload: str, sse_event_type: str = "") -> None:
+            nonlocal completed, completed_image, last_partial_image, partial_count
+            event_name = sse_event_type.strip().lower()
+            named_completion = event_name in {"completed", "complete", "done"} or event_name.endswith(
+                (".completed", ".complete", ".done")
+            )
+            if not payload:
+                return
+            if payload == "[DONE]":
+                if named_completion:
+                    completed = {"type": event_name}
+                return
             event = json.loads(payload)
-            event_type = str(event.get("type") or "")
-            if event_type == "image_generation.partial_image":
+            event_type = str(event.get("type") or event_name).strip().lower()
+            encoded_image = image_data(event)
+            if event_type.endswith(".partial_image"):
                 partial_count += 1
-                partial_data = str(event.get("b64_json") or "")
-                if partial_data and on_partial is not None:
-                    on_partial(partial_data, partial_count)
-            elif event_type == "image_generation.completed":
+                if encoded_image:
+                    last_partial_image = encoded_image
+                if encoded_image and on_partial is not None:
+                    on_partial(encoded_image, partial_count)
+                return
+            is_completed = event_type in {"completed", "complete", "done"} or event_type.endswith(
+                (".completed", ".complete", ".done")
+            )
+            is_plain_final = not event_type and encoded_image
+            if is_completed:
                 completed = event
-        if completed is None or not completed.get("b64_json"):
+                completed_image = encoded_image
+            elif is_plain_final:
+                completed = event
+                completed_image = encoded_image
+
+        pending_event_type = ""
+        pending_data: list[str] = []
+
+        def flush_pending() -> None:
+            nonlocal pending_event_type, pending_data
+            if pending_data:
+                process_event("\n".join(pending_data), pending_event_type)
+            pending_event_type = ""
+            pending_data = []
+
+        for raw_line in response:
+            line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
+            if not line:
+                flush_pending()
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("event:"):
+                pending_event_type = line[6:].strip()
+                continue
+            if line.startswith("data:"):
+                pending_data.append(line[5:].lstrip())
+                try:
+                    flush_pending()
+                except json.JSONDecodeError:
+                    continue
+                continue
+            flush_pending()
+            if line.lstrip().startswith("{"):
+                process_event(line.strip())
+        flush_pending()
+        if completed is not None and not completed_image and last_partial_image:
+            completed_image = last_partial_image
+        if completed is None or not completed_image:
             raise RuntimeError("流式生图接口未返回最终图片")
         return {
-            "data": [{"b64_json": completed["b64_json"]}],
+            "data": [{"b64_json": completed_image}],
             "background": completed.get("background"),
             "output_format": completed.get("output_format"),
             "quality": completed.get("quality"),
