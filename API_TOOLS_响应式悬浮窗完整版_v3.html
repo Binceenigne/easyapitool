@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="assets/app.css?v=29">
+    <link rel="stylesheet" href="assets/app.css?v=30">
     <script defer src="vendor/lucide/lucide.min.js"></script>
     <style media="not all" data-legacy-styles-disabled>
         * {
@@ -1477,6 +1477,9 @@
             <div class="app-modal-panel image-prompt-modal-panel">
                 <div class="app-modal-header">
                     <div>
+                        <button type="button" class="image-prompt-back-button" onclick="closeImagePromptModal()" title="返回图片生成" aria-label="返回图片生成">
+                            <i data-lucide="arrow-left" aria-hidden="true"></i><span>返回</span>
+                        </button>
                         <i data-lucide="text-cursor-input" class="icon-14 color-brand" aria-hidden="true"></i>
                         <div>
                             <h2 id="imagePromptModalTitle">编辑提示词</h2>
@@ -1812,9 +1815,28 @@
             const style = getComputedStyle(textarea);
             const lineHeight = Number.parseFloat(style.lineHeight) || 20;
             const verticalPadding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+            const prompt = textarea.closest('.image-edit-prompt');
+            const footer = document.querySelector('.image-generation-footer');
+            const form = document.getElementById('imageEditForm');
+            const textareaRect = textarea.getBoundingClientRect();
+            const formRect = form?.getBoundingClientRect();
+            const footerRect = footer?.getBoundingClientRect();
+            const formStyle = form ? getComputedStyle(form) : null;
+            const fixedBeforePrompt = formRect ? textareaRect.top - formRect.top : 0;
+            const footerHeight = footerRect?.height || 0;
+            const formGap = Number.parseFloat(formStyle?.rowGap || formStyle?.gap || '0');
+            const formPaddingBottom = Number.parseFloat(formStyle?.paddingBottom || '0');
+            const containerHeight = formRect?.height || window.innerHeight;
+            const availableHeight = Math.max(
+                lineHeight + verticalPadding,
+                containerHeight - fixedBeforePrompt - footerHeight - formGap - formPaddingBottom - 2
+            );
+            const minimum = Math.min(Math.ceil(lineHeight * 7 + verticalPadding), Math.floor(availableHeight));
+            const maximum = Math.max(minimum, Math.floor(availableHeight));
             return {
-                minimum: Math.ceil(lineHeight * 7 + verticalPadding),
-                maximum: Math.ceil(lineHeight * 12 + verticalPadding)
+                minimum,
+                maximum,
+                expandThreshold: Math.max(minimum, Math.floor(maximum * 0.75))
             };
         }
 
@@ -1822,17 +1844,21 @@
             const textarea = document.getElementById('imageEditPrompt');
             const metrics = imagePromptMetrics(textarea);
             textarea.style.height = 'auto';
-            const nextHeight = Math.min(metrics.maximum, Math.max(metrics.minimum, textarea.scrollHeight));
+            const contentHeight = Math.max(metrics.minimum, textarea.scrollHeight);
+            const nextHeight = Math.min(metrics.maximum, contentHeight);
             textarea.style.height = `${nextHeight}px`;
-            const overflowing = textarea.scrollHeight > metrics.maximum + 1;
+            const overflowing = contentHeight > metrics.maximum + 1;
             textarea.style.overflowY = overflowing ? 'auto' : 'hidden';
-            document.getElementById('expandImagePromptButton').hidden = !overflowing;
+            document.getElementById('expandImagePromptButton').hidden = contentHeight < metrics.expandThreshold;
         }
 
         function openImagePromptModal() {
+            const modal = document.getElementById('imagePromptModal');
+            const appMain = document.getElementById('appMain');
+            if (modal && appMain && modal.parentElement !== appMain) appMain.append(modal);
             const modalTextarea = document.getElementById('imagePromptModalTextarea');
             modalTextarea.value = document.getElementById('imageEditPrompt').value;
-            openAnimatedModal(document.getElementById('imagePromptModal'));
+            openAnimatedModal(modal);
             renderLucideIcons();
             requestAnimationFrame(() => modalTextarea.focus());
         }
@@ -2773,6 +2799,7 @@
                 handleResponsiveLayout();
                 positionKeySwitcherMenu();
                 positionImageGenerationPanel();
+                resizeImagePrompt();
             }, { passive: true });
             if ('ResizeObserver' in window) {
                 const rootResizeObserver = new ResizeObserver(handleResponsiveLayout);

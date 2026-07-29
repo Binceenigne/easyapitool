@@ -988,7 +988,7 @@ html.dark #keySwitcherMenu {
   min-height: 0;
   padding: 12px;
   gap: 10px;
-  overflow-y: auto;
+  overflow: hidden;
   border-right: 1px solid var(--border);
   background: var(--surface-soft);
 }
@@ -1210,6 +1210,8 @@ html.dark #keySwitcherMenu {
 
 .image-edit-prompt {
   display: grid;
+  flex: 0 1 auto;
+  min-height: 0;
   gap: 4px;
 }
 
@@ -1264,7 +1266,9 @@ html.dark #keySwitcherMenu {
   display: none !important;
 }
 
-.app-modal.image-prompt-modal {
+#appMain > #imagePromptModal {
+  position: absolute;
+  inset: 0;
   padding: 0;
 }
 
@@ -1295,6 +1299,35 @@ html.dark #keySwitcherMenu {
   color: var(--text);
   font-size: 12px;
   line-height: 1.7;
+}
+
+.image-prompt-back-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: auto !important;
+  height: 30px;
+  min-width: 66px;
+  padding: 0 10px;
+  gap: 5px;
+  border-right: 1px solid var(--border-soft);
+  color: var(--text-soft) !important;
+}
+
+.image-prompt-back-button:hover {
+  background: var(--surface-strong) !important;
+  color: var(--brand) !important;
+}
+
+.image-prompt-back-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.image-prompt-back-button span {
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .image-generation-footer {

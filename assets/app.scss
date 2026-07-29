@@ -749,7 +749,7 @@ html.dark #keySwitcherMenu {
     min-height: 0;
     padding: 12px;
     gap: 10px;
-    overflow-y: auto;
+    overflow: hidden;
     border-right: 1px solid var(--border);
     background: var(--surface-soft);
 }
@@ -892,7 +892,7 @@ html.dark #keySwitcherMenu {
 .image-edit-prompt-shell.is-dragging-image,
 #imagePromptModalTextarea.is-dragging-image { border-color: var(--brand); background: var(--brand-soft); }
 
-.image-edit-prompt { display: grid; gap: 4px; }
+.image-edit-prompt { display: grid; flex: 0 1 auto; min-height: 0; gap: 4px; }
 .image-edit-prompt > span,
 .image-generation-control-grid label > span,
 .image-count-control > span { color: var(--muted); font-size: 8px; font-weight: 700; }
@@ -926,7 +926,7 @@ html.dark #keySwitcherMenu {
 #expandImagePromptButton:hover { border-color: var(--brand); color: var(--brand); }
 #expandImagePromptButton[hidden] { display: none !important; }
 
-.app-modal.image-prompt-modal { padding: 0; }
+#appMain > #imagePromptModal { position: absolute; inset: 0; padding: 0; }
 .app-modal > .image-prompt-modal-panel {
     position: absolute;
     inset: 0;
@@ -951,6 +951,22 @@ html.dark #keySwitcherMenu {
     font-size: 12px;
     line-height: 1.7;
 }
+.image-prompt-back-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: auto !important;
+    height: 30px;
+    min-width: 66px;
+    padding: 0 10px;
+    gap: 5px;
+    border-right: 1px solid var(--border-soft);
+    color: var(--text-soft) !important;
+}
+.image-prompt-back-button:hover { background: var(--surface-strong) !important; color: var(--brand) !important; }
+.image-prompt-back-button svg { width: 14px; height: 14px; }
+.image-prompt-back-button span { font-size: 10px; font-weight: 700; }
 
 .image-generation-footer { display: grid; margin-top: auto; gap: 6px; }
 #imageEditStatus { min-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
