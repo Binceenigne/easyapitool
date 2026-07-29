@@ -1508,6 +1508,20 @@
             </div>
         </div>
 
+        <div id="imageSetDeleteModal" class="app-modal animated-modal image-set-delete-modal" hidden role="alertdialog" aria-modal="true" aria-labelledby="imageSetDeleteModalTitle" aria-describedby="imageSetDeleteModalMessage" onclick="handleImageSetDeleteModalBackdrop(event)">
+            <div class="app-modal-panel image-set-delete-modal-panel">
+                <div class="app-modal-header">
+                    <div><i data-lucide="trash-2" class="icon-14 color-critical" aria-hidden="true"></i><h2 id="imageSetDeleteModalTitle">删除图片集</h2></div>
+                    <button type="button" onclick="closeImageSetDeleteModal()" title="关闭删除确认" aria-label="关闭删除确认"><i data-lucide="x" class="icon-14" aria-hidden="true"></i></button>
+                </div>
+                <p id="imageSetDeleteModalMessage">将同时删除该轮提示词、原图和压缩预览。此操作无法撤销。</p>
+                <div class="image-set-delete-modal-actions">
+                    <button type="button" id="cancelImageSetDeleteButton" onclick="closeImageSetDeleteModal()">取消</button>
+                    <button type="button" id="confirmImageSetDeleteButton" class="is-danger" onclick="confirmDeleteImageGenerationSet()"><i data-lucide="trash-2" aria-hidden="true"></i><span>确认删除</span></button>
+                </div>
+            </div>
+        </div>
+
         <div id="updateModal" class="app-modal animated-modal" hidden role="dialog" aria-modal="true" aria-labelledby="updateModalTitle" onclick="handleAppModalBackdrop(event)">
             <div class="app-modal-panel update-modal-panel">
                 <div class="app-modal-header">
@@ -1663,6 +1677,7 @@
             viewer: { setId: '', itemIndex: -1, scale: 1, x: 0, y: 0, dragging: false },
             editSession: null,
             draftBeforeSession: null,
+            pendingDeleteSetId: '',
             aspectRatio: 'auto',
             quality: 'auto',
             outputPreset: 'lossless',
@@ -1740,6 +1755,10 @@
         }
 
         async function chooseEditImages() {
+            if (window.imageEditState.editSession) {
+                showToast('续作会自动使用上一轮图片作为参考图', 'info');
+                return;
+            }
             if (!window.pywebview?.api?.choose_edit_images) return;
             try {
                 const result = await window.pywebview.api.choose_edit_images();
@@ -1775,6 +1794,10 @@
         async function importReferenceFiles(files) {
             const imageFiles = [...files].filter(file => file.type?.startsWith('image/'));
             if (!imageFiles.length) return false;
+            if (window.imageEditState.editSession) {
+                showToast('续作会自动使用上一轮图片作为参考图', 'info');
+                return true;
+            }
             if (!window.pywebview?.api?.import_reference_image) {
                 showToast('图片导入服务尚未就绪', 'error');
                 return true;
@@ -2070,8 +2093,9 @@
                 grid.className = 'image-generation-set-grid';
                 grid.dataset.count = String(set.requestedCount);
                 set.items.forEach(item => {
-                    const card = document.createElement('button');
-                    card.type = 'button';
+                    const completed = item.status === 'completed';
+                    const card = document.createElement(completed ? 'button' : 'div');
+                    if (completed) card.type = 'button';
                     card.className = `image-generation-item is-${item.status}`;
                     card.dataset.itemIndex = String(item.itemIndex);
                     const displayUri = item.previewUri || item.result?.previewUri || item.uri;
@@ -2087,13 +2111,10 @@
                         card.addEventListener('click', () => openImageResultModal(item.result, set.setId, item.itemIndex));
                     } else if (item.status === 'partial') {
                         overlay.innerHTML = `${iconMarkup('loader-circle', 'icon-16 is-spinning')}<em>生成中</em>`;
-                        card.disabled = true;
                     } else if (item.status === 'failed') {
                         overlay.textContent = item.error || '生成失败';
-                        card.disabled = true;
                     } else {
                         overlay.innerHTML = `${iconMarkup('loader-circle', 'icon-16 is-spinning')}<em>等待生成</em>`;
-                        card.disabled = true;
                     }
                     card.append(overlay);
                     grid.append(card);
@@ -2160,8 +2181,19 @@
                 }
             }
             renderImageGenerationSets();
+            if (event.type === 'set_completed') notifyImageGenerationCompleted(set);
             refreshOpenImageViewer(set, event.itemIndex);
         };
+
+        function notifyImageGenerationCompleted(set) {
+            if (!set || set.completionNotified) return;
+            const completedCount = set.items.filter(item => item.status === 'completed').length;
+            if (!completedCount) return;
+            set.completionNotified = true;
+            showToast(completedCount === 1
+                ? '图片生成完成，可以查看大图'
+                : `${completedCount} 张图片生成完成，可以查看大图`);
+        }
 
         function syncImageGenerationResult(result) {
             if (!result?.setId) return;
@@ -2180,6 +2212,7 @@
                 error: item.error || ''
             }));
             renderImageGenerationSets();
+            notifyImageGenerationCompleted(set);
         }
 
         function generatedResultReference(result) {
@@ -2193,12 +2226,20 @@
             };
         }
 
-        function replaceGeneratedReferences(results) {
-            window.imageEditState.files = results
+        function generatedResultReferences(results) {
+            return results
                 .map(generatedResultReference)
                 .filter(Boolean)
                 .slice(0, 16);
-            renderEditImageList();
+        }
+
+        function setImageEditSessionUi(active) {
+            const placeholder = active
+                ? '请输入要调整的内容'
+                : '描述要生成的图片；也可以粘贴或拖入参考图片';
+            document.getElementById('editImageSelection').hidden = active;
+            document.getElementById('imageEditPrompt').placeholder = placeholder;
+            document.getElementById('imagePromptModalTextarea').placeholder = placeholder;
         }
 
         function enterImageEditSession(setId) {
@@ -2215,9 +2256,10 @@
             window.imageEditState.editSession = {
                 sessionId: set.sessionId || set.setId,
                 setId: set.setId,
-                roundNumber: Number(set.roundNumber) || 1
+                roundNumber: Number(set.roundNumber) || 1,
+                references: generatedResultReferences(results)
             };
-            replaceGeneratedReferences(results);
+            setImageEditSessionUi(true);
             const prompt = document.getElementById('imageEditPrompt');
             prompt.value = '';
             resizeImagePrompt();
@@ -2235,6 +2277,7 @@
                 window.imageEditState.files = [...draft.files];
                 document.getElementById('imageEditPrompt').value = draft.prompt || '';
             }
+            setImageEditSessionUi(false);
             renderEditImageList();
             resizeImagePrompt();
             document.getElementById('exitImageEditSessionButton').hidden = true;
@@ -2251,19 +2294,45 @@
             window.imageEditState.editSession = {
                 sessionId: result.sessionId,
                 setId: result.setId,
-                roundNumber: Number(result.roundNumber) || window.imageEditState.editSession.roundNumber + 1
+                roundNumber: Number(result.roundNumber) || window.imageEditState.editSession.roundNumber + 1,
+                references: generatedResultReferences(successful)
             };
-            replaceGeneratedReferences(successful);
+            setImageEditSessionUi(true);
             document.getElementById('imageEditPrompt').value = '';
             resizeImagePrompt();
             document.getElementById('imageEditHeading').textContent = `会话续作 · 第 ${window.imageEditState.editSession.roundNumber + 1} 轮`;
             document.getElementById('imageEditStatus').textContent = `第 ${window.imageEditState.editSession.roundNumber} 轮已完成，可继续追加需求`;
         }
 
-        async function deleteImageGenerationSet(setId) {
+        function deleteImageGenerationSet(setId) {
             const set = imageGenerationSetById(setId);
             if (!set || set.status === 'running') return;
-            if (!window.confirm('删除这个图片集及其原图、压缩图和轮次记录？')) return;
+            window.imageEditState.pendingDeleteSetId = setId;
+            const modal = document.getElementById('imageSetDeleteModal');
+            const appMain = document.getElementById('appMain');
+            if (modal.parentElement !== appMain) appMain.append(modal);
+            openAnimatedModal(modal);
+            renderLucideIcons();
+            requestAnimationFrame(() => document.getElementById('cancelImageSetDeleteButton').focus());
+        }
+
+        async function closeImageSetDeleteModal() {
+            window.imageEditState.pendingDeleteSetId = '';
+            await closeAnimatedModal(document.getElementById('imageSetDeleteModal'));
+        }
+
+        function handleImageSetDeleteModalBackdrop(event) {
+            if (event.target === event.currentTarget) void closeImageSetDeleteModal();
+        }
+
+        async function confirmDeleteImageGenerationSet() {
+            const setId = window.imageEditState.pendingDeleteSetId;
+            const set = imageGenerationSetById(setId);
+            if (!set || set.status === 'running') return void closeImageSetDeleteModal();
+            const confirmButton = document.getElementById('confirmImageSetDeleteButton');
+            confirmButton.disabled = true;
+            setIconLabel(confirmButton, 'loader-circle', '删除中');
+            confirmButton.querySelector('[data-lucide], svg')?.classList.add('is-spinning');
             try {
                 const result = await window.pywebview.api.delete_image_set(set.sessionId || set.setId, set.setId);
                 if (!result.ok) throw new Error(result.error || '删除图片集失败');
@@ -2271,9 +2340,13 @@
                 if (window.imageEditState.editSession?.setId === setId) exitImageEditSession();
                 if (window.imageEditState.viewer.setId === setId) await closeImageResultModal();
                 renderImageGenerationSets();
+                await closeImageSetDeleteModal();
                 showToast('图片集已删除');
             } catch (error) {
                 showToast(error.message || String(error), 'error');
+            } finally {
+                confirmButton.disabled = false;
+                setIconLabel(confirmButton, 'trash-2', '确认删除');
             }
         }
 
@@ -2410,6 +2483,18 @@
             canvas.addEventListener('pointerup', endDrag);
             canvas.addEventListener('pointercancel', endDrag);
             canvas.addEventListener('dblclick', resetImageViewer);
+            document.getElementById('imageResultModalImage').addEventListener('contextmenu', async event => {
+                event.preventDefault();
+                const path = window.imageEditState.viewerResult?.path;
+                if (!path) return;
+                try {
+                    const copied = await window.pywebview.api.copy_generated_image(path);
+                    if (!copied.ok) throw new Error(copied.error || '复制图片失败');
+                    showToast('图片已复制到剪贴板');
+                } catch (error) {
+                    showToast(error.message || String(error), 'error');
+                }
+            });
         }
 
         async function closeImageResultModal() {
@@ -2437,17 +2522,18 @@
         async function submitImageEdit(event) {
             event.preventDefault();
             if (window.imageEditState.busy) return;
-            const files = window.imageEditState.files;
+            const session = window.imageEditState.editSession;
+            const files = session ? session.references : window.imageEditState.files;
             const activeKey = getActiveKey();
             const prompt = document.getElementById('imageEditPrompt').value.trim();
             if (!activeKey) return showToast('请先添加并选择一个有效的 API Key', 'error');
             if (!prompt) return showToast('请输入生图提示词', 'error');
+            if (session && !files?.length) return showToast('上一轮参考图不可用，请重新选择续作图片集', 'error');
 
             const button = document.getElementById('generateEditedImageButton');
             const status = document.getElementById('imageEditStatus');
             const requestId = globalThis.crypto?.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`;
             const imageCount = window.imageEditState.imageCount;
-            const session = window.imageEditState.editSession;
             createImageGenerationSet(requestId, imageCount, prompt, {
                 sessionId: session?.sessionId || requestId,
                 parentSetId: session?.setId || '',
@@ -2458,7 +2544,9 @@
             closeImageGenerationControls();
             setIconLabel(button, 'loader-circle', `正在生成 ${imageCount} 张`);
             button.querySelector('[data-lucide], svg')?.classList.add('is-spinning');
-            status.textContent = files.length
+            status.textContent = session
+                ? `正在生成第 ${session.roundNumber + 1} 轮图片`
+                : files.length
                 ? `正在参考 ${files.length} 张图片生成新图`
                 : '正在根据提示词生成图片';
             try {
@@ -2481,7 +2569,6 @@
                 advanceImageEditSession(result);
                 const successCount = result.items.filter(item => item.ok).length;
                 if (!window.imageEditState.editSession) status.textContent = `已生成 ${successCount}/${result.requestedCount} 张图片`;
-                showToast(`图片生成完成，已保存 ${successCount} 张`);
             } catch (error) {
                 const failedSet = imageGenerationSetById(requestId);
                 if (failedSet) {
@@ -2768,6 +2855,7 @@
                     closeUpdateModal();
                     closeImagePromptModal();
                     closeImageResultModal();
+                    closeImageSetDeleteModal();
                 }
                 handleDevToolsSequence(event);
             });

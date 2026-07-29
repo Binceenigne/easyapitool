@@ -760,7 +760,16 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('title="关闭提示词编辑器"', page)
         self.assertNotIn('查看过程图', page)
         self.assertIn('<em>生成中</em>', page)
-        self.assertIn("card.disabled = true;", page)
+        self.assertIn("document.createElement(completed ? 'button' : 'div')", page)
+        self.assertNotIn("card.disabled = true;", page)
+        self.assertIn('id="imageSetDeleteModal"', page)
+        self.assertIn('role="alertdialog"', page)
+        self.assertNotIn("window.confirm", page)
+        self.assertIn("copy_generated_image", page)
+        self.assertIn("document.getElementById('editImageSelection').hidden = active", page)
+        self.assertIn("? '请输入要调整的内容'", page)
+        self.assertIn("const files = session ? session.references : window.imageEditState.files", page)
+        self.assertIn("references: generatedResultReferences(results)", page)
         self.assertIn("#appMain > #imagePromptModal", scss_source)
         self.assertIn("document.addEventListener('paste'", page)
         self.assertIn("import_reference_image", page)
@@ -2244,6 +2253,7 @@ class ControllerTests(unittest.TestCase):
                 "check_for_updates",
                 "choose_edit_images",
                 "complete_initialization",
+                "copy_generated_image",
                 "delete_key",
                 "delete_image_set",
                 "defer_update_restart",
@@ -2298,6 +2308,39 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(allowed["dataUrl"].startswith("data:image/png;base64,"))
         self.assertFalse(blocked["ok"])
         self.assertIn("只能读取", blocked["error"])
+
+    def test_image_to_windows_dib_removes_bitmap_file_header(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "source.png"
+            Image.new("RGB", (8, 6), "blue").save(source)
+
+            dib = app.image_to_windows_dib(source)
+
+        self.assertEqual(int.from_bytes(dib[:4], "little"), 40)
+        self.assertNotEqual(dib[:2], b"BM")
+
+    def test_copy_generated_image_allows_only_persisted_final_output(self):
+        controller = app.AppController.__new__(app.AppController)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pictures_root = root / "Pictures" / app.APP_NAME
+            pictures_root.mkdir(parents=True)
+            final_image = pictures_root / "final.png"
+            Image.new("RGB", (8, 8), "green").save(final_image)
+            partial_image = root / "image-generations" / "partials" / "partial.png"
+            partial_image.parent.mkdir(parents=True)
+            Image.new("RGB", (8, 8), "yellow").save(partial_image)
+
+            with patch("app.generated_pictures_dir", return_value=pictures_root), patch(
+                "app.copy_image_to_windows_clipboard"
+            ) as copy_to_clipboard:
+                copied = controller.copy_generated_image(str(final_image))
+                blocked = controller.copy_generated_image(str(partial_image))
+
+        self.assertTrue(copied["ok"])
+        self.assertFalse(blocked["ok"])
+        self.assertIn("最终图片", blocked["error"])
+        copy_to_clipboard.assert_called_once_with(final_image.resolve())
 
     def test_controller_lists_and_deletes_persisted_image_sets(self):
         controller = app.AppController.__new__(app.AppController)
@@ -2430,6 +2473,7 @@ class ControllerTests(unittest.TestCase):
             complete_initialization=lambda: {"local": "init"},
             choose_edit_images=lambda: {"local": "choose"},
             save_edited_image=lambda path: {"local": path},
+            copy_generated_image=lambda path: {"copied": path},
             push_image_generation_event=mock.Mock(),
         )
         api = app.RemoteWebApi(controller, rpc)
@@ -2441,6 +2485,7 @@ class ControllerTests(unittest.TestCase):
         deleted_set = api.delete_image_set("session-1", "set-1")
         choose = api.choose_edit_images()
         save = api.save_edited_image("result.png")
+        copied = api.copy_generated_image("result.png")
         window_result = api.window_action("minimize")
 
         self.assertTrue(state["isForeground"])
@@ -2463,6 +2508,7 @@ class ControllerTests(unittest.TestCase):
             {"method": "delete_image_set", "args": ("session-1", "set-1")},
         )
         self.assertEqual(save, {"local": "result.png"})
+        self.assertEqual(copied, {"copied": "result.png"})
         self.assertEqual(window_result, {"local": "minimize"})
         self.assertNotIn(
             __import__("unittest.mock").mock.call("window_action", "minimize"),

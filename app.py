@@ -114,6 +114,8 @@ RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 UPDATE_CHECK_INTERVAL = 7 * 24 * 60 * 60
 RESTART_READY_ENV = "API_TOOLS_RESTART_READY"
 MANUAL_REFRESH_COOLDOWN_SECONDS = 5
+CF_DIB = 8
+GMEM_MOVEABLE = 0x0002
 
 
 class NetworkTransportError(RuntimeError):
@@ -322,6 +324,14 @@ user32.SetWindowPos.argtypes = [
     wintypes.UINT,
 ]
 user32.SetWindowPos.restype = wintypes.BOOL
+user32.OpenClipboard.argtypes = [wintypes.HWND]
+user32.OpenClipboard.restype = wintypes.BOOL
+user32.EmptyClipboard.argtypes = []
+user32.EmptyClipboard.restype = wintypes.BOOL
+user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+user32.SetClipboardData.restype = wintypes.HANDLE
+user32.CloseClipboard.argtypes = []
+user32.CloseClipboard.restype = wintypes.BOOL
 kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
 kernel32.CreateMutexW.restype = wintypes.HANDLE
 kernel32.GetLastError.argtypes = []
@@ -338,6 +348,14 @@ kernel32.SetEvent.argtypes = [wintypes.HANDLE]
 kernel32.SetEvent.restype = wintypes.BOOL
 kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
 kernel32.WaitForSingleObject.restype = wintypes.DWORD
+kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+kernel32.GlobalAlloc.restype = wintypes.HANDLE
+kernel32.GlobalLock.argtypes = [wintypes.HANDLE]
+kernel32.GlobalLock.restype = ctypes.c_void_p
+kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+kernel32.GlobalUnlock.restype = wintypes.BOOL
+kernel32.GlobalFree.argtypes = [wintypes.HANDLE]
+kernel32.GlobalFree.restype = wintypes.HANDLE
 dwmapi = ctypes.windll.dwmapi
 dwmapi.DwmSetWindowAttribute.argtypes = [
     wintypes.HWND,
@@ -355,6 +373,48 @@ def activate_ui_window() -> bool:
         user32.ShowWindow(hwnd, SW_RESTORE)
     user32.SetForegroundWindow(hwnd)
     return True
+
+
+def image_to_windows_dib(source: Path) -> bytes:
+    bitmap = io.BytesIO()
+    with Image.open(source) as image:
+        image.convert("RGB").save(bitmap, format="BMP")
+    return bitmap.getvalue()[14:]
+
+
+def copy_image_to_windows_clipboard(source: Path) -> None:
+    dib = image_to_windows_dib(source)
+    memory = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(dib))
+    if not memory:
+        raise ctypes.WinError()
+    transferred = False
+    try:
+        pointer = kernel32.GlobalLock(memory)
+        if not pointer:
+            raise ctypes.WinError()
+        try:
+            ctypes.memmove(pointer, dib, len(dib))
+        finally:
+            kernel32.GlobalUnlock(memory)
+        opened = False
+        for _ in range(10):
+            if user32.OpenClipboard(None):
+                opened = True
+                break
+            time.sleep(0.02)
+        if not opened:
+            raise RuntimeError("剪贴板正被其他应用占用")
+        try:
+            if not user32.EmptyClipboard():
+                raise ctypes.WinError()
+            if not user32.SetClipboardData(CF_DIB, memory):
+                raise ctypes.WinError()
+            transferred = True
+        finally:
+            user32.CloseClipboard()
+    finally:
+        if not transferred:
+            kernel32.GlobalFree(memory)
 
 
 def activate_existing_instance() -> bool:
@@ -2182,6 +2242,19 @@ class AppController:
             "dataUrl": f"data:{content_type};base64,{encoded}",
         }
 
+    def copy_generated_image(self, source_path: str) -> dict[str, Any]:
+        source = Path(str(source_path or "")).resolve()
+        pictures_root = generated_pictures_dir().resolve()
+        if not source.is_file() or not source.is_relative_to(pictures_root):
+            return {"ok": False, "error": "只能复制本应用保存的最终图片"}
+        if source.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+            return {"ok": False, "error": "最终图片格式无效"}
+        try:
+            copy_image_to_windows_clipboard(source)
+        except (OSError, RuntimeError, ValueError) as exc:
+            return {"ok": False, "error": f"复制图片失败：{exc}"}
+        return {"ok": True, "path": str(source)}
+
     @staticmethod
     def _image_session_store() -> ImageSessionStore:
         return ImageSessionStore(generated_pictures_dir())
@@ -3796,6 +3869,9 @@ class WebApi:
 
     def load_generated_image(self, source_path: str) -> dict[str, Any]:
         return self._controller.load_generated_image(source_path)
+
+    def copy_generated_image(self, source_path: str) -> dict[str, Any]:
+        return self._controller.copy_generated_image(source_path)
 
     def open_generated_pictures(self) -> dict[str, Any]:
         return self._controller.open_generated_pictures()

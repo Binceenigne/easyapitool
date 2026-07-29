@@ -1744,6 +1744,10 @@ html.dark #keySwitcherMenu {
   color: var(--muted);
 }
 
+.image-generation-item:not(button) {
+  user-select: none;
+}
+
 .image-generation-item img {
   width: 100%;
   height: 100%;
@@ -1781,7 +1785,7 @@ html.dark #keySwitcherMenu {
 }
 
 .image-generation-item:is(.is-queued, .is-running, .is-partial) {
-  cursor: wait;
+  cursor: default;
 }
 
 .image-generation-item.is-partial > span {
@@ -1791,6 +1795,72 @@ html.dark #keySwitcherMenu {
 .image-generation-item.is-failed > span {
   background: rgba(127, 29, 29, 0.55);
   color: #fff;
+}
+
+#appMain > #imageSetDeleteModal {
+  position: absolute;
+  inset: 0;
+}
+
+.image-set-delete-modal-panel {
+  width: min(420px, 100% - 24px);
+  border-radius: 8px;
+}
+
+.image-set-delete-modal-panel > p {
+  padding: 18px 18px 6px;
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.image-set-delete-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 14px 18px 18px;
+  gap: 8px;
+}
+
+.image-set-delete-modal-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  min-height: 34px;
+  padding: 7px 12px;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-soft);
+  font-weight: 700;
+}
+
+.image-set-delete-modal-actions button:hover:not(:disabled) {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.image-set-delete-modal-actions button.is-danger {
+  border-color: rgba(244, 63, 94, 0.35);
+  background: rgba(244, 63, 94, 0.08);
+  color: var(--critical);
+}
+
+.image-set-delete-modal-actions button.is-danger:hover:not(:disabled) {
+  border-color: var(--critical);
+  background: rgba(244, 63, 94, 0.14);
+  color: var(--critical);
+}
+
+.image-set-delete-modal-actions button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.image-set-delete-modal-actions svg {
+  width: 13px;
+  height: 13px;
 }
 
 #appMain > #imageResultModal {

@@ -1148,15 +1148,27 @@ html.dark #keySwitcherMenu {
     background: var(--bg);
     color: var(--muted);
 }
+.image-generation-item:not(button) { user-select: none; }
 .image-generation-item img { width: 100%; height: 100%; object-fit: contain; background: var(--bg); }
 .image-generation-item > span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 7px; padding: 12px; background: rgba(2, 6, 23, 0.28); color: #fff; font-size: 9px; }
 .image-generation-item > span em { font-style: normal; }
 .image-generation-item.is-completed > span { opacity: 0; background: rgba(2, 6, 23, 0.42); transition: opacity 140ms ease; }
 .image-generation-item.is-completed:hover > span,
 .image-generation-item.is-completed:focus-visible > span { opacity: 1; }
-.image-generation-item:is(.is-queued, .is-running, .is-partial) { cursor: wait; }
+.image-generation-item:is(.is-queued, .is-running, .is-partial) { cursor: default; }
 .image-generation-item.is-partial > span { background: rgba(2, 6, 23, 0.46); }
 .image-generation-item.is-failed > span { background: rgba(127, 29, 29, 0.55); color: #fff; }
+
+#appMain > #imageSetDeleteModal { position: absolute; inset: 0; }
+.image-set-delete-modal-panel { width: min(420px, calc(100% - 24px)); border-radius: 8px; }
+.image-set-delete-modal-panel > p { padding: 18px 18px 6px; color: var(--text-soft); font-size: 11px; line-height: 1.7; }
+.image-set-delete-modal-actions { display: flex; justify-content: flex-end; padding: 14px 18px 18px; gap: 8px; }
+.image-set-delete-modal-actions button { display: inline-flex; align-items: center; justify-content: center; min-width: 78px; min-height: 34px; padding: 7px 12px; gap: 5px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-soft); font-weight: 700; }
+.image-set-delete-modal-actions button:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
+.image-set-delete-modal-actions button.is-danger { border-color: rgba(244, 63, 94, 0.35); background: rgba(244, 63, 94, 0.08); color: var(--critical); }
+.image-set-delete-modal-actions button.is-danger:hover:not(:disabled) { border-color: var(--critical); background: rgba(244, 63, 94, 0.14); color: var(--critical); }
+.image-set-delete-modal-actions button:disabled { cursor: wait; opacity: 0.6; }
+.image-set-delete-modal-actions svg { width: 13px; height: 13px; }
 
 #appMain > #imageResultModal { position: absolute; inset: 0; padding: 0; }
 .app-modal > .image-result-modal-panel { position: absolute; inset: 0; width: auto; height: auto; max-height: none; border: 0; transform: none !important; }
