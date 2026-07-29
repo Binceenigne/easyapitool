@@ -4,10 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="assets/app.css?v=27">
+    <link rel="stylesheet" href="assets/app.css?v=29">
     <script defer src="vendor/lucide/lucide.min.js"></script>
     <style media="not all" data-legacy-styles-disabled>
-        /* 强制无圆角 */
         * {
             border-radius: 0px !important;
             box-sizing: border-box;
@@ -39,22 +38,14 @@
             width: 4px;
             height: 4px;
         }
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        .dark ::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.15);
-        }
-        ::-webkit-scrollbar-thumb {
-            background: rgba(0, 0, 0, 0.15);
-        }
+        ::-webkit-scrollbar-track { background: transparent; }
+        .dark ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); }
+        ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); }
 
-        /* 超轻量窗口动画 */
         .settings-transition {
             transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        /* 整个页面始终等于可视窗口，禁止页面与面板产生滚动穿模 */
         #widget-root {
             width: 100vw;
             height: 100vh;
@@ -74,30 +65,14 @@
             display: block;
         }
 
-        .window-maximized .native-resize-handle {
-            display: none;
-        }
-
-        .resize-left, .resize-right {
-            top: 7px;
-            bottom: 7px;
-            width: 7px;
-        }
-
-        .resize-top, .resize-bottom {
-            left: 7px;
-            right: 7px;
-            height: 7px;
-        }
-
+        .window-maximized .native-resize-handle { display: none; }
+        .resize-left, .resize-right { top: 7px; bottom: 7px; width: 7px; }
+        .resize-top, .resize-bottom { left: 7px; right: 7px; height: 7px; }
         .resize-left { left: 0; cursor: ew-resize; }
         .resize-right { right: 0; cursor: ew-resize; }
         .resize-top { top: 0; cursor: ns-resize; }
         .resize-bottom { bottom: 0; cursor: ns-resize; }
-        .resize-top-left, .resize-top-right, .resize-bottom-left, .resize-bottom-right {
-            width: 10px;
-            height: 10px;
-        }
+        .resize-top-left, .resize-top-right, .resize-bottom-left, .resize-bottom-right { width: 10px; height: 10px; }
         .resize-top-left { left: 0; top: 0; cursor: nwse-resize; }
         .resize-top-right { right: 0; top: 0; cursor: nesw-resize; }
         .resize-bottom-left { left: 0; bottom: 0; cursor: nesw-resize; }
@@ -945,6 +920,9 @@
                 <form id="imageEditForm" onsubmit="submitImageEdit(event)">
                     <div class="image-edit-header">
                         <div>
+                            <button type="button" id="exitImageEditSessionButton" hidden onclick="exitImageEditSession()" title="返回普通生图" aria-label="返回普通生图">
+                                <i data-lucide="arrow-left" aria-hidden="true"></i><span>返回</span>
+                            </button>
                             <i data-lucide="wand-sparkles" class="icon-14 color-brand" aria-hidden="true"></i>
                             <div>
                                 <h2 id="imageEditHeading">GPT Image 2 生图</h2>
@@ -980,35 +958,55 @@
                             <div class="image-generation-controls-wrap">
                                 <button type="button" id="imageGenerationControlsButton" aria-expanded="false" onclick="toggleImageGenerationControls()">
                                     <i data-lucide="settings-2" aria-hidden="true"></i>
-                                    <span id="imageGenerationControlSummary">自动 · 自动 · 无损 · 1 张</span>
+                                    <span id="imageGenerationControlSummary">
+                                        <strong id="imageGenerationQualitySummary" data-quality="auto">自动细节</strong>
+                                        <span aria-hidden="true">·</span>
+                                        <strong id="imageGenerationOutputSummary" data-preset="lossless">无损</strong>
+                                        <span aria-hidden="true">·</span>
+                                        <span id="imageGenerationRatioSummary">智能</span>
+                                        <span aria-hidden="true">·</span>
+                                        <span id="imageGenerationCountSummary">1 张</span>
+                                    </span>
                                     <i data-lucide="chevron-up" aria-hidden="true"></i>
                                 </button>
-                                <div id="imageGenerationControlPanel" hidden>
-                                    <div class="image-generation-control-grid">
-                                        <label><span>尺寸</span><input id="imageEditSize" list="imageEditSizeOptions" value="auto" pattern="auto|[0-9]+x[0-9]+" title="请求尺寸；EasyClin 可能改写实际宽高" oninput="updateImageGenerationControlSummary()"></label>
-                                        <datalist id="imageEditSizeOptions">
-                                            <option value="auto">自动</option>
-                                            <option value="1024x1024">1024 × 1024</option>
-                                            <option value="1536x1024">1536 × 1024</option>
-                                            <option value="1024x1536">1024 × 1536</option>
-                                            <option value="768x1024">768 × 1024</option>
-                                        </datalist>
-                                        <label>
-                                            <span>质量</span>
-                                            <select id="imageEditQuality" title="模型生成细节强度，不直接控制像素分辨率" onchange="updateImageGenerationControlSummary()">
-                                                <option value="auto">自动</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option>
-                                            </select>
-                                        </label>
-                                        <label>
-                                            <span>输出大小</span>
-                                            <select id="imageEditOutputPreset" title="API 固定请求 PNG，此选项控制本地保存格式和 JPEG 压缩" onchange="updateImageGenerationControlSummary()">
-                                                <option value="lossless">无损</option><option value="large">大</option><option value="medium">中</option><option value="small">小</option>
-                                            </select>
-                                        </label>
+                                <div id="imageGenerationControlPanel" class="image-generation-popover" hidden>
+                                    <div class="image-quality-controls">
+                                        <section class="image-control-section">
+                                            <span>生成细节</span>
+                                            <div id="imageQualityButtons" class="image-control-segmented" role="radiogroup" aria-label="生成细节">
+                                                <button type="button" class="is-active" data-quality="auto" aria-pressed="true" onclick="setImageQuality('auto')">自动</button>
+                                                <button type="button" data-quality="low" aria-pressed="false" onclick="setImageQuality('low')">低</button>
+                                                <button type="button" data-quality="medium" aria-pressed="false" onclick="setImageQuality('medium')">中</button>
+                                                <button type="button" data-quality="high" aria-pressed="false" onclick="setImageQuality('high')">高</button>
+                                            </div>
+                                        </section>
+                                        <section class="image-control-section">
+                                            <span>保存质量</span>
+                                            <div id="imageOutputPresetButtons" class="image-control-segmented" role="radiogroup" aria-label="保存质量">
+                                                <button type="button" data-preset="small" aria-pressed="false" onclick="setImageOutputPreset('small')">小</button>
+                                                <button type="button" data-preset="medium" aria-pressed="false" onclick="setImageOutputPreset('medium')">中</button>
+                                                <button type="button" data-preset="large" aria-pressed="false" onclick="setImageOutputPreset('large')">大</button>
+                                                <button type="button" class="is-active" data-preset="lossless" aria-pressed="true" onclick="setImageOutputPreset('lossless')">无损</button>
+                                            </div>
+                                        </section>
                                     </div>
-                                    <div class="image-count-control">
-                                        <span>图片数量</span>
-                                        <div id="imageGenerationCountButtons" role="radiogroup" aria-label="图片数量">
+                                    <section class="image-control-section">
+                                        <span>比例</span>
+                                        <div id="imageAspectRatioButtons" class="image-aspect-options" role="radiogroup" aria-label="图片比例">
+                                            <button type="button" class="is-active" data-ratio="auto" aria-pressed="true" onclick="setImageAspectRatio('auto')"><i data-lucide="scan" aria-hidden="true"></i><span>智能</span></button>
+                                            <button type="button" data-ratio="9:16" aria-pressed="false" onclick="setImageAspectRatio('9:16')"><i data-lucide="rectangle-vertical" aria-hidden="true"></i><span>9:16</span></button>
+                                            <button type="button" data-ratio="2:3" aria-pressed="false" onclick="setImageAspectRatio('2:3')"><i data-lucide="rectangle-vertical" aria-hidden="true"></i><span>2:3</span></button>
+                                            <button type="button" data-ratio="3:4" aria-pressed="false" onclick="setImageAspectRatio('3:4')"><i data-lucide="rectangle-vertical" aria-hidden="true"></i><span>3:4</span></button>
+                                            <button type="button" data-ratio="1:1" aria-pressed="false" onclick="setImageAspectRatio('1:1')"><i data-lucide="square" aria-hidden="true"></i><span>1:1</span></button>
+                                            <button type="button" data-ratio="4:3" aria-pressed="false" onclick="setImageAspectRatio('4:3')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>4:3</span></button>
+                                            <button type="button" data-ratio="3:2" aria-pressed="false" onclick="setImageAspectRatio('3:2')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>3:2</span></button>
+                                            <button type="button" data-ratio="16:9" aria-pressed="false" onclick="setImageAspectRatio('16:9')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>16:9</span></button>
+                                            <button type="button" data-ratio="21:9" aria-pressed="false" onclick="setImageAspectRatio('21:9')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>21:9</span></button>
+                                        </div>
+                                    </section>
+                                    <section class="image-control-section image-count-control">
+                                        <span>生成数量</span>
+                                        <div id="imageGenerationCountButtons" class="image-control-segmented" role="radiogroup" aria-label="图片数量">
                                             <button type="button" class="is-active" data-count="1" aria-pressed="true" onclick="setImageGenerationCount(1)">1</button>
                                             <button type="button" data-count="2" aria-pressed="false" onclick="setImageGenerationCount(2)">2</button>
                                             <button type="button" data-count="3" aria-pressed="false" onclick="setImageGenerationCount(3)">3</button>
@@ -1019,7 +1017,10 @@
                                             <button type="button" data-count="8" aria-pressed="false" onclick="setImageGenerationCount(8)">8</button>
                                             <button type="button" data-count="9" aria-pressed="false" onclick="setImageGenerationCount(9)">9</button>
                                         </div>
-                                    </div>
+                                    </section>
+                                    <input id="imageEditSize" type="hidden" value="auto">
+                                    <input id="imageEditQuality" type="hidden" value="auto">
+                                    <input id="imageEditOutputPreset" type="hidden" value="lossless">
                                 </div>
                             </div>
                             <button type="submit" id="generateEditedImageButton"><i data-lucide="sparkles" aria-hidden="true"></i><span>生成 1 张</span></button>
@@ -1492,15 +1493,19 @@
 
         <div id="imageResultModal" class="app-modal animated-modal image-result-modal" hidden role="dialog" aria-modal="true" aria-labelledby="imageResultModalTitle" onclick="handleImageResultModalBackdrop(event)">
             <div class="app-modal-panel image-result-modal-panel">
-                <div class="app-modal-header">
+                <div class="app-modal-header image-result-modal-header">
                     <div><i data-lucide="image" class="icon-14 color-brand" aria-hidden="true"></i><div><h2 id="imageResultModalTitle">生成图片</h2><p id="imageResultModalMeta">已自动保存</p></div></div>
                     <div class="image-result-modal-actions">
-                        <button type="button" onclick="useViewerImageAsReference()" title="作为参考继续编辑" aria-label="作为参考继续编辑"><i data-lucide="image-plus" aria-hidden="true"></i></button>
-                        <button type="button" onclick="saveEditedImage()" title="另存为" aria-label="另存为"><i data-lucide="download" aria-hidden="true"></i></button>
-                        <button type="button" onclick="closeImageResultModal()" title="关闭图片" aria-label="关闭图片"><i data-lucide="x" aria-hidden="true"></i></button>
+                        <div class="image-viewer-zoom-controls" role="group" aria-label="缩放控制">
+                            <button type="button" onclick="zoomImageViewer(-1)" title="缩小" aria-label="缩小"><i data-lucide="zoom-out" aria-hidden="true"></i></button>
+                            <button type="button" id="imageViewerZoomLabel" onclick="resetImageViewer()" title="恢复适合窗口" aria-label="恢复适合窗口">100%</button>
+                            <button type="button" onclick="zoomImageViewer(1)" title="放大" aria-label="放大"><i data-lucide="zoom-in" aria-hidden="true"></i></button>
+                        </div>
+                        <button type="button" id="saveEditedImageButton" onclick="saveEditedImage()" title="另存为" aria-label="另存为"><i data-lucide="download" aria-hidden="true"></i></button>
+                        <button type="button" class="image-viewer-close" onclick="closeImageResultModal()" title="关闭图片" aria-label="关闭图片"><i data-lucide="x" aria-hidden="true"></i></button>
                     </div>
                 </div>
-                <div class="image-result-modal-canvas"><img id="imageResultModalImage" alt="生成图片"></div>
+                <div id="imageResultModalCanvas" class="image-result-modal-canvas" title="拖拽移动，滚轮缩放"><img id="imageResultModalImage" alt="生成图片" draggable="false"></div>
             </div>
         </div>
 
@@ -1656,9 +1661,20 @@
             files: [],
             resultSets: [],
             viewerResult: null,
+            viewer: { setId: '', itemIndex: -1, scale: 1, x: 0, y: 0, dragging: false },
+            editSession: null,
+            draftBeforeSession: null,
+            aspectRatio: 'auto',
+            quality: 'auto',
+            outputPreset: 'lossless',
             imageCount: 1,
             busy: false,
             mode: 'image-edit'
+        };
+
+        const IMAGE_SIZE_PRESETS = {
+            auto: 'auto', '9:16': '720x1280', '2:3': '768x1152', '3:4': '768x1024',
+            '1:1': '1024x1024', '4:3': '1024x768', '3:2': '1152x768', '16:9': '1280x720', '21:9': '1344x576'
         };
 
         function setWorkspaceMode(mode) {
@@ -1700,7 +1716,7 @@
                 item.className = 'image-edit-file';
                 item.title = `${file.name} · ${formatImageFileSize(file.sizeBytes)}`;
                 const preview = document.createElement('img');
-                preview.src = file.uri;
+                preview.src = file.previewUri || file.uri;
                 preview.alt = `参考图 ${index + 1}`;
                 preview.draggable = false;
                 const name = document.createElement('span');
@@ -1843,13 +1859,76 @@
                 : '填写提示词即可生成，参考图可选';
         }
 
+        function positionImageGenerationPanel() {
+            const panel = document.getElementById('imageGenerationControlPanel');
+            const button = document.getElementById('imageGenerationControlsButton');
+            const form = document.getElementById('imageEditForm');
+            if (!panel || panel.hidden || !button || !form) return;
+            const buttonRect = button.getBoundingClientRect();
+            const formRect = form.getBoundingClientRect();
+            panel.style.setProperty('--image-popover-left', `${formRect.left}px`);
+            panel.style.setProperty('--image-popover-width', `${formRect.width}px`);
+            panel.style.setProperty('--image-popover-bottom', `${Math.max(12, window.innerHeight - buttonRect.top + 8)}px`);
+        }
+
+        function closeImageGenerationControls() {
+            const panel = document.getElementById('imageGenerationControlPanel');
+            const button = document.getElementById('imageGenerationControlsButton');
+            if (!panel || panel.hidden) return;
+            clearTimeout(panel.__hideTimer);
+            panel.classList.remove('is-open');
+            button.setAttribute('aria-expanded', 'false');
+            const icon = button.querySelector('[data-lucide="chevron-up"], [data-lucide="chevron-down"], svg:last-child');
+            if (icon) setLucideIcon(icon, 'chevron-up');
+            panel.__hideTimer = setTimeout(() => { panel.hidden = true; }, 180);
+        }
+
         function toggleImageGenerationControls() {
             const panel = document.getElementById('imageGenerationControlPanel');
             const button = document.getElementById('imageGenerationControlsButton');
-            panel.hidden = !panel.hidden;
-            button.setAttribute('aria-expanded', String(!panel.hidden));
+            if (!panel.hidden) return closeImageGenerationControls();
+            clearTimeout(panel.__hideTimer);
+            panel.hidden = false;
+            positionImageGenerationPanel();
+            button.setAttribute('aria-expanded', 'true');
             const icon = button.querySelector('[data-lucide="chevron-up"], [data-lucide="chevron-down"], svg:last-child');
-            if (icon) setLucideIcon(icon, panel.hidden ? 'chevron-up' : 'chevron-down');
+            if (icon) setLucideIcon(icon, 'chevron-down');
+            requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.add('is-open')));
+        }
+
+        function setImageQuality(quality) {
+            if (!['auto', 'low', 'medium', 'high'].includes(quality)) return;
+            window.imageEditState.quality = quality;
+            document.getElementById('imageEditQuality').value = quality;
+            document.querySelectorAll('#imageQualityButtons button').forEach(button => {
+                const active = button.dataset.quality === quality;
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-pressed', String(active));
+            });
+            updateImageGenerationControlSummary();
+        }
+
+        function setImageOutputPreset(preset) {
+            if (!['lossless', 'large', 'medium', 'small'].includes(preset)) return;
+            window.imageEditState.outputPreset = preset;
+            document.getElementById('imageEditOutputPreset').value = preset;
+            document.querySelectorAll('#imageOutputPresetButtons button').forEach(button => {
+                const active = button.dataset.preset === preset;
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-pressed', String(active));
+            });
+            updateImageGenerationControlSummary();
+        }
+
+        function setImageAspectRatio(ratio) {
+            if (!IMAGE_SIZE_PRESETS[ratio]) return;
+            window.imageEditState.aspectRatio = ratio;
+            document.querySelectorAll('#imageAspectRatioButtons button').forEach(button => {
+                const active = button.dataset.ratio === ratio;
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-pressed', String(active));
+            });
+            updateImageGenerationControlSummary();
         }
 
         function setImageGenerationCount(count) {
@@ -1863,33 +1942,44 @@
         }
 
         function updateImageGenerationControlSummary() {
-            const size = document.getElementById('imageEditSize')?.value || 'auto';
-            const quality = document.getElementById('imageEditQuality');
-            const output = document.getElementById('imageEditOutputPreset');
-            const qualityLabel = quality?.selectedOptions[0]?.textContent || '自动';
-            const outputLabel = output?.selectedOptions[0]?.textContent || '无损';
-            document.getElementById('imageGenerationControlSummary').textContent =
-                `${size === 'auto' ? '自动' : size} · ${qualityLabel} · ${outputLabel} · ${window.imageEditState.imageCount} 张`;
+            const ratio = window.imageEditState.aspectRatio;
+            const qualityLabels = { auto: '自动细节', low: '低细节', medium: '中细节', high: '高细节' };
+            const outputLabels = { lossless: '无损', large: '大', medium: '中', small: '小' };
+            const size = IMAGE_SIZE_PRESETS[ratio] || 'auto';
+            document.getElementById('imageEditSize').value = size;
+            const qualitySummary = document.getElementById('imageGenerationQualitySummary');
+            qualitySummary.textContent = qualityLabels[window.imageEditState.quality];
+            qualitySummary.dataset.quality = window.imageEditState.quality;
+            const outputSummary = document.getElementById('imageGenerationOutputSummary');
+            outputSummary.textContent = outputLabels[window.imageEditState.outputPreset];
+            outputSummary.dataset.preset = window.imageEditState.outputPreset;
+            document.getElementById('imageGenerationRatioSummary').textContent = ratio === 'auto' ? '智能' : ratio;
+            document.getElementById('imageGenerationCountSummary').textContent = `${window.imageEditState.imageCount} 张`;
             const buttonLabel = document.querySelector('#generateEditedImageButton span');
             if (buttonLabel && !window.imageEditState.busy) {
                 buttonLabel.textContent = `生成 ${window.imageEditState.imageCount} 张`;
             }
         }
 
-        function createImageGenerationSet(requestId, requestedCount, prompt) {
+        function createImageGenerationSet(requestId, requestedCount, prompt, metadata = {}) {
             let set = window.imageEditState.resultSets.find(item => item.setId === requestId);
             if (set) return set;
             set = {
                 setId: requestId,
                 requestId,
+                sessionId: metadata.sessionId || requestId,
+                parentSetId: metadata.parentSetId || '',
+                roundNumber: Number(metadata.roundNumber) || 1,
                 requestedCount,
                 prompt,
-                createdAt: Date.now(),
+                createdAt: metadata.createdAt || new Date().toISOString(),
                 status: 'running',
                 items: Array.from({ length: requestedCount }, (_, itemIndex) => ({
                     itemIndex,
                     status: 'queued',
                     uri: '',
+                    previewUri: '',
+                    path: '',
                     result: null,
                     error: ''
                 }))
@@ -1923,27 +2013,36 @@
 
                 const header = document.createElement('div');
                 header.className = 'image-generation-set-header';
-                header.title = '点击将本组完成图片加入参考图继续编辑';
                 const heading = document.createElement('div');
                 const title = document.createElement('strong');
                 title.textContent = set.prompt || '图片生成';
                 const completedCount = set.items.filter(item => item.status === 'completed').length;
                 const meta = document.createElement('small');
                 meta.textContent = set.status === 'running'
-                    ? `生成中 · ${completedCount}/${set.requestedCount}`
-                    : `${completedCount}/${set.requestedCount} 张 · 已保存`;
+                    ? `第 ${set.roundNumber || 1} 轮 · 生成中 · ${completedCount}/${set.requestedCount}`
+                    : set.status === 'interrupted'
+                        ? `第 ${set.roundNumber || 1} 轮 · 已中断 · 保留 ${completedCount} 张`
+                        : `第 ${set.roundNumber || 1} 轮 · ${completedCount}/${set.requestedCount} 张 · 已保存`;
                 heading.append(title, meta);
+                const actions = document.createElement('div');
+                actions.className = 'image-generation-set-actions';
                 const continueButton = document.createElement('button');
                 continueButton.type = 'button';
                 continueButton.title = '整组作为参考继续编辑';
                 continueButton.setAttribute('aria-label', continueButton.title);
-                continueButton.innerHTML = iconMarkup('image-plus', 'icon-13');
-                continueButton.addEventListener('click', event => {
-                    event.stopPropagation();
-                    useResultSetAsReferences(set.setId);
-                });
-                header.append(heading, continueButton);
-                header.addEventListener('click', () => useResultSetAsReferences(set.setId));
+                continueButton.disabled = completedCount === 0;
+                continueButton.innerHTML = `${iconMarkup('corner-down-left', 'icon-12')}<span>继续编辑</span>`;
+                continueButton.addEventListener('click', () => enterImageEditSession(set.setId));
+                const deleteButton = document.createElement('button');
+                deleteButton.type = 'button';
+                deleteButton.className = 'is-danger';
+                deleteButton.title = set.status === 'running' ? '生成完成后可删除' : '删除图片集';
+                deleteButton.setAttribute('aria-label', deleteButton.title);
+                deleteButton.disabled = set.status === 'running';
+                deleteButton.innerHTML = iconMarkup('trash-2', 'icon-12');
+                deleteButton.addEventListener('click', () => deleteImageGenerationSet(set.setId));
+                actions.append(continueButton, deleteButton);
+                header.append(heading, actions);
 
                 const grid = document.createElement('div');
                 grid.className = 'image-generation-set-grid';
@@ -1953,24 +2052,30 @@
                     card.type = 'button';
                     card.className = `image-generation-item is-${item.status}`;
                     card.dataset.itemIndex = String(item.itemIndex);
-                    if (item.uri) {
+                    const displayUri = item.previewUri || item.result?.previewUri || item.uri;
+                    if (displayUri) {
                         const image = document.createElement('img');
-                        image.src = cacheBustedImageUri(item.uri);
+                        image.src = displayUri;
                         image.alt = item.status === 'completed' ? '生成图片' : '过程预览';
                         card.append(image);
                     }
                     const overlay = document.createElement('span');
                     if (item.status === 'completed') {
-                        overlay.textContent = '打开并继续编辑';
-                        card.addEventListener('click', () => {
-                            appendGeneratedReferences([item.result]);
-                            openImageResultModal(item.result);
-                        });
+                        overlay.textContent = '查看图片';
+                        card.addEventListener('click', () => openImageResultModal(item.result, set.setId, item.itemIndex));
+                    } else if (item.status === 'partial') {
+                        overlay.innerHTML = `${iconMarkup('loader-circle', 'icon-16 is-spinning')}<em>查看过程图</em>`;
+                        card.addEventListener('click', () => openImageResultModal({
+                            path: item.path,
+                            previewUri: item.previewUri,
+                            uri: item.uri,
+                            status: 'partial'
+                        }, set.setId, item.itemIndex));
                     } else if (item.status === 'failed') {
                         overlay.textContent = item.error || '生成失败';
                         card.disabled = true;
                     } else {
-                        overlay.innerHTML = `${iconMarkup('loader-circle', 'icon-16 is-spinning')}<em>${item.status === 'partial' ? '生成中' : '等待生成'}</em>`;
+                        overlay.innerHTML = `${iconMarkup('loader-circle', 'icon-16 is-spinning')}<em>等待生成</em>`;
                         card.disabled = true;
                     }
                     card.append(overlay);
@@ -1987,13 +2092,17 @@
             const set = createImageGenerationSet(
                 event.setId,
                 Number(event.requestedCount) || 1,
-                event.prompt || ''
+                event.prompt || '',
+                event
             );
             if (event.type === 'set_started') {
                 set.requestedCount = Number(event.requestedCount) || set.requestedCount;
                 set.prompt = event.prompt || set.prompt;
+                set.sessionId = event.sessionId || set.sessionId;
+                set.parentSetId = event.parentSetId || set.parentSetId;
+                set.roundNumber = Number(event.roundNumber) || set.roundNumber;
                 while (set.items.length < set.requestedCount) {
-                    set.items.push({ itemIndex: set.items.length, status: 'queued', uri: '', result: null, error: '' });
+                    set.items.push({ itemIndex: set.items.length, status: 'queued', uri: '', previewUri: '', path: '', result: null, error: '' });
                 }
             } else if (Number.isInteger(event.itemIndex) && set.items[event.itemIndex]) {
                 const item = set.items[event.itemIndex];
@@ -2001,29 +2110,55 @@
                 if (event.type === 'item_partial') {
                     item.status = 'partial';
                     item.uri = event.uri || item.uri;
+                    item.previewUri = event.previewUri || item.previewUri;
+                    item.path = event.path || item.path;
                 }
                 if (event.type === 'item_completed') {
                     item.status = 'completed';
                     item.result = event.result;
                     item.uri = event.result?.uri || item.uri;
+                    item.previewUri = event.result?.previewUri || item.previewUri;
+                    item.path = event.result?.path || item.path;
                 }
                 if (event.type === 'item_failed') {
                     item.status = 'failed';
                     item.error = event.error || '生成失败';
                 }
             }
-            if (event.type === 'set_completed') set.status = 'completed';
+            if (event.type === 'set_completed') {
+                set.status = 'completed';
+                if (Array.isArray(event.items)) {
+                    event.items.forEach((result, itemIndex) => {
+                        if (!set.items[itemIndex]) return;
+                        if (result.ok) {
+                            set.items[itemIndex].status = 'completed';
+                            set.items[itemIndex].result = result;
+                            set.items[itemIndex].previewUri = result.previewUri || set.items[itemIndex].previewUri;
+                            set.items[itemIndex].path = result.path || set.items[itemIndex].path;
+                        } else {
+                            set.items[itemIndex].status = 'failed';
+                            set.items[itemIndex].error = result.error || '生成失败';
+                        }
+                    });
+                }
+            }
             renderImageGenerationSets();
+            refreshOpenImageViewer(set, event.itemIndex);
         };
 
         function syncImageGenerationResult(result) {
             if (!result?.setId) return;
-            const set = createImageGenerationSet(result.setId, result.requestedCount || 1, result.prompt || '');
+            const set = createImageGenerationSet(result.setId, result.requestedCount || 1, result.prompt || '', result);
             set.status = 'completed';
+            set.sessionId = result.sessionId || set.sessionId;
+            set.parentSetId = result.parentSetId || set.parentSetId;
+            set.roundNumber = Number(result.roundNumber) || set.roundNumber;
             set.items = (result.items || []).map((item, itemIndex) => ({
                 itemIndex,
                 status: item.ok ? 'completed' : 'failed',
                 uri: item.uri || '',
+                previewUri: item.previewUri || '',
+                path: item.path || '',
                 result: item.ok ? item : null,
                 error: item.error || ''
             }));
@@ -2035,60 +2170,242 @@
             return {
                 path: result.path,
                 uri: result.uri,
+                previewUri: result.previewUri || result.uri,
                 name: result.path.split(/[\\/]/).pop(),
                 sizeBytes: result.sizeBytes || 0
             };
         }
 
-        function appendGeneratedReferences(results) {
-            let added = 0;
-            results.forEach(result => {
-                const reference = generatedResultReference(result);
-                if (reference && appendReferenceImage(reference)) added += 1;
-            });
+        function replaceGeneratedReferences(results) {
+            window.imageEditState.files = results
+                .map(generatedResultReference)
+                .filter(Boolean)
+                .slice(0, 16);
             renderEditImageList();
-            if (added) {
-                document.getElementById('imageEditStatus').textContent = `已追加 ${added} 张生成图作为参考`;
-                document.getElementById('imageEditPrompt').focus();
-                showToast(`已追加 ${added} 张参考图，可继续输入修改指令`, 'info');
+        }
+
+        function enterImageEditSession(setId) {
+            const set = imageGenerationSetById(setId);
+            if (!set) return;
+            const results = set.items.filter(item => item.result).map(item => item.result);
+            if (!results.length) return showToast('该图片集还没有可编辑的完成图片', 'error');
+            if (!window.imageEditState.draftBeforeSession) {
+                window.imageEditState.draftBeforeSession = {
+                    files: [...window.imageEditState.files],
+                    prompt: document.getElementById('imageEditPrompt').value
+                };
+            }
+            window.imageEditState.editSession = {
+                sessionId: set.sessionId || set.setId,
+                setId: set.setId,
+                roundNumber: Number(set.roundNumber) || 1
+            };
+            replaceGeneratedReferences(results);
+            const prompt = document.getElementById('imageEditPrompt');
+            prompt.value = '';
+            resizeImagePrompt();
+            document.getElementById('exitImageEditSessionButton').hidden = false;
+            document.getElementById('imageEditHeading').textContent = `会话续作 · 第 ${window.imageEditState.editSession.roundNumber + 1} 轮`;
+            document.getElementById('imageEditStatus').textContent = `已切换到第 ${window.imageEditState.editSession.roundNumber} 轮结果，请追加新的修改需求`;
+            prompt.focus();
+        }
+
+        function exitImageEditSession() {
+            const draft = window.imageEditState.draftBeforeSession;
+            window.imageEditState.editSession = null;
+            window.imageEditState.draftBeforeSession = null;
+            if (draft) {
+                window.imageEditState.files = [...draft.files];
+                document.getElementById('imageEditPrompt').value = draft.prompt || '';
+            }
+            renderEditImageList();
+            resizeImagePrompt();
+            document.getElementById('exitImageEditSessionButton').hidden = true;
+            document.getElementById('imageEditHeading').textContent = 'GPT Image 2 生图';
+            document.getElementById('imageEditStatus').textContent = window.imageEditState.files.length
+                ? `已选择 ${window.imageEditState.files.length} 张参考图片`
+                : '填写提示词即可生成，参考图可选';
+        }
+
+        function advanceImageEditSession(result) {
+            if (!window.imageEditState.editSession) return;
+            const successful = (result.items || []).filter(item => item.ok);
+            if (!successful.length) return;
+            window.imageEditState.editSession = {
+                sessionId: result.sessionId,
+                setId: result.setId,
+                roundNumber: Number(result.roundNumber) || window.imageEditState.editSession.roundNumber + 1
+            };
+            replaceGeneratedReferences(successful);
+            document.getElementById('imageEditPrompt').value = '';
+            resizeImagePrompt();
+            document.getElementById('imageEditHeading').textContent = `会话续作 · 第 ${window.imageEditState.editSession.roundNumber + 1} 轮`;
+            document.getElementById('imageEditStatus').textContent = `第 ${window.imageEditState.editSession.roundNumber} 轮已完成，可继续追加需求`;
+        }
+
+        async function deleteImageGenerationSet(setId) {
+            const set = imageGenerationSetById(setId);
+            if (!set || set.status === 'running') return;
+            if (!window.confirm('删除这个图片集及其原图、压缩图和轮次记录？')) return;
+            try {
+                const result = await window.pywebview.api.delete_image_set(set.sessionId || set.setId, set.setId);
+                if (!result.ok) throw new Error(result.error || '删除图片集失败');
+                window.imageEditState.resultSets = window.imageEditState.resultSets.filter(item => item.setId !== setId);
+                if (window.imageEditState.editSession?.setId === setId) exitImageEditSession();
+                if (window.imageEditState.viewer.setId === setId) await closeImageResultModal();
+                renderImageGenerationSets();
+                showToast('图片集已删除');
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
             }
         }
 
-        function useResultSetAsReferences(setId) {
-            const set = imageGenerationSetById(setId);
-            if (!set) return;
-            appendGeneratedReferences(set.items.filter(item => item.result).map(item => item.result));
+        async function loadImageGenerationHistory() {
+            if (!window.pywebview?.api?.list_image_sets) return;
+            try {
+                const result = await window.pywebview.api.list_image_sets();
+                if (!result.ok) throw new Error(result.error || '无法读取图片集历史');
+                const existing = new Map(window.imageEditState.resultSets.map(set => [set.setId, set]));
+                (result.sets || []).forEach(set => {
+                    if (!existing.has(set.setId)) existing.set(set.setId, set);
+                });
+                window.imageEditState.resultSets = [...existing.values()].sort((left, right) =>
+                    String(right.createdAt || '').localeCompare(String(left.createdAt || ''))
+                );
+                renderImageGenerationSets();
+            } catch (error) {
+                console.warn('图片集历史加载失败:', error);
+            }
         }
 
-        function openImageResultModal(result) {
-            if (!result?.uri) return;
+        function applyImageViewerTransform() {
+            const viewer = window.imageEditState.viewer;
+            document.getElementById('imageResultModalImage').style.transform =
+                `translate3d(${viewer.x}px, ${viewer.y}px, 0) scale(${viewer.scale})`;
+            document.getElementById('imageViewerZoomLabel').textContent = `${Math.round(viewer.scale * 100)}%`;
+        }
+
+        function resetImageViewer() {
+            Object.assign(window.imageEditState.viewer, { scale: 1, x: 0, y: 0, dragging: false });
+            document.getElementById('imageResultModalCanvas')?.classList.remove('is-dragging');
+            applyImageViewerTransform();
+        }
+
+        function setImageViewerScale(scale, clientX = null, clientY = null) {
+            const viewer = window.imageEditState.viewer;
+            const nextScale = Math.max(0.2, Math.min(8, Number(scale) || 1));
+            const canvas = document.getElementById('imageResultModalCanvas');
+            if (clientX !== null && clientY !== null && canvas) {
+                const rect = canvas.getBoundingClientRect();
+                const pointX = clientX - (rect.left + rect.width / 2);
+                const pointY = clientY - (rect.top + rect.height / 2);
+                const ratio = nextScale / viewer.scale;
+                viewer.x = pointX - (pointX - viewer.x) * ratio;
+                viewer.y = pointY - (pointY - viewer.y) * ratio;
+            }
+            viewer.scale = nextScale;
+            applyImageViewerTransform();
+        }
+
+        function zoomImageViewer(direction) {
+            setImageViewerScale(window.imageEditState.viewer.scale * (direction > 0 ? 1.25 : 0.8));
+        }
+
+        async function setImageViewerSource(result, preferFullImage = false) {
+            if (!result) return;
             window.imageEditState.viewerResult = result;
-            document.getElementById('imageResultModalImage').src = cacheBustedImageUri(result.uri);
-            document.getElementById('imageResultModalMeta').textContent =
-                `${result.actualSize || `${result.width}x${result.height}`} · ${String(result.format || '').toUpperCase()} · 已自动保存`;
+            const image = document.getElementById('imageResultModalImage');
+            image.src = result.previewUri || '';
+            document.getElementById('imageResultModalMeta').textContent = result.status === 'partial'
+                ? '过程预览 · 生成仍在继续'
+                : `${result.actualSize || `${result.width || 0}x${result.height || 0}`} · ${String(result.format || '').toUpperCase()} · 已自动保存`;
+            document.getElementById('saveEditedImageButton').disabled = result.status === 'partial' || !result.path;
+            if (preferFullImage && result.status !== 'partial' && result.path && window.pywebview?.api?.load_generated_image) {
+                try {
+                    const loaded = await window.pywebview.api.load_generated_image(result.path);
+                    if (loaded.ok && window.imageEditState.viewerResult?.path === result.path) image.src = loaded.dataUrl;
+                } catch (error) {
+                    console.warn('完整图片加载失败，继续使用压缩预览:', error);
+                }
+            }
+        }
+
+        function openImageResultModal(result, setId = '', itemIndex = -1) {
+            if (!result?.previewUri && !result?.path) return;
+            Object.assign(window.imageEditState.viewer, { setId, itemIndex, scale: 1, x: 0, y: 0, dragging: false });
+            void setImageViewerSource(result, result.status !== 'partial');
+            resetImageViewer();
             openAnimatedModal(document.getElementById('imageResultModal'));
             renderLucideIcons();
         }
 
+        function refreshOpenImageViewer(set, itemIndex) {
+            const modal = document.getElementById('imageResultModal');
+            const viewer = window.imageEditState.viewer;
+            if (modal.hidden || viewer.setId !== set?.setId || viewer.itemIndex !== itemIndex) return;
+            const item = set.items[itemIndex];
+            if (!item) return;
+            const result = item.status === 'completed'
+                ? item.result
+                : { path: item.path, previewUri: item.previewUri, uri: item.uri, status: 'partial' };
+            void setImageViewerSource(result, item.status === 'completed');
+        }
+
+        function initializeImageViewerInteractions() {
+            const canvas = document.getElementById('imageResultModalCanvas');
+            const modal = document.getElementById('imageResultModal');
+            const appMain = document.getElementById('appMain');
+            if (modal && appMain && modal.parentElement !== appMain) appMain.append(modal);
+            if (!canvas || canvas.dataset.interactionsReady) return;
+            canvas.dataset.interactionsReady = 'true';
+            canvas.addEventListener('wheel', event => {
+                event.preventDefault();
+                setImageViewerScale(
+                    window.imageEditState.viewer.scale * (event.deltaY < 0 ? 1.12 : 0.89),
+                    event.clientX,
+                    event.clientY
+                );
+            }, { passive: false });
+            canvas.addEventListener('pointerdown', event => {
+                if (event.button !== 0) return;
+                const viewer = window.imageEditState.viewer;
+                viewer.dragging = true;
+                viewer.pointerX = event.clientX;
+                viewer.pointerY = event.clientY;
+                canvas.setPointerCapture(event.pointerId);
+                canvas.classList.add('is-dragging');
+            });
+            canvas.addEventListener('pointermove', event => {
+                const viewer = window.imageEditState.viewer;
+                if (!viewer.dragging) return;
+                viewer.x += event.clientX - viewer.pointerX;
+                viewer.y += event.clientY - viewer.pointerY;
+                viewer.pointerX = event.clientX;
+                viewer.pointerY = event.clientY;
+                applyImageViewerTransform();
+            });
+            const endDrag = event => {
+                const viewer = window.imageEditState.viewer;
+                viewer.dragging = false;
+                canvas.classList.remove('is-dragging');
+                if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+            };
+            canvas.addEventListener('pointerup', endDrag);
+            canvas.addEventListener('pointercancel', endDrag);
+            canvas.addEventListener('dblclick', resetImageViewer);
+        }
+
         async function closeImageResultModal() {
+            window.imageEditState.viewer.setId = '';
+            window.imageEditState.viewer.itemIndex = -1;
             await closeAnimatedModal(document.getElementById('imageResultModal'));
+            document.getElementById('imageResultModalImage').removeAttribute('src');
+            window.imageEditState.viewerResult = null;
+            resetImageViewer();
         }
 
         function handleImageResultModalBackdrop(event) {
             if (event.target === event.currentTarget) closeImageResultModal();
-        }
-
-        async function useViewerImageAsReference() {
-            const result = window.imageEditState.viewerResult;
-            if (!result) return;
-            appendGeneratedReferences([result]);
-            await closeImageResultModal();
-        }
-
-        function cacheBustedImageUri(uri) {
-            const value = String(uri || '');
-            if (!value || value.startsWith('data:') || value.startsWith('blob:')) return value;
-            return `${value}${value.includes('?') ? '&' : '?'}t=${Date.now()}`;
         }
 
         async function openGeneratedPictures() {
@@ -2113,9 +2430,15 @@
             const status = document.getElementById('imageEditStatus');
             const requestId = globalThis.crypto?.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`;
             const imageCount = window.imageEditState.imageCount;
-            createImageGenerationSet(requestId, imageCount, prompt);
+            const session = window.imageEditState.editSession;
+            createImageGenerationSet(requestId, imageCount, prompt, {
+                sessionId: session?.sessionId || requestId,
+                parentSetId: session?.setId || '',
+                roundNumber: session ? session.roundNumber + 1 : 1
+            });
             window.imageEditState.busy = true;
             button.disabled = true;
+            closeImageGenerationControls();
             setIconLabel(button, 'loader-circle', `正在生成 ${imageCount} 张`);
             button.querySelector('[data-lucide], svg')?.classList.add('is-spinning');
             status.textContent = files.length
@@ -2131,13 +2454,16 @@
                         quality: document.getElementById('imageEditQuality').value,
                         outputPreset: document.getElementById('imageEditOutputPreset').value,
                         imageCount,
-                        requestId
+                        requestId,
+                        sessionId: session?.sessionId || requestId,
+                        parentSetId: session?.setId || ''
                     }
                 );
                 if (!result.ok) throw new Error(result.error || '图片生成失败');
                 syncImageGenerationResult(result);
+                advanceImageEditSession(result);
                 const successCount = result.items.filter(item => item.ok).length;
-                status.textContent = `已生成 ${successCount}/${result.requestedCount} 张图片`;
+                if (!window.imageEditState.editSession) status.textContent = `已生成 ${successCount}/${result.requestedCount} 张图片`;
                 showToast(`图片生成完成，已保存 ${successCount} 张`);
             } catch (error) {
                 const failedSet = imageGenerationSetById(requestId);
@@ -2336,11 +2662,15 @@
             window.__pageInitialized = true;
 
             runAuthAndInitialize();
+            void loadImageGenerationHistory();
+            initializeImageViewerInteractions();
+            updateImageGenerationControlSummary();
 
             window.addEventListener('pywebviewready', () => {
                 if (window.__pendingNativeTheme) {
                     window.pywebview?.api?.set_window_background(window.__pendingNativeTheme);
                 }
+                void loadImageGenerationHistory();
             }, { once: true });
 
             const beginWindowDrag = event => {
@@ -2426,6 +2756,9 @@
             });
             document.addEventListener('pointerdown', event => {
                 if (!event.target.closest('#keySwitcher, #keySwitcherMenu')) closeKeySwitcher();
+                if (!event.target.closest('#imageGenerationControlPanel, #imageGenerationControlsButton')) {
+                    closeImageGenerationControls();
+                }
             });
             
             // 实时倒计时
@@ -2439,6 +2772,7 @@
             window.addEventListener('resize', () => {
                 handleResponsiveLayout();
                 positionKeySwitcherMenu();
+                positionImageGenerationPanel();
             }, { passive: true });
             if ('ResizeObserver' in window) {
                 const rootResizeObserver = new ResizeObserver(handleResponsiveLayout);

@@ -17,9 +17,11 @@ Windows API 密钥额度监控工具。桌面壳使用 Python 3.12、pywebview�
 - 提示词输入框默认 7 行、最多自适应到 12 行，超出后内部滚动并提供全屏编辑。
 - 每次可生成 1–9 张图片；应用会发起相应数量的独立请求并限制为最多 3 路并发，不会向不支持 `n` 的 EasyClin 接口传递该参数。
 - 右侧按每次提交创建一个图片集，每张图片的排队、生成、partial 过程预览、完成或失败状态都会实时更新。
-- 图片接口始终请求 PNG；本机可按无损 PNG、大（JPEG 90）、中（JPEG 75）、小（JPEG 55）四档保存。背景在后台固定为自动，审核固定为低，并默认开启流式响应和 3 张 partial 过程预览。
+- 左下生成设置使用并排的四段选择条控制生成细节（自动/低/中/高）和保存质量（小/中/大/无损），并可选择比例和 1–9 张生成数量。
+- 图片接口始终请求 PNG；本机可按小（JPEG 55）、中（JPEG 75）、大（JPEG 90）、无损 PNG 四档保存。背景在后台固定为自动，审核固定为低，并默认开启流式响应和 3 张 partial 过程预览。
 - 最终图片自动保存到 Windows“图片”目录下的 `DJYX_APITOOL` 文件夹，可从结果区直接打开文件夹或将单图另存为其他位置。
-- 点击结果集可将本组完成图片加入参考图；点击单张完成图会加入参考图并打开查看器，随后可追加提示词继续编辑。
+- 点击单张图片只打开支持拖拽和滚轮缩放的查看器，不会改变参考图；只有图片集右侧的“继续编辑”按钮会将该轮结果切换为下一轮参考图，返回后恢复进入会话前的草稿。
+- 图片集会在应用重启后恢复，并可连同该轮原件、压缩预览和记录一起删除；异常退出遗留的生成任务会标记为“已中断”，已完成图片仍会保留。
 - 关闭按钮可设置为关闭应用、最小化到系统托盘或每次询问。
 - 可设置随 Windows 开机自动启动。
 - 从 GitHub Release 检查、下载并安装新版本，下载进度使用自适应点阵进度条。
@@ -27,7 +29,7 @@ Windows API 密钥额度监控工具。桌面壳使用 Python 3.12、pywebview�
 
 ## 本地数据
 
-数据库位于 `%LOCALAPPDATA%\API_TOOLS\api_tools.db`。流式 partial 过程图暂存在 `%LOCALAPPDATA%\API_TOOLS\image-generations\partials`，最终图片自动保存到 Windows“图片”目录下的 `DJYX_APITOOL` 文件夹。密钥不会以明文写入数据库或日志。启动阶段耗时记录在 `%LOCALAPPDATA%\API_TOOLS\startup.log`，用于区分单文件解包、WebView 首屏与首次网络刷新耗时。
+数据库位于 `%LOCALAPPDATA%\API_TOOLS\api_tools.db`。流式 partial 过程图暂存在 `%LOCALAPPDATA%\API_TOOLS\image-generations\partials`。最终图片会按会话写入 Windows“图片”目录下的 `DJYX_APITOOL\sessions\<session-id>`：根目录的 `manifest.json` 保存提示词、轮次和参数，每个轮次目录分别保存原件与 JPEG 压缩预览。密钥不会以明文写入数据库或日志。启动阶段耗时记录在 `%LOCALAPPDATA%\API_TOOLS\startup.log`，用于区分单文件解包、WebView 首屏与首次网络刷新耗时。
 
 ## 生图参数兼容性
 

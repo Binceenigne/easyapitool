@@ -34,7 +34,12 @@ from multiprocessing.connection import Client, Listener
 PROCESS_STARTED_AT = time.perf_counter()
 
 import webview
-from image_editor import ImageGenerationService, prepare_image_generation
+from image_editor import (
+    ImageGenerationService,
+    ImageSessionStore,
+    image_preview_data_url,
+    prepare_image_generation,
+)
 from PIL import Image
 from winotify import Notification, audio
 
@@ -60,7 +65,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "39"
+STATIC_UI_VERSION = "41"
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -941,6 +946,7 @@ RPC_METHODS = {
     "add_key",
     "check_for_updates",
     "delete_key",
+    "delete_image_set",
     "defer_update_restart",
     "dismiss_update_prompt",
     "download_update",
@@ -950,6 +956,8 @@ RPC_METHODS = {
     "get_state",
     "ignore_update_version",
     "initialize_assets",
+    "load_generated_image",
+    "list_image_sets",
     "refresh_now",
     "report_startup",
     "restart_app",
@@ -2033,6 +2041,7 @@ class AppController:
         self.manual_refresh_lock = threading.Lock()
         self.manual_refresh_available_at = 0.0
         self.update_lock = threading.Lock()
+        self.active_image_sets: set[str] = set()
         full_release_notes = bundled_changelog()
         self.update_state: dict[str, Any] = {
             "status": "idle",
@@ -2093,6 +2102,7 @@ class AppController:
                     "name": Path(path).name,
                     "sizeBytes": Path(path).stat().st_size,
                     "uri": Path(path).as_uri(),
+                    "previewUri": image_preview_data_url(Path(path).read_bytes()),
                 }
                 for path in paths
                 if Path(path).is_file()
@@ -2139,7 +2149,69 @@ class AppController:
             "name": output_path.name,
             "sizeBytes": len(image_bytes),
             "uri": output_path.as_uri(),
+            "previewUri": image_preview_data_url(image_bytes),
         }
+
+    def load_generated_image(self, source_path: str) -> dict[str, Any]:
+        source = Path(str(source_path or "")).resolve()
+        allowed_roots = (
+            (app_data_dir() / "image-generations").resolve(),
+            generated_pictures_dir().resolve(),
+        )
+        if not source.is_file() or not any(source.is_relative_to(root) for root in allowed_roots):
+            return {"ok": False, "error": "只能读取本应用生成的图片"}
+        content_types = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+        }
+        content_type = content_types.get(source.suffix.lower())
+        if content_type is None or source.stat().st_size > 50 * 1024 * 1024:
+            return {"ok": False, "error": "生成图片格式或大小无效"}
+        try:
+            image_bytes = source.read_bytes()
+            with Image.open(io.BytesIO(image_bytes)) as generated_image:
+                generated_image.verify()
+        except (OSError, ValueError):
+            return {"ok": False, "error": "生成图片内容无效"}
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        return {
+            "ok": True,
+            "path": str(source),
+            "dataUrl": f"data:{content_type};base64,{encoded}",
+        }
+
+    @staticmethod
+    def _image_session_store() -> ImageSessionStore:
+        return ImageSessionStore(generated_pictures_dir())
+
+    def list_image_sets(self) -> dict[str, Any]:
+        try:
+            sets = self._image_session_store().list_sets()
+            active_sets = getattr(self, "active_image_sets", set())
+            for image_set in sets:
+                if image_set.get("status") == "running" and image_set.get("setId") not in active_sets:
+                    image_set["status"] = "interrupted"
+                    for item in image_set.get("items") or []:
+                        if item.get("status") not in {"completed", "failed"}:
+                            item["status"] = "failed"
+                            item["error"] = "生成已中断"
+            return {"ok": True, "sets": sets}
+        except OSError as exc:
+            return {"ok": False, "error": f"无法读取图片集历史：{exc}", "sets": []}
+
+    def delete_image_set(self, session_id: str, set_id: str) -> dict[str, Any]:
+        active_sets = getattr(self, "active_image_sets", set())
+        if str(set_id) in active_sets:
+            return {"ok": False, "error": "图片集仍在生成中，暂时不能删除"}
+        try:
+            deleted = self._image_session_store().delete_set(session_id, set_id)
+        except OSError as exc:
+            return {"ok": False, "error": f"删除图片集失败：{exc}"}
+        if not deleted:
+            return {"ok": False, "error": "图片集不存在或已被删除"}
+        return {"ok": True, "setId": str(set_id), "sessionId": str(session_id)}
 
     def save_edited_image(self, source_path: str) -> dict[str, Any]:
         if not self.window:
@@ -2147,7 +2219,9 @@ class AppController:
         source = Path(str(source_path or "")).resolve()
         output_root = (app_data_dir() / "image-generations").resolve()
         pictures_root = generated_pictures_dir().resolve()
-        if not source.is_file() or source.parent not in {output_root, pictures_root}:
+        if not source.is_file() or not any(
+            source.is_relative_to(root) for root in (output_root, pictures_root)
+        ):
             return {"ok": False, "error": "只能保存本应用生成的图片"}
         selected = self.window.create_file_dialog(
             webview.FileDialog.SAVE,
@@ -3230,6 +3304,8 @@ class AppController:
         if not 1 <= image_count <= 9:
             return {"ok": False, "error": "图片数量必须在 1 到 9 之间"}
         request_id = str(clean_options.get("requestId") or uuid.uuid4().hex)[:80]
+        session_id = str(clean_options.get("sessionId") or request_id)[:80]
+        parent_set_id = str(clean_options.get("parentSetId") or "")[:80]
         clean_options.update(
             {
                 "background": "auto",
@@ -3248,7 +3324,24 @@ class AppController:
             return {"ok": False, "error": "请选择有效的 API Key"}
         secret = self.store.get_secret(record["id"])
         managed_output_dir = app_data_dir() / "image-generations"
-        pictures_output_dir = generated_pictures_dir()
+        session_store = self._image_session_store()
+        try:
+            round_data = session_store.begin_round(
+                session_id,
+                request_id,
+                request.prompt,
+                image_count,
+                len(request.image_paths),
+                clean_options,
+                parent_set_id=parent_set_id,
+            )
+        except OSError as exc:
+            return {"ok": False, "error": f"无法创建图片集：{exc}"}
+        active_sets = getattr(self, "active_image_sets", None)
+        if active_sets is None:
+            active_sets = set()
+            self.active_image_sets = active_sets
+        active_sets.add(request_id)
 
         def emit(event_type: str, item_index: int | None = None, **details: Any) -> None:
             if event_callback is None:
@@ -3257,6 +3350,9 @@ class AppController:
                 "type": event_type,
                 "requestId": request_id,
                 "setId": request_id,
+                "sessionId": session_id,
+                "parentSetId": parent_set_id,
+                "roundNumber": int(round_data["roundNumber"]),
                 **details,
             }
             if item_index is not None:
@@ -3289,20 +3385,25 @@ class AppController:
                 )
                 source_path = Path(result["path"])
                 try:
-                    pictures_output_dir.mkdir(parents=True, exist_ok=True)
-                    saved_path = pictures_output_dir / source_path.name
-                    shutil.copy2(source_path, saved_path)
                     result["managedPath"] = str(source_path)
-                    result["path"] = str(saved_path)
-                    result["uri"] = saved_path.as_uri()
-                    result["savedPath"] = str(saved_path)
+                    result = session_store.persist_result(
+                        session_id,
+                        request_id,
+                        item_index,
+                        source_path,
+                        result,
+                    )
                 except OSError as exc:
-                    result["saveWarning"] = f"自动保存到图片文件夹失败：{exc}"
+                    raise RuntimeError(f"持久化图片集失败：{exc}") from exc
                 result["itemIndex"] = item_index
                 emit("item_completed", item_index, result=result)
                 return result
             except (RuntimeError, OSError, ValueError) as exc:
                 error = str(exc)
+                try:
+                    session_store.record_failure(session_id, request_id, item_index, error)
+                except (RuntimeError, OSError):
+                    pass
                 emit("item_failed", item_index, error=error)
                 return {"ok": False, "itemIndex": item_index, "error": error}
 
@@ -3327,6 +3428,17 @@ class AppController:
         }
         if not successful:
             result["error"] = "所有图片生成请求均失败"
+        try:
+            session_store.complete_round(session_id, request_id)
+        finally:
+            active_sets.discard(request_id)
+        result.update(
+            {
+                "sessionId": session_id,
+                "parentSetId": parent_set_id,
+                "roundNumber": int(round_data["roundNumber"]),
+            }
+        )
         emit("set_completed", items=items, ok=bool(successful))
         return result
 
@@ -3682,6 +3794,9 @@ class WebApi:
     def import_reference_image(self, data_url: str, name: str = "") -> dict[str, Any]:
         return self._controller.import_reference_image(data_url, name)
 
+    def load_generated_image(self, source_path: str) -> dict[str, Any]:
+        return self._controller.load_generated_image(source_path)
+
     def open_generated_pictures(self) -> dict[str, Any]:
         return self._controller.open_generated_pictures()
 
@@ -3690,6 +3805,12 @@ class WebApi:
 
     def delete_key(self, key_id: str) -> dict[str, Any]:
         return self._controller.delete_key(key_id)
+
+    def delete_image_set(self, session_id: str, set_id: str) -> dict[str, Any]:
+        return self._controller.delete_image_set(session_id, set_id)
+
+    def list_image_sets(self) -> dict[str, Any]:
+        return self._controller.list_image_sets()
 
     def generate_image(
         self,
@@ -3973,11 +4094,20 @@ class RemoteWebApi(WebApi):
     def open_generated_pictures(self) -> dict[str, Any]:
         return self._remote("open_generated_pictures")
 
+    def load_generated_image(self, source_path: str) -> dict[str, Any]:
+        return self._remote("load_generated_image", source_path)
+
     def add_key(self, name: str, value: str) -> dict[str, Any]:
         return self._remote("add_key", name, value)
 
     def delete_key(self, key_id: str) -> dict[str, Any]:
         return self._remote("delete_key", key_id)
+
+    def delete_image_set(self, session_id: str, set_id: str) -> dict[str, Any]:
+        return self._remote("delete_image_set", session_id, set_id)
+
+    def list_image_sets(self) -> dict[str, Any]:
+        return self._remote("list_image_sets")
 
     def generate_image(
         self,

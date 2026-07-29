@@ -202,8 +202,10 @@ class ImageEditorTests(unittest.TestCase):
                     call for call in save_image.call_args_list
                     if call.kwargs.get("format") == "JPEG"
                 ]
-                self.assertEqual(len(jpeg_calls), 1)
-                self.assertEqual(jpeg_calls[0].kwargs["quality"], expected_quality)
+                self.assertEqual(
+                    [call.kwargs["quality"] for call in jpeg_calls],
+                    [expected_quality, 78],
+                )
                 self.assertEqual(result["format"], "jpeg")
                 self.assertEqual(result["outputPreset"], preset)
 
@@ -303,6 +305,77 @@ class ImageEditorTests(unittest.TestCase):
             self.assertEqual(partial_events[0]["partialIndex"], 1)
             self.assertTrue(Path(partial_events[0]["path"]).is_file())
             self.assertTrue(partial_events[0]["uri"].startswith("file:"))
+            self.assertTrue(partial_events[0]["previewUri"].startswith("data:image/jpeg;base64,"))
+            self.assertTrue(result["previewUri"].startswith("data:image/jpeg;base64,"))
+
+    def test_session_store_persists_restores_and_deletes_rounds(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source.png"
+            Image.new("RGB", (32, 24), "purple").save(source)
+            store = image_editor.ImageSessionStore(root / "pictures")
+
+            first = store.begin_round(
+                "session-1",
+                "set-1",
+                "初始生成",
+                1,
+                0,
+                {"size": "1024x1024", "quality": "auto", "outputPreset": "lossless"},
+            )
+            first_result = store.persist_result(
+                "session-1",
+                "set-1",
+                0,
+                source,
+                {"width": 32, "height": 24, "format": "png", "actualSize": "32x24"},
+            )
+            store.complete_round("session-1", "set-1")
+            second = store.begin_round(
+                "session-1",
+                "set-2",
+                "追加霓虹灯",
+                1,
+                1,
+                {"size": "2048x2048", "quality": "high", "outputPreset": "large"},
+                parent_set_id="set-1",
+            )
+            store.persist_result(
+                "session-1",
+                "set-2",
+                0,
+                source,
+                {"width": 32, "height": 24, "format": "png", "actualSize": "32x24"},
+            )
+            store.complete_round("session-1", "set-2")
+
+            manifest_path = root / "pictures" / "sessions" / "session-1" / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            restored = store.list_sets()
+
+            self.assertEqual((first["roundNumber"], second["roundNumber"]), (1, 2))
+            self.assertEqual(manifest["roundCount"], 2)
+            self.assertEqual([item["prompt"] for item in manifest["rounds"]], ["初始生成", "追加霓虹灯"])
+            self.assertEqual(manifest["rounds"][1]["parentSetId"], "set-1")
+            self.assertTrue(Path(first_result["path"]).is_file())
+            self.assertTrue(Path(first_result["previewPath"]).is_file())
+            self.assertEqual([item["setId"] for item in restored], ["set-2", "set-1"])
+            self.assertTrue(restored[0]["items"][0]["result"]["previewUri"].startswith("data:image/jpeg;base64,"))
+
+            self.assertTrue(store.delete_set("session-1", "set-1"))
+            remaining_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(remaining_manifest["roundCount"], 1)
+            self.assertFalse(store.delete_set("session-1", "missing"))
+            self.assertTrue(store.delete_set("session-1", "set-2"))
+            self.assertFalse(manifest_path.parent.exists())
+
+    def test_session_store_allows_removing_stale_running_round(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = image_editor.ImageSessionStore(Path(temp) / "pictures")
+            store.begin_round("session-stale", "set-stale", "未完成", 1, 0, {})
+
+            self.assertTrue(store.delete_set("session-stale", "set-stale"))
+            self.assertFalse((store.root / "session-stale").exists())
 
 
 if __name__ == "__main__":

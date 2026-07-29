@@ -23,6 +23,10 @@ $model-single-column-breakpoint: 520px;
     --border-soft: #e2e8f0;
     --brand: #6366f1;
     --brand-strong: #4f46e5;
+    --image-blue: #2563eb;
+    --image-blue-soft: #eff6ff;
+    --image-purple: #7c3aed;
+    --image-purple-soft: #f5f3ff;
     --good: #10b981;
     --warn: #f59e0b;
     --danger: #f97316;
@@ -44,6 +48,10 @@ html.dark {
     --muted: #64748b;
     --border: #1e293b;
     --border-soft: #172033;
+    --image-blue: #60a5fa;
+    --image-blue-soft: rgba(37, 99, 235, 0.18);
+    --image-purple: #c084fc;
+    --image-purple-soft: rgba(124, 58, 237, 0.2);
     --shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
@@ -715,6 +723,7 @@ html.dark #keySwitcherMenu {
 }
 
 #appMain {
+    position: relative;
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
@@ -759,6 +768,20 @@ html.dark #keySwitcherMenu {
 .image-edit-header > div { min-width: 0; gap: 7px; }
 .image-edit-header h2 { font-size: 14px; }
 .image-edit-header p { color: var(--muted); font-size: 9px; }
+#exitImageEditSessionButton {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    min-height: 28px;
+    padding: 5px 8px;
+    gap: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-soft);
+}
+#exitImageEditSessionButton:hover { border-color: var(--brand); color: var(--brand); }
+#exitImageEditSessionButton svg { width: 13px; height: 13px; }
+#exitImageEditSessionButton span { font-size: 9px; font-weight: 700; }
 .image-edit-header > button,
 #saveEditedImageButton {
     display: inline-flex;
@@ -937,35 +960,135 @@ html.dark #keySwitcherMenu {
     display: flex;
     align-items: center;
     width: 100%;
-    min-height: 34px;
-    padding: 6px 8px;
-    gap: 6px;
+    min-height: 38px;
+    padding: 7px 10px;
+    gap: 8px;
     border: 1px solid var(--border);
-    background: var(--bg);
+    border-radius: 7px;
+    background: linear-gradient(180deg, var(--bg), var(--surface));
     color: var(--text-soft);
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+    transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
-#imageGenerationControlsButton > span { flex: 1 1 auto; overflow: hidden; font-size: 9px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+#imageGenerationControlsButton:hover,
+#imageGenerationControlsButton[aria-expanded="true"] { border-color: color-mix(in srgb, var(--brand) 55%, var(--border)); box-shadow: 0 3px 10px rgba(79, 70, 229, 0.12); }
+#imageGenerationControlsButton[aria-expanded="true"] { background: var(--surface); }
+#imageGenerationControlsButton > svg { width: 15px; height: 15px; }
+#imageGenerationControlSummary {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    min-width: 0;
+    gap: 5px;
+    overflow: hidden;
+    font-size: 11px;
+    text-align: left;
+    white-space: nowrap;
+}
+#imageGenerationControlSummary strong { font-weight: 750; }
+#imageGenerationControlSummary > span[aria-hidden="true"] { color: var(--muted); }
+#imageGenerationQualitySummary[data-quality="auto"] { color: var(--image-blue); }
+#imageGenerationQualitySummary[data-quality="low"] { color: var(--good); }
+#imageGenerationQualitySummary[data-quality="medium"] { color: var(--warn); }
+#imageGenerationQualitySummary[data-quality="high"],
+#imageGenerationOutputSummary[data-preset="lossless"] { color: var(--image-purple); }
 #imageGenerationControlPanel {
-    position: absolute;
-    z-index: 12;
-    right: 0;
-    bottom: calc(100% + 7px);
-    left: 0;
-    padding: 12px;
+    position: fixed;
+    z-index: 54;
+    right: auto;
+    bottom: var(--image-popover-bottom, 58px);
+    left: var(--image-popover-left, 12px);
+    display: grid;
+    width: var(--image-popover-width, 100%);
+    padding: 16px;
+    gap: 14px;
+    overflow: hidden;
     border: 1px solid var(--border);
+    border-radius: 8px;
     background: var(--surface);
-    box-shadow: var(--shadow);
+    box-shadow: 0 18px 52px rgba(2, 6, 23, 0.2), 0 2px 10px rgba(2, 6, 23, 0.1);
+    opacity: 0;
+    pointer-events: none;
+    transform: translate3d(0, 12px, 0) scale(0.985);
+    transform-origin: bottom left;
+    transition: opacity 160ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 #imageGenerationControlPanel[hidden] { display: none !important; }
-.image-generation-control-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.image-generation-control-grid label { display: grid; min-width: 0; gap: 4px; }
-.image-generation-control-grid select,
-.image-generation-control-grid input { width: 100%; height: 30px; padding: 4px 7px; border: 1px solid var(--border); background: var(--bg); }
-.image-count-control { display: grid; margin-top: 10px; gap: 5px; }
-#imageGenerationCountButtons { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border); }
-#imageGenerationCountButtons button { min-width: 0; height: 30px; border-right: 1px solid var(--border-soft); background: var(--bg); color: var(--muted); }
-#imageGenerationCountButtons button:last-child { border-right: 0; }
-#imageGenerationCountButtons button.is-active { background: var(--text); color: var(--bg); font-weight: 700; }
+#imageGenerationControlPanel.is-open { opacity: 1; pointer-events: auto; transform: translate3d(0, 0, 0) scale(1); }
+.image-control-section { display: grid; gap: 7px; }
+.image-control-section > span,
+.image-quality-controls .image-control-section > span { color: var(--muted); font-size: 9px; font-weight: 700; }
+.image-quality-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.image-control-segmented {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    padding: 3px;
+    gap: 2px;
+    border-radius: 7px;
+    background: var(--surface-strong);
+}
+.image-control-segmented button {
+    min-width: 0;
+    min-height: 34px;
+    padding: 6px 8px;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 10px;
+    transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+.image-control-segmented button:hover { color: var(--text); }
+.image-control-segmented button.is-active {
+    background: var(--bg);
+    color: var(--text);
+    font-weight: 700;
+    box-shadow: 0 1px 5px rgba(2, 6, 23, 0.14);
+    transform: translateY(-1px);
+}
+#imageQualityButtons button[data-quality="auto"].is-active {
+    background: var(--image-blue-soft);
+    color: var(--image-blue);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--image-blue) 28%, transparent), 0 1px 5px rgba(37, 99, 235, 0.12);
+}
+#imageQualityButtons button[data-quality="low"].is-active { color: var(--good); }
+#imageQualityButtons button[data-quality="medium"].is-active { color: var(--warn); }
+#imageQualityButtons button[data-quality="high"].is-active,
+#imageOutputPresetButtons button[data-preset="lossless"].is-active {
+    background: var(--image-purple-soft);
+    color: var(--image-purple);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--image-purple) 28%, transparent), 0 1px 5px rgba(124, 58, 237, 0.14);
+}
+.image-aspect-options {
+    display: grid;
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+    padding: 3px;
+    gap: 2px;
+    border-radius: 7px;
+    background: var(--surface-strong);
+}
+.image-aspect-options button {
+    display: grid;
+    place-items: center;
+    min-width: 0;
+    min-height: 62px;
+    padding: 7px 3px;
+    gap: 5px;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--muted);
+    transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+.image-aspect-options button:hover { color: var(--text); }
+.image-aspect-options button.is-active {
+    background: var(--bg);
+    color: var(--text);
+    box-shadow: 0 1px 5px rgba(2, 6, 23, 0.14);
+    transform: translateY(-1px);
+}
+.image-aspect-options svg { width: 17px; height: 17px; }
+.image-aspect-options span { font-size: 9px; }
+.image-count-control { margin-top: 0; }
 #generateEditedImageButton {
     display: inline-flex;
     flex: 0 0 auto;
@@ -1003,12 +1126,18 @@ html.dark #keySwitcherMenu {
 #imageEditResultEmpty svg { width: 28px; height: 28px; }
 #imageGenerationSets.is-empty #imageEditResultEmpty { display: flex; }
 .image-generation-set { border-bottom: 1px solid var(--border); }
-.image-generation-set-header { justify-content: space-between; padding: 9px 10px; gap: 10px; background: var(--surface-soft); cursor: pointer; }
+.image-generation-set-header { justify-content: space-between; padding: 9px 10px; gap: 10px; background: var(--surface-soft); }
 .image-generation-set-header > div { display: grid; min-width: 0; gap: 2px; }
 .image-generation-set-header strong { overflow: hidden; color: var(--text-soft); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .image-generation-set-header small { color: var(--muted); font: 8px/1.3 var(--font-mono); }
-.image-generation-set-header > button { display: flex; align-items: center; justify-content: center; flex: 0 0 28px; width: 28px; height: 28px; background: transparent; color: var(--muted); }
-.image-generation-set-header > button:hover { background: var(--surface-strong); color: var(--brand); }
+.image-generation-set-actions { display: flex !important; flex: 0 0 auto; align-items: center; gap: 4px !important; }
+.image-generation-set-actions button { display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 5px 8px; gap: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); }
+.image-generation-set-actions button:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
+.image-generation-set-actions button.is-danger { width: 28px; padding: 0; }
+.image-generation-set-actions button.is-danger:hover:not(:disabled) { border-color: rgba(244, 63, 94, 0.45); background: rgba(244, 63, 94, 0.08); color: var(--critical); }
+.image-generation-set-actions button:disabled { cursor: default; opacity: 0.38; }
+.image-generation-set-actions button span { font-size: 8px; font-weight: 700; }
+.image-generation-set-actions svg { width: 12px; height: 12px; }
 .image-generation-set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--border); }
 .image-generation-item {
     position: relative;
@@ -1023,16 +1152,43 @@ html.dark #keySwitcherMenu {
 .image-generation-item img { width: 100%; height: 100%; object-fit: contain; background: var(--bg); }
 .image-generation-item > span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 7px; padding: 12px; background: rgba(2, 6, 23, 0.28); color: #fff; font-size: 9px; }
 .image-generation-item > span em { font-style: normal; }
-.image-generation-item.is-completed > span { opacity: 0; background: rgba(2, 6, 23, 0.42); transition: opacity 140ms ease; }
+.image-generation-item.is-completed > span,
+.image-generation-item.is-partial > span { opacity: 0; background: rgba(2, 6, 23, 0.42); transition: opacity 140ms ease; }
 .image-generation-item.is-completed:hover > span,
-.image-generation-item.is-completed:focus-visible > span { opacity: 1; }
+.image-generation-item.is-completed:focus-visible > span,
+.image-generation-item.is-partial:hover > span,
+.image-generation-item.is-partial:focus-visible > span { opacity: 1; }
 .image-generation-item.is-failed > span { background: rgba(127, 29, 29, 0.55); color: #fff; }
 
-.image-result-modal { padding: 0; }
+#appMain > #imageResultModal { position: absolute; inset: 0; padding: 0; }
 .app-modal > .image-result-modal-panel { position: absolute; inset: 0; width: auto; height: auto; max-height: none; border: 0; transform: none !important; }
-.image-result-modal-actions { display: flex; gap: 4px; }
-.image-result-modal-canvas { display: flex; flex: 1 1 auto; align-items: center; justify-content: center; min-height: 0; padding: 12px; overflow: auto; background: var(--bg); }
-.image-result-modal-canvas img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.image-result-modal-header { flex: 0 0 48px; padding: 7px 10px; background: var(--surface); }
+.image-result-modal-actions { display: flex; align-items: center; gap: 6px; }
+.image-result-modal-actions > button,
+.image-viewer-zoom-controls { height: 32px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.image-result-modal-actions > button { display: flex; align-items: center; justify-content: center; width: 32px; color: var(--muted); }
+.image-result-modal-actions > button:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
+.image-result-modal-actions > button:disabled { opacity: 0.35; }
+.image-result-modal-actions .image-viewer-close:hover { border-color: rgba(244, 63, 94, 0.4); background: rgba(244, 63, 94, 0.08); color: var(--critical); }
+.image-viewer-zoom-controls { display: flex; align-items: stretch; overflow: hidden; }
+.image-viewer-zoom-controls button { display: flex; align-items: center; justify-content: center; min-width: 32px; padding: 0 8px; border-right: 1px solid var(--border-soft); background: transparent; color: var(--muted); font-size: 9px; }
+.image-viewer-zoom-controls button:last-child { border-right: 0; }
+.image-viewer-zoom-controls button:hover { background: var(--surface-strong); color: var(--brand); }
+.image-viewer-zoom-controls svg,
+.image-result-modal-actions > button svg { width: 14px; height: 14px; }
+.image-result-modal-canvas { position: relative; display: flex; flex: 1 1 auto; align-items: center; justify-content: center; min-height: 0; overflow: hidden; background: var(--bg); cursor: grab; touch-action: none; }
+.image-result-modal-canvas.is-dragging { cursor: grabbing; }
+.image-result-modal-canvas img { max-width: calc(100% - 32px); max-height: calc(100% - 32px); object-fit: contain; pointer-events: none; user-select: none; transform-origin: center; will-change: transform; transition: transform 100ms ease-out; }
+.image-result-modal-canvas.is-dragging img { transition: none; }
+
+@media (max-width: 600px) {
+    #imageGenerationControlPanel { padding: 12px; gap: 10px; }
+    .image-aspect-options { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .image-aspect-options button { min-height: 52px; }
+    .image-result-modal-header { align-items: flex-start; height: auto; min-height: 52px; }
+    .image-result-modal-header > div:first-child p { max-width: 180px; }
+    .image-generation-set-actions button span { display: none; }
+}
 
 .image-edit-mode #microSummary,
 .image-edit-mode #dashboardGrid,

@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from PIL import Image
+
 import app
 import image_editor
 
@@ -732,7 +734,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=27">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=29">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -760,19 +762,50 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn('id="imageEditPartialImages"', page)
         self.assertNotIn("partialImagesReceived", page)
         self.assertNotIn("image-edit-toggle-field", scss_source)
-        self.assertIn('id="imageEditOutputPreset"', page)
-        self.assertIn('<option value="lossless">无损</option>', page)
-        self.assertIn('<option value="large">大</option>', page)
-        self.assertIn('<option value="medium">中</option>', page)
-        self.assertIn('<option value="small">小</option>', page)
+        self.assertIn('id="imageEditQuality" type="hidden" value="auto"', page)
+        self.assertIn('id="imageEditOutputPreset" type="hidden" value="lossless"', page)
+        self.assertIn('data-preset="large"', page)
+        self.assertIn('data-preset="medium"', page)
+        self.assertIn('data-preset="small"', page)
         self.assertNotIn('id="imageEditBackground"', page)
         self.assertNotIn('id="imageEditModeration"', page)
         self.assertIn('id="imageGenerationCountButtons"', page)
         self.assertIn('data-count="9"', page)
+        self.assertNotIn('id="imageResolutionTierButtons"', page)
+        self.assertNotIn('data-tier="2k"', page)
+        self.assertIn('id="imageQualityButtons"', page)
+        self.assertIn('data-quality="high"', page)
+        self.assertIn('id="imageOutputPresetButtons"', page)
+        self.assertIn('data-preset="small"', page)
+        output_controls = page[page.index('id="imageOutputPresetButtons"'):]
+        self.assertLess(output_controls.index('data-preset="small"'), output_controls.index('data-preset="medium"'))
+        self.assertLess(output_controls.index('data-preset="medium"'), output_controls.index('data-preset="large"'))
+        self.assertLess(output_controls.index('data-preset="large"'), output_controls.index('data-preset="lossless"'))
+        self.assertIn('id="imageGenerationQualitySummary" data-quality="auto"', page)
+        self.assertIn('id="imageGenerationOutputSummary" data-preset="lossless"', page)
+        self.assertIn('#imageGenerationQualitySummary[data-quality="auto"]', scss_source)
+        self.assertIn('#imageGenerationQualitySummary[data-quality="high"]', scss_source)
+        self.assertIn('#imageOutputPresetButtons button[data-preset="lossless"].is-active', scss_source)
+        self.assertIn('id="imageAspectRatioButtons"', page)
+        self.assertIn('data-ratio="21:9"', page)
+        self.assertIn("'16:9': '1280x720'", page)
         self.assertIn('id="imageGenerationSets"', page)
         self.assertIn("window.applyImageGenerationEvent", page)
-        self.assertIn("useResultSetAsReferences", page)
+        self.assertIn("enterImageEditSession", page)
+        self.assertIn("exitImageEditSession", page)
+        self.assertIn("deleteImageGenerationSet", page)
+        self.assertIn("loadImageGenerationHistory", page)
+        self.assertIn("delete_image_set", page)
+        self.assertIn("list_image_sets", page)
+        self.assertNotIn("appendGeneratedReferences", page)
+        self.assertNotIn("useViewerImageAsReference", page)
         self.assertIn('id="imageResultModal"', page)
+        self.assertIn('id="imageResultModalCanvas"', page)
+        self.assertIn("initializeImageViewerInteractions", page)
+        self.assertIn("setImageViewerScale", page)
+        self.assertIn("load_generated_image", page)
+        self.assertIn("#appMain > #imageResultModal", scss_source)
+        self.assertIn("appMain.append(modal)", page)
         self.assertNotIn('id="imageEditCompression"', page)
         self.assertNotIn('id="imageEditFormat"', page)
         self.assertIn("choose_edit_images", page)
@@ -1042,8 +1075,16 @@ class ControllerTests(unittest.TestCase):
 
             def generate_result(*_args, **_kwargs):
                 result_path = root / f"result-{next(result_counter)}.png"
-                result_path.write_bytes(b"image")
-                return {"ok": True, "path": str(result_path), "uri": result_path.as_uri()}
+                Image.new("RGB", (8, 8), "blue").save(result_path)
+                return {
+                    "ok": True,
+                    "path": str(result_path),
+                    "uri": result_path.as_uri(),
+                    "width": 8,
+                    "height": 8,
+                    "format": "png",
+                    "actualSize": "8x8",
+                }
 
             service = SimpleNamespace(
                 generate=__import__("unittest.mock").mock.Mock(
@@ -1109,11 +1150,19 @@ class ControllerTests(unittest.TestCase):
     def test_generate_image_accepts_missing_reference_images(self):
         with tempfile.TemporaryDirectory() as temp:
             result_path = Path(temp) / "result.png"
-            result_path.write_bytes(b"image")
+            Image.new("RGB", (8, 8), "green").save(result_path)
             controller = app.AppController.__new__(app.AppController)
             controller.image_generator = SimpleNamespace(
                 generate=__import__("unittest.mock").mock.Mock(
-                    return_value={"ok": True, "path": str(result_path), "uri": result_path.as_uri()}
+                    return_value={
+                        "ok": True,
+                        "path": str(result_path),
+                        "uri": result_path.as_uri(),
+                        "width": 8,
+                        "height": 8,
+                        "format": "png",
+                        "actualSize": "8x8",
+                    }
                 )
             )
             controller.store = SimpleNamespace(
@@ -2187,6 +2236,7 @@ class ControllerTests(unittest.TestCase):
                 "choose_edit_images",
                 "complete_initialization",
                 "delete_key",
+                "delete_image_set",
                 "defer_update_restart",
                 "dismiss_update_prompt",
                 "download_update",
@@ -2196,6 +2246,8 @@ class ControllerTests(unittest.TestCase):
                 "initialize_assets",
                 "ignore_update_version",
                 "import_reference_image",
+                "load_generated_image",
+                "list_image_sets",
                 "native_drag",
                 "open_devtools",
                 "open_generated_pictures",
@@ -2216,6 +2268,82 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertNotIn("store", public_names)
         self.assertNotIn("window", public_names)
+
+    def test_load_generated_image_allows_only_managed_output(self):
+        controller = app.AppController.__new__(app.AppController)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            managed = root / "image-generations" / "partials" / "preview.png"
+            managed.parent.mkdir(parents=True)
+            Image.new("RGB", (8, 8), "blue").save(managed)
+            outside = root / "outside.png"
+            Image.new("RGB", (8, 8), "red").save(outside)
+
+            with patch("app.app_data_dir", return_value=root), patch(
+                "app.generated_pictures_dir", return_value=root / "pictures"
+            ):
+                allowed = controller.load_generated_image(str(managed))
+                blocked = controller.load_generated_image(str(outside))
+
+        self.assertTrue(allowed["ok"])
+        self.assertTrue(allowed["dataUrl"].startswith("data:image/png;base64,"))
+        self.assertFalse(blocked["ok"])
+        self.assertIn("只能读取", blocked["error"])
+
+    def test_controller_lists_and_deletes_persisted_image_sets(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.active_image_sets = set()
+        with tempfile.TemporaryDirectory() as temp:
+            pictures_root = Path(temp) / "Pictures" / app.APP_NAME
+            source = Path(temp) / "source.png"
+            Image.new("RGB", (12, 8), "teal").save(source)
+            store = image_editor.ImageSessionStore(pictures_root)
+            store.begin_round("session-1", "set-1", "测试提示词", 1, 0, {})
+            store.persist_result(
+                "session-1",
+                "set-1",
+                0,
+                source,
+                {"width": 12, "height": 8, "format": "png", "actualSize": "12x8"},
+            )
+            store.complete_round("session-1", "set-1")
+
+            with patch("app.generated_pictures_dir", return_value=pictures_root):
+                listed = controller.list_image_sets()
+                deleted = controller.delete_image_set("session-1", "set-1")
+                listed_after = controller.list_image_sets()
+
+        self.assertTrue(listed["ok"])
+        self.assertEqual(listed["sets"][0]["prompt"], "测试提示词")
+        self.assertTrue(deleted["ok"])
+        self.assertEqual(listed_after["sets"], [])
+
+    def test_controller_rejects_deleting_running_image_set(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.active_image_sets = {"set-running"}
+
+        result = controller.delete_image_set("session-1", "set-running")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("生成中", result["error"])
+
+    def test_controller_marks_stale_running_image_set_as_interrupted(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.active_image_sets = set()
+        with tempfile.TemporaryDirectory() as temp:
+            pictures_root = Path(temp) / "Pictures" / app.APP_NAME
+            store = image_editor.ImageSessionStore(pictures_root)
+            store.begin_round("session-stale", "set-stale", "未完成", 2, 0, {})
+
+            with patch("app.generated_pictures_dir", return_value=pictures_root):
+                listed = controller.list_image_sets()
+                deleted = controller.delete_image_set("session-stale", "set-stale")
+
+        image_set = listed["sets"][0]
+        self.assertEqual(image_set["status"], "interrupted")
+        self.assertEqual([item["status"] for item in image_set["items"]], ["failed", "failed"])
+        self.assertEqual([item["error"] for item in image_set["items"]], ["生成已中断", "生成已中断"])
+        self.assertTrue(deleted["ok"])
 
     def test_rpc_server_dispatches_only_allowlisted_controller_methods(self):
         class FakeConnection:
@@ -2300,6 +2428,8 @@ class ControllerTests(unittest.TestCase):
         state = api.get_state()
         refresh = api.refresh_now("trace-1")
         generated = api.generate_image("key-1", "combine", ["a.png", "b.png"], {"quality": "low"})
+        listed = api.list_image_sets()
+        deleted_set = api.delete_image_set("session-1", "set-1")
         choose = api.choose_edit_images()
         save = api.save_edited_image("result.png")
         window_result = api.window_action("minimize")
@@ -2318,6 +2448,11 @@ class ControllerTests(unittest.TestCase):
             controller.push_image_generation_event,
         )
         self.assertEqual(choose, {"local": "choose"})
+        self.assertEqual(listed, {"method": "list_image_sets", "args": ()})
+        self.assertEqual(
+            deleted_set,
+            {"method": "delete_image_set", "args": ("session-1", "set-1")},
+        )
         self.assertEqual(save, {"local": "result.png"})
         self.assertEqual(window_result, {"local": "minimize"})
         self.assertNotIn(

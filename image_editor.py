@@ -4,6 +4,8 @@ import base64
 import binascii
 import io
 import json
+import shutil
+import threading
 import urllib.error
 import urllib.request
 import uuid
@@ -28,6 +30,353 @@ OUTPUT_PRESETS = {
     "medium": ("jpeg", 75),
     "small": ("jpeg", 55),
 }
+
+
+def image_preview_bytes(image_bytes: bytes, max_side: int = 720) -> bytes:
+    with Image.open(io.BytesIO(image_bytes)) as source_image:
+        source_image.load()
+        preview_image = source_image.copy()
+    preview_image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+    if preview_image.mode in {"RGBA", "LA"} or "transparency" in preview_image.info:
+        rgba_image = preview_image.convert("RGBA")
+        flattened = Image.new("RGB", rgba_image.size, "white")
+        flattened.paste(rgba_image, mask=rgba_image.getchannel("A"))
+        preview_image = flattened
+    else:
+        preview_image = preview_image.convert("RGB")
+    preview_buffer = io.BytesIO()
+    preview_image.save(preview_buffer, format="JPEG", quality=78, optimize=True)
+    return preview_buffer.getvalue()
+
+
+def image_preview_data_url(image_bytes: bytes, max_side: int = 720) -> str:
+    encoded = base64.b64encode(image_preview_bytes(image_bytes, max_side)).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
+
+
+class ImageSessionStore:
+    SCHEMA_VERSION = 1
+    _manifest_lock = threading.RLock()
+
+    def __init__(self, pictures_root: Path) -> None:
+        self.root = pictures_root / "sessions"
+
+    @staticmethod
+    def _safe_id(value: Any, fallback: str = "") -> str:
+        clean = "".join(
+            character
+            for character in str(value or "")[:80]
+            if character.isalnum() or character in "-_"
+        )
+        return clean or fallback or uuid.uuid4().hex
+
+    @staticmethod
+    def _timestamp() -> str:
+        return datetime.now().astimezone().isoformat(timespec="seconds")
+
+    def _session_dir(self, session_id: str) -> Path:
+        return self.root / self._safe_id(session_id)
+
+    def _manifest_path(self, session_id: str) -> Path:
+        return self._session_dir(session_id) / "manifest.json"
+
+    def _read_manifest(self, session_id: str) -> dict[str, Any] | None:
+        manifest_path = self._manifest_path(session_id)
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _write_manifest(self, manifest: dict[str, Any]) -> None:
+        manifest["updatedAt"] = self._timestamp()
+        manifest["roundCount"] = len(manifest.get("rounds") or [])
+        manifest_path = self._manifest_path(str(manifest["sessionId"]))
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = manifest_path.with_suffix(".json.tmp")
+        temporary_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary_path.replace(manifest_path)
+
+    def begin_round(
+        self,
+        session_id: str,
+        set_id: str,
+        prompt: str,
+        requested_count: int,
+        reference_count: int,
+        options: dict[str, Any],
+        parent_set_id: str = "",
+    ) -> dict[str, Any]:
+        clean_session_id = self._safe_id(session_id)
+        clean_set_id = self._safe_id(set_id)
+        with self._manifest_lock:
+            manifest = self._read_manifest(clean_session_id)
+            if manifest is None:
+                created_at = self._timestamp()
+                manifest = {
+                    "schemaVersion": self.SCHEMA_VERSION,
+                    "sessionId": clean_session_id,
+                    "createdAt": created_at,
+                    "updatedAt": created_at,
+                    "roundCount": 0,
+                    "rounds": [],
+                }
+            existing = next(
+                (round_data for round_data in manifest["rounds"] if round_data.get("setId") == clean_set_id),
+                None,
+            )
+            if existing is not None:
+                return dict(existing)
+            round_number = max(
+                (int(round_data.get("roundNumber") or 0) for round_data in manifest["rounds"]),
+                default=0,
+            ) + 1
+            directory_name = f"round-{round_number:03d}-{clean_set_id[:12]}"
+            round_data = {
+                "roundNumber": round_number,
+                "setId": clean_set_id,
+                "requestId": clean_set_id,
+                "parentSetId": self._safe_id(parent_set_id, "") if parent_set_id else "",
+                "prompt": str(prompt),
+                "requestedCount": int(requested_count),
+                "referenceCount": int(reference_count),
+                "status": "running",
+                "createdAt": self._timestamp(),
+                "completedAt": "",
+                "directory": directory_name,
+                "options": {
+                    "size": str(options.get("size") or "auto"),
+                    "quality": str(options.get("quality") or "auto"),
+                    "outputPreset": str(options.get("outputPreset") or "lossless"),
+                },
+                "items": [
+                    {"itemIndex": item_index, "status": "queued", "error": ""}
+                    for item_index in range(int(requested_count))
+                ],
+            }
+            manifest["rounds"].append(round_data)
+            (self._session_dir(clean_session_id) / directory_name).mkdir(parents=True, exist_ok=True)
+            self._write_manifest(manifest)
+            return dict(round_data)
+
+    def _update_item(
+        self,
+        session_id: str,
+        set_id: str,
+        item_index: int,
+        replacement: dict[str, Any],
+    ) -> dict[str, Any]:
+        with self._manifest_lock:
+            manifest = self._read_manifest(session_id)
+            if manifest is None:
+                raise RuntimeError("图片会话不存在")
+            round_data = next(
+                (item for item in manifest["rounds"] if item.get("setId") == set_id),
+                None,
+            )
+            if round_data is None:
+                raise RuntimeError("图片生成轮次不存在")
+            while len(round_data["items"]) <= item_index:
+                round_data["items"].append(
+                    {"itemIndex": len(round_data["items"]), "status": "queued", "error": ""}
+                )
+            round_data["items"][item_index] = replacement
+            self._write_manifest(manifest)
+            return replacement
+
+    def persist_result(
+        self,
+        session_id: str,
+        set_id: str,
+        item_index: int,
+        source_path: Path,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        clean_session_id = self._safe_id(session_id)
+        clean_set_id = self._safe_id(set_id)
+        with self._manifest_lock:
+            manifest = self._read_manifest(clean_session_id)
+            if manifest is None:
+                raise RuntimeError("图片会话不存在")
+            round_data = next(
+                (item for item in manifest["rounds"] if item.get("setId") == clean_set_id),
+                None,
+            )
+            if round_data is None:
+                raise RuntimeError("图片生成轮次不存在")
+            round_dir = self._session_dir(clean_session_id) / str(round_data["directory"])
+            round_dir.mkdir(parents=True, exist_ok=True)
+            suffix = source_path.suffix.lower() if source_path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES else ".png"
+            original_path = round_dir / f"image-{item_index + 1:02d}-original{suffix}"
+            preview_path = round_dir / f"image-{item_index + 1:02d}-preview.jpg"
+            shutil.copy2(source_path, original_path)
+            original_bytes = original_path.read_bytes()
+            preview_bytes = image_preview_bytes(original_bytes)
+            preview_path.write_bytes(preview_bytes)
+            relative_original = original_path.relative_to(self._session_dir(clean_session_id)).as_posix()
+            relative_preview = preview_path.relative_to(self._session_dir(clean_session_id)).as_posix()
+            item_data = {
+                "itemIndex": item_index,
+                "status": "completed",
+                "error": "",
+                "original": relative_original,
+                "preview": relative_preview,
+                "width": int(result.get("width") or 0),
+                "height": int(result.get("height") or 0),
+                "sizeBytes": len(original_bytes),
+                "format": str(result.get("format") or suffix.lstrip(".")),
+                "actualSize": str(result.get("actualSize") or ""),
+                "quality": str(result.get("quality") or ""),
+            }
+            self._update_item(clean_session_id, clean_set_id, item_index, item_data)
+            return {
+                **result,
+                "path": str(original_path),
+                "uri": original_path.as_uri(),
+                "savedPath": str(original_path),
+                "previewPath": str(preview_path),
+                "previewUri": f"data:image/jpeg;base64,{base64.b64encode(preview_bytes).decode('ascii')}",
+                "sessionId": clean_session_id,
+                "setId": clean_set_id,
+                "roundNumber": int(round_data["roundNumber"]),
+            }
+
+    def record_failure(
+        self,
+        session_id: str,
+        set_id: str,
+        item_index: int,
+        error: str,
+    ) -> None:
+        self._update_item(
+            self._safe_id(session_id),
+            self._safe_id(set_id),
+            item_index,
+            {"itemIndex": item_index, "status": "failed", "error": str(error)},
+        )
+
+    def complete_round(self, session_id: str, set_id: str) -> None:
+        clean_session_id = self._safe_id(session_id)
+        clean_set_id = self._safe_id(set_id)
+        with self._manifest_lock:
+            manifest = self._read_manifest(clean_session_id)
+            if manifest is None:
+                return
+            round_data = next(
+                (item for item in manifest["rounds"] if item.get("setId") == clean_set_id),
+                None,
+            )
+            if round_data is None:
+                return
+            round_data["status"] = "completed"
+            round_data["completedAt"] = self._timestamp()
+            self._write_manifest(manifest)
+
+    def list_sets(self) -> list[dict[str, Any]]:
+        restored: list[dict[str, Any]] = []
+        if not self.root.is_dir():
+            return restored
+        with self._manifest_lock:
+            manifest_paths = sorted(
+                self.root.glob("*/manifest.json"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            for manifest_path in manifest_paths:
+                manifest = self._read_manifest(manifest_path.parent.name)
+                if manifest is None:
+                    continue
+                session_dir = manifest_path.parent
+                for round_data in manifest.get("rounds") or []:
+                    items: list[dict[str, Any]] = []
+                    for item_data in round_data.get("items") or []:
+                        item_index = int(item_data.get("itemIndex") or 0)
+                        if item_data.get("status") != "completed":
+                            items.append(
+                                {
+                                    "itemIndex": item_index,
+                                    "status": "failed" if round_data.get("status") == "completed" else str(item_data.get("status") or "queued"),
+                                    "uri": "",
+                                    "result": None,
+                                    "error": str(item_data.get("error") or "生成已中断"),
+                                }
+                            )
+                            continue
+                        original_path = session_dir / str(item_data.get("original") or "")
+                        preview_path = session_dir / str(item_data.get("preview") or "")
+                        if not original_path.is_file() or not preview_path.is_file():
+                            continue
+                        preview_uri = f"data:image/jpeg;base64,{base64.b64encode(preview_path.read_bytes()).decode('ascii')}"
+                        result = {
+                            "ok": True,
+                            "itemIndex": item_index,
+                            "path": str(original_path),
+                            "uri": original_path.as_uri(),
+                            "previewPath": str(preview_path),
+                            "previewUri": preview_uri,
+                            "width": int(item_data.get("width") or 0),
+                            "height": int(item_data.get("height") or 0),
+                            "sizeBytes": int(item_data.get("sizeBytes") or original_path.stat().st_size),
+                            "format": str(item_data.get("format") or original_path.suffix.lstrip(".")),
+                            "actualSize": str(item_data.get("actualSize") or ""),
+                            "quality": str(item_data.get("quality") or ""),
+                            "sessionId": str(manifest["sessionId"]),
+                            "setId": str(round_data.get("setId") or ""),
+                            "roundNumber": int(round_data.get("roundNumber") or 0),
+                        }
+                        items.append(
+                            {
+                                "itemIndex": item_index,
+                                "status": "completed",
+                                "uri": preview_uri,
+                                "result": result,
+                                "error": "",
+                            }
+                        )
+                    restored.append(
+                        {
+                            "setId": str(round_data.get("setId") or ""),
+                            "requestId": str(round_data.get("requestId") or ""),
+                            "sessionId": str(manifest["sessionId"]),
+                            "parentSetId": str(round_data.get("parentSetId") or ""),
+                            "roundNumber": int(round_data.get("roundNumber") or 0),
+                            "requestedCount": int(round_data.get("requestedCount") or len(items)),
+                            "prompt": str(round_data.get("prompt") or ""),
+                            "createdAt": str(round_data.get("createdAt") or manifest.get("createdAt") or ""),
+                            "status": str(round_data.get("status") or "completed"),
+                            "items": items,
+                        }
+                    )
+        restored.sort(key=lambda item: (item["createdAt"], item["roundNumber"]), reverse=True)
+        return restored
+
+    def delete_set(self, session_id: str, set_id: str) -> bool:
+        clean_session_id = self._safe_id(session_id)
+        clean_set_id = self._safe_id(set_id)
+        with self._manifest_lock:
+            manifest = self._read_manifest(clean_session_id)
+            if manifest is None:
+                return False
+            round_data = next(
+                (item for item in manifest["rounds"] if item.get("setId") == clean_set_id),
+                None,
+            )
+            if round_data is None:
+                return False
+            round_dir = self._session_dir(clean_session_id) / str(round_data.get("directory") or "")
+            if round_dir.is_dir() and round_dir.parent == self._session_dir(clean_session_id):
+                shutil.rmtree(round_dir)
+            manifest["rounds"] = [
+                item for item in manifest["rounds"] if item.get("setId") != clean_set_id
+            ]
+            if manifest["rounds"]:
+                self._write_manifest(manifest)
+            else:
+                shutil.rmtree(self._session_dir(clean_session_id), ignore_errors=True)
+            return True
 
 
 @dataclass(frozen=True)
@@ -325,6 +674,7 @@ class ImageGenerationService:
                         "partialIndex": partial_index,
                         "path": str(partial_path),
                         "uri": partial_path.as_uri(),
+                        "previewUri": image_preview_data_url(partial_bytes),
                     }
                 )
             except (binascii.Error, OSError, ValueError):
@@ -385,6 +735,7 @@ class ImageGenerationService:
             "ok": True,
             "path": str(output_path),
             "uri": output_path.as_uri(),
+            "previewUri": image_preview_data_url(output_bytes),
             "width": width,
             "height": height,
             "sizeBytes": len(output_bytes),
