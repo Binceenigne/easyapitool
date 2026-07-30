@@ -1676,21 +1676,34 @@ html.dark #keySwitcherMenu {
 .image-reasoning-control[data-mode=max] {
   overflow: hidden;
   border-radius: 7px;
-  background: #8062b9;
-  box-shadow: 0 0 0 1px rgba(181, 148, 224, 0.72), 0 0 12px rgba(169, 119, 218, 0.5), 0 0 22px rgba(126, 83, 188, 0.42);
+  background: #7c3aed;
+  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.76), 0 0 12px rgba(139, 92, 246, 0.52), 0 0 22px rgba(109, 40, 217, 0.38);
 }
 
 .image-reasoning-control[data-mode=max]::before {
   position: absolute;
   z-index: 0;
   inset: -18px;
-  background: linear-gradient(96deg, #7655b8 0%, #9f79d0 16.667%, #c7a8e4 33.333%, #7655b8 50%, #9f79d0 66.667%, #c7a8e4 83.333%, #7655b8 100%);
+  background: linear-gradient(96deg, #6d28d9 0%, #8b5cf6 16.667%, #c084fc 33.333%, #6d28d9 50%, #8b5cf6 66.667%, #c084fc 83.333%, #6d28d9 100%);
   background-size: 200% 100%;
   content: "";
-  filter: blur(16px) saturate(1.02);
-  opacity: 0.96;
+  filter: blur(14px) saturate(1.22);
+  opacity: 0.94;
   pointer-events: none;
   animation: reasoningGradient 16s linear infinite;
+}
+
+.image-reasoning-control[data-mode=max]::after {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 20%, rgba(255, 255, 255, 0.2) 46%, transparent 72%);
+  background-position: 130% 0;
+  background-size: 220% 100%;
+  content: "";
+  opacity: 0.58;
+  pointer-events: none;
+  animation: reasoningSheen 8s ease-in-out infinite;
 }
 
 .image-reasoning-control[data-mode=max] > button {
@@ -1784,6 +1797,14 @@ html.dark #keySwitcherMenu {
   }
   to {
     background-position: 100% 0;
+  }
+}
+@keyframes reasoningSheen {
+  0%, 18% {
+    background-position: 130% 0;
+  }
+  78%, 100% {
+    background-position: -80% 0;
   }
 }
 .is-spinning {
@@ -3959,6 +3980,7 @@ html.dark #avgMinVal {
   .image-reasoning-control[data-mode] > button,
   .image-reasoning-control[data-mode],
   .image-reasoning-control[data-mode=max]::before,
+  .image-reasoning-control[data-mode=max]::after,
   .image-reasoning-panel > p.is-streaming::after,
   .image-generation-item img.is-image-reveal {
     animation: none !important;

@@ -2342,6 +2342,7 @@
         const IMAGE_STREAM_PARTIAL_FLOOR_BLUR = 3;
         const IMAGE_STREAM_PARTIAL_DURATION = 10000;
         const IMAGE_STREAM_FINAL_DURATION = 3000;
+        const IMAGE_STREAM_INITIAL_FADE_DURATION = 5000;
         const IMAGE_STREAM_CROSSFADE_DURATION = 10000;
 
         function imageRevealTargetBlur(partialIndex, partialTotal) {
@@ -2412,6 +2413,10 @@
 
         function applyImageRevealAnimation(image, frame, frameIndex) {
             const elapsed = Math.max(0, Date.now() - Number(frame.startedAt || 0));
+            const initialPartial = frameIndex === 0 && frame.kind === 'partial';
+            const crossfadeDuration = initialPartial
+                ? IMAGE_STREAM_INITIAL_FADE_DURATION
+                : IMAGE_STREAM_CROSSFADE_DURATION;
             image.classList.remove('is-reveal-pending');
             image.classList.add('is-image-reveal', `is-${frame.kind}-reveal`);
             image.style.removeProperty('animation');
@@ -2422,9 +2427,9 @@
             image.style.setProperty('--image-reveal-delay', `${-Math.min(elapsed, frame.duration)}ms`);
             image.style.setProperty('--image-reveal-from-blur', `${frame.fromBlur}px`);
             image.style.setProperty('--image-reveal-to-blur', `${frame.toBlur}px`);
-            image.style.setProperty('--image-reveal-from-opacity', frameIndex === 0 ? '1' : '0');
-            image.style.setProperty('--image-reveal-crossfade-duration', `${IMAGE_STREAM_CROSSFADE_DURATION}ms`);
-            image.style.setProperty('--image-reveal-crossfade-delay', `${-Math.min(elapsed, IMAGE_STREAM_CROSSFADE_DURATION)}ms`);
+            image.style.setProperty('--image-reveal-from-opacity', initialPartial || frameIndex > 0 ? '0' : '1');
+            image.style.setProperty('--image-reveal-crossfade-duration', `${crossfadeDuration}ms`);
+            image.style.setProperty('--image-reveal-crossfade-delay', `${-Math.min(elapsed, crossfadeDuration)}ms`);
         }
 
         function scheduleFinalImageFrameCleanup(item, frame) {
