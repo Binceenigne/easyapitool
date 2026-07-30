@@ -32,7 +32,11 @@ OUTPUT_PRESETS = {
 }
 
 
-def image_preview_bytes(image_bytes: bytes, max_side: int = 720) -> bytes:
+def image_preview_bytes(
+    image_bytes: bytes,
+    max_side: int = 720,
+    optimize: bool = True,
+) -> bytes:
     with Image.open(io.BytesIO(image_bytes)) as source_image:
         source_image.load()
         preview_image = source_image.copy()
@@ -45,12 +49,18 @@ def image_preview_bytes(image_bytes: bytes, max_side: int = 720) -> bytes:
     else:
         preview_image = preview_image.convert("RGB")
     preview_buffer = io.BytesIO()
-    preview_image.save(preview_buffer, format="JPEG", quality=78, optimize=True)
+    preview_image.save(preview_buffer, format="JPEG", quality=78, optimize=optimize)
     return preview_buffer.getvalue()
 
 
-def image_preview_data_url(image_bytes: bytes, max_side: int = 720) -> str:
-    encoded = base64.b64encode(image_preview_bytes(image_bytes, max_side)).decode("ascii")
+def image_preview_data_url(
+    image_bytes: bytes,
+    max_side: int = 720,
+    optimize: bool = True,
+) -> str:
+    encoded = base64.b64encode(
+        image_preview_bytes(image_bytes, max_side, optimize)
+    ).decode("ascii")
     return f"data:image/jpeg;base64,{encoded}"
 
 
@@ -151,6 +161,11 @@ class ImageSessionStore:
                     "size": str(options.get("size") or "auto"),
                     "quality": str(options.get("quality") or "auto"),
                     "outputPreset": str(options.get("outputPreset") or "lossless"),
+                    "reasoningMode": str(options.get("reasoningMode") or "instant"),
+                    "reasoningModel": str(options.get("reasoningModel") or ""),
+                    "reasoningEffort": str(options.get("reasoningEffort") or ""),
+                    "reasoningSummary": str(options.get("reasoningSummary") or ""),
+                    "originalPrompt": str(options.get("originalPrompt") or prompt),
                 },
                 "items": [
                     {"itemIndex": item_index, "status": "queued", "error": ""}
@@ -291,6 +306,11 @@ class ImageSessionStore:
                     continue
                 session_dir = manifest_path.parent
                 for round_data in manifest.get("rounds") or []:
+                    options = round_data.get("options")
+                    if not isinstance(options, dict):
+                        options = {}
+                    reasoning_mode = str(options.get("reasoningMode") or "instant")
+                    reasoning_summary = str(options.get("reasoningSummary") or "")
                     items: list[dict[str, Any]] = []
                     for item_data in round_data.get("items") or []:
                         item_index = int(item_data.get("itemIndex") or 0)
@@ -309,14 +329,13 @@ class ImageSessionStore:
                         preview_path = session_dir / str(item_data.get("preview") or "")
                         if not original_path.is_file() or not preview_path.is_file():
                             continue
-                        preview_uri = f"data:image/jpeg;base64,{base64.b64encode(preview_path.read_bytes()).decode('ascii')}"
                         result = {
                             "ok": True,
                             "itemIndex": item_index,
                             "path": str(original_path),
                             "uri": original_path.as_uri(),
                             "previewPath": str(preview_path),
-                            "previewUri": preview_uri,
+                            "previewUri": "",
                             "width": int(item_data.get("width") or 0),
                             "height": int(item_data.get("height") or 0),
                             "sizeBytes": int(item_data.get("sizeBytes") or original_path.stat().st_size),
@@ -331,7 +350,9 @@ class ImageSessionStore:
                             {
                                 "itemIndex": item_index,
                                 "status": "completed",
-                                "uri": preview_uri,
+                                "uri": original_path.as_uri(),
+                                "previewPath": str(preview_path),
+                                "previewUri": "",
                                 "result": result,
                                 "error": "",
                             }
@@ -345,6 +366,13 @@ class ImageSessionStore:
                             "roundNumber": int(round_data.get("roundNumber") or 0),
                             "requestedCount": int(round_data.get("requestedCount") or len(items)),
                             "prompt": str(round_data.get("prompt") or ""),
+                            "originalPrompt": str(options.get("originalPrompt") or round_data.get("prompt") or ""),
+                            "reasoningMode": reasoning_mode,
+                            "reasoningModel": str(options.get("reasoningModel") or ""),
+                            "reasoningEffort": str(options.get("reasoningEffort") or ""),
+                            "reasoningSummary": reasoning_summary,
+                            "reasoningStatus": "completed" if reasoning_mode != "instant" and reasoning_summary else "idle",
+                            "effectivePrompt": str(round_data.get("prompt") or "") if reasoning_mode != "instant" else "",
                             "createdAt": str(round_data.get("createdAt") or manifest.get("createdAt") or ""),
                             "status": str(round_data.get("status") or "completed"),
                             "items": items,
@@ -741,9 +769,14 @@ class ImageGenerationService:
                 on_partial(
                     {
                         "partialIndex": partial_index,
+                        "partialTotal": request.partial_images,
                         "path": str(partial_path),
                         "uri": partial_path.as_uri(),
-                        "previewUri": image_preview_data_url(partial_bytes),
+                        "previewUri": image_preview_data_url(
+                            partial_bytes,
+                            max_side=512,
+                            optimize=False,
+                        ),
                     }
                 )
             except (binascii.Error, OSError, ValueError):

@@ -45,7 +45,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.16"
+APP_VERSION = "1.0.17"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -116,6 +116,15 @@ RESTART_READY_ENV = "API_TOOLS_RESTART_READY"
 MANUAL_REFRESH_COOLDOWN_SECONDS = 5
 CF_DIB = 8
 GMEM_MOVEABLE = 0x0002
+PROMPT_POLISH_MODEL = "gpt-5.6-terra"
+PROMPT_POLISH_REASONING_EFFORT = "medium"
+PROMPT_RESULT_MARKER = "<<<FINAL_PROMPT>>>"
+IMAGE_REASONING_MODES = {
+    "low": {"model": "gpt-5.6-luna", "effort": "low", "depth": "快速理解需求并做一次轻量可用性检查，避免冗长反思"},
+    "medium": {"model": "gpt-5.6-terra", "effort": "medium", "depth": "进行均衡的需求拆解、方案设计和可用性评估"},
+    "high": {"model": "gpt-5.6-sol", "effort": "medium", "depth": "深入比较可行方案并反思关键风险后再选择方案"},
+    "max": {"model": "gpt-5.6-sol", "effort": "xhigh", "depth": "充分探索与比较方案，进行多角度反思和严格可用性评估"},
+}
 
 
 class NetworkTransportError(RuntimeError):
@@ -1018,6 +1027,8 @@ RPC_METHODS = {
     "initialize_assets",
     "load_generated_image",
     "list_image_sets",
+    "open_generated_pictures",
+    "polish_prompt",
     "refresh_now",
     "report_startup",
     "restart_app",
@@ -1115,7 +1126,7 @@ class ControllerRpcServer:
             if method_name not in RPC_METHODS:
                 raise ValueError("不允许的后台调用")
             method = getattr(self.controller, method_name)
-            if method_name == "generate_image":
+            if method_name in {"generate_image", "polish_prompt"}:
                 send_lock = threading.Lock()
 
                 def send_event(event: dict[str, Any]) -> None:
@@ -2069,6 +2080,137 @@ class EasyClinClient:
                 seen.add(model_id)
                 model_ids.append(model_id)
         return usage, model_ids
+
+    @staticmethod
+    def _response_output_text(payload: Any) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        direct = payload.get("output_text")
+        if isinstance(direct, str):
+            return direct
+        response = payload.get("response")
+        if isinstance(response, dict):
+            nested = EasyClinClient._response_output_text(response)
+            if nested:
+                return nested
+        parts: list[str] = []
+        for output in payload.get("output") or []:
+            if not isinstance(output, dict):
+                continue
+            for content in output.get("content") or []:
+                if not isinstance(content, dict):
+                    continue
+                text = content.get("text")
+                if content.get("type") in {"output_text", "text"} and isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+
+    @staticmethod
+    def stream_response(
+        base_url: str,
+        secret: str,
+        model: str,
+        instructions: str,
+        input_text: Any,
+        on_delta: Any = None,
+        timeout: int = 240,
+        reasoning_effort: str | None = None,
+    ) -> str:
+        url = f"{base_url.rstrip('/')}/responses"
+        payload = {
+            "model": model,
+            "instructions": instructions,
+            "input": input_text,
+            "stream": True,
+        }
+        if reasoning_effort:
+            payload["reasoning"] = {"effort": reasoning_effort}
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {secret}",
+                "Accept": "text/event-stream",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                content_type = str(response.headers.get("Content-Type") or "").lower()
+                if "text/event-stream" not in content_type:
+                    payload = json.loads(response.read().decode("utf-8"))
+                    text = EasyClinClient._response_output_text(payload)
+                    if not text:
+                        raise RuntimeError("Responses 接口未返回文本")
+                    if on_delta is not None:
+                        on_delta(text)
+                    return text
+
+                chunks: list[str] = []
+                event_type = ""
+                data_lines: list[str] = []
+
+                def flush_event() -> None:
+                    nonlocal event_type, data_lines
+                    if not data_lines:
+                        event_type = ""
+                        return
+                    raw_data = "\n".join(data_lines)
+                    current_event = event_type
+                    event_type = ""
+                    data_lines = []
+                    if raw_data == "[DONE]":
+                        return
+                    try:
+                        payload = json.loads(raw_data)
+                    except json.JSONDecodeError:
+                        return
+                    payload_type = str(payload.get("type") or current_event or "")
+                    if payload_type == "response.output_text.delta":
+                        delta = payload.get("delta")
+                        if isinstance(delta, str) and delta:
+                            chunks.append(delta)
+                            if on_delta is not None:
+                                on_delta(delta)
+                        return
+                    if payload_type in {"error", "response.failed", "response.incomplete"}:
+                        error = payload.get("error") or payload.get("response", {}).get("error") or {}
+                        message = error.get("message") if isinstance(error, dict) else str(error)
+                        raise RuntimeError(message or "Responses 接口执行失败")
+                    if payload_type == "response.completed" and not chunks:
+                        completed_text = EasyClinClient._response_output_text(payload)
+                        if completed_text:
+                            chunks.append(completed_text)
+                            if on_delta is not None:
+                                on_delta(completed_text)
+
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
+                    if not line:
+                        flush_event()
+                    elif line.startswith("event:"):
+                        event_type = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_lines.append(line[5:].lstrip())
+                flush_event()
+                text = "".join(chunks)
+                if not text:
+                    raise RuntimeError("Responses 接口未返回文本")
+                return text
+        except urllib.error.HTTPError as exc:
+            response_body = exc.read().decode("utf-8", "replace")
+            try:
+                payload = json.loads(response_body)
+                error = payload.get("error") or {}
+                message = error.get("message") if isinstance(error, dict) else str(error)
+            except json.JSONDecodeError:
+                message = response_body[:300]
+            raise RuntimeError(f"HTTP {exc.code}: {message or exc.reason}") from None
+        except (urllib.error.URLError, TimeoutError) as exc:
+            reason = exc.reason if hasattr(exc, "reason") else exc
+            raise RuntimeError(f"Responses 网络请求失败: {reason}") from None
 
 class AppController:
     def __init__(
@@ -3361,6 +3503,141 @@ class AppController:
             return {"ok": False, "error": error}
         return {"ok": True, "activeKeyId": key_id, "state": self.get_state()}
 
+    @staticmethod
+    def _agent_input(prompt: str, image_paths: tuple[Path, ...] = ()) -> Any:
+        if not image_paths:
+            return prompt
+        content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt}]
+        for image_path in image_paths:
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url": image_preview_data_url(image_path.read_bytes(), max_side=1024),
+                }
+            )
+        return [{"role": "user", "content": content}]
+
+    def polish_prompt(
+        self,
+        key_id: str,
+        prompt: str,
+        event_callback: Any = None,
+    ) -> dict[str, Any]:
+        clean_prompt = str(prompt or "").strip()
+        if not clean_prompt:
+            return {"ok": False, "error": "请输入需要润色的提示词"}
+        record = self.store.get_key_record(str(key_id or ""))
+        if record is None:
+            return {"ok": False, "error": "请选择有效的 API Key"}
+        secret = self.store.get_secret(record["id"])
+
+        def emit(event_type: str, **details: Any) -> None:
+            if event_callback is not None:
+                event_callback({"type": event_type, **details})
+
+        emit(
+            "prompt_polish_started",
+            model=PROMPT_POLISH_MODEL,
+            reasoningEffort=PROMPT_POLISH_REASONING_EFFORT,
+        )
+        try:
+            polished = self.client.stream_response(
+                record["base_url"],
+                secret,
+                PROMPT_POLISH_MODEL,
+                (
+                    "你是专业视觉提示词编辑器。先根据用户输入自动判断属于艺术创作、工作创作、"
+                    "图像编辑、文字润色或其他场景，再采用匹配该场景的表达方式补全主体、构图、"
+                    "光线、材质、风格、约束和交付目标。保留用户意图，不虚构冲突要求。"
+                    "只输出可直接用于图片生成的最终提示词，不要解释判断过程，不要添加标题。"
+                ),
+                clean_prompt,
+                on_delta=lambda delta: emit("prompt_polish_delta", delta=delta),
+                reasoning_effort=PROMPT_POLISH_REASONING_EFFORT,
+            ).strip()
+        except RuntimeError as exc:
+            emit("prompt_polish_failed", error=str(exc))
+            return {"ok": False, "error": str(exc)}
+        if not polished:
+            return {"ok": False, "error": "润色模型未返回提示词"}
+        emit(
+            "prompt_polish_completed",
+            prompt=polished,
+            model=PROMPT_POLISH_MODEL,
+            reasoningEffort=PROMPT_POLISH_REASONING_EFFORT,
+        )
+        return {
+            "ok": True,
+            "prompt": polished,
+            "model": PROMPT_POLISH_MODEL,
+            "reasoningEffort": PROMPT_POLISH_REASONING_EFFORT,
+        }
+
+    def _run_image_prompt_agent(
+        self,
+        record: Any,
+        secret: str,
+        prompt: str,
+        image_paths: tuple[Path, ...],
+        reasoning_mode: str,
+        emit: Any,
+    ) -> tuple[str, str, str]:
+        config = IMAGE_REASONING_MODES[reasoning_mode]
+        model = str(config["model"])
+        reasoning_effort = str(config["effort"])
+        complete_text = ""
+        published_length = 0
+
+        def on_delta(delta: str) -> None:
+            nonlocal complete_text, published_length
+            complete_text += delta
+            marker_index = complete_text.find(PROMPT_RESULT_MARKER)
+            safe_length = marker_index if marker_index >= 0 else max(
+                0, len(complete_text) - len(PROMPT_RESULT_MARKER) + 1
+            )
+            if safe_length > published_length:
+                emit("react_summary_delta", delta=complete_text[published_length:safe_length])
+                published_length = safe_length
+
+        emit(
+            "react_started",
+            mode=reasoning_mode,
+            model=model,
+            reasoningEffort=reasoning_effort,
+        )
+        output = self.client.stream_response(
+            record["base_url"],
+            secret,
+            model,
+            (
+                "你是一个用于图片创作的轻量 ReAct 智能体。根据用户文字和可选参考图，从需求理解"
+                "出发，自主选择必要的分析、方案设计、工具化检查与反思步骤；不要机械套用固定步骤数。"
+                f"当前深度建议：{config['depth']}。"
+                "请流畅输出面向用户、可审计的简短工作摘要，描述正在判断的创作环境、关键需求、"
+                "候选方案与可用性评估；不要披露隐藏内部推理、逐 token 思维链或敏感信息。"
+                f"摘要结束后单独输出标记 {PROMPT_RESULT_MARKER}，标记后只写可直接提交给图片模型的最终提示词。"
+            ),
+            self._agent_input(prompt, image_paths),
+            on_delta=on_delta,
+            reasoning_effort=reasoning_effort,
+        )
+        marker_index = output.find(PROMPT_RESULT_MARKER)
+        if marker_index < 0:
+            raise RuntimeError("ReAct 未返回最终提示词标记")
+        summary = output[:marker_index].strip()
+        final_prompt = output[marker_index + len(PROMPT_RESULT_MARKER):].strip()
+        if not final_prompt:
+            raise RuntimeError("ReAct 未返回最终提示词")
+        emit(
+            "react_completed",
+            mode=reasoning_mode,
+            model=model,
+            reasoningEffort=reasoning_effort,
+            summary=summary,
+            prompt=final_prompt,
+        )
+        return final_prompt, summary, model
+
     def generate_image(
         self,
         key_id: str,
@@ -3379,6 +3656,9 @@ class AppController:
         request_id = str(clean_options.get("requestId") or uuid.uuid4().hex)[:80]
         session_id = str(clean_options.get("sessionId") or request_id)[:80]
         parent_set_id = str(clean_options.get("parentSetId") or "")[:80]
+        reasoning_mode = str(clean_options.get("reasoningMode") or "instant").lower()
+        if reasoning_mode not in {"instant", *IMAGE_REASONING_MODES}:
+            return {"ok": False, "error": "无效的思维模式"}
         clean_options.update(
             {
                 "background": "auto",
@@ -3396,6 +3676,53 @@ class AppController:
         if record is None:
             return {"ok": False, "error": "请选择有效的 API Key"}
         secret = self.store.get_secret(record["id"])
+
+        def emit(event_type: str, item_index: int | None = None, **details: Any) -> None:
+            if event_callback is None:
+                return
+            event = {
+                "type": event_type,
+                "requestId": request_id,
+                "setId": request_id,
+                "sessionId": session_id,
+                "parentSetId": parent_set_id,
+                **details,
+            }
+            if item_index is not None:
+                event["itemIndex"] = item_index
+            try:
+                event_callback(event)
+            except Exception:
+                pass
+
+        original_prompt = request.prompt
+        reasoning_summary = ""
+        reasoning_model = ""
+        reasoning_effort = ""
+        if reasoning_mode != "instant":
+            reasoning_effort = str(IMAGE_REASONING_MODES[reasoning_mode]["effort"])
+            try:
+                final_prompt, reasoning_summary, reasoning_model = self._run_image_prompt_agent(
+                    record,
+                    secret,
+                    original_prompt,
+                    request.image_paths,
+                    reasoning_mode,
+                    emit,
+                )
+                request = prepare_image_generation(final_prompt, image_paths, clean_options)
+            except (RuntimeError, OSError, ValueError) as exc:
+                emit("react_failed", mode=reasoning_mode, error=str(exc))
+                return {"ok": False, "error": f"思维处理失败：{exc}"}
+        clean_options.update(
+            {
+                "reasoningMode": reasoning_mode,
+                "reasoningModel": reasoning_model,
+                "reasoningEffort": reasoning_effort,
+                "reasoningSummary": reasoning_summary,
+                "originalPrompt": original_prompt,
+            }
+        )
         managed_output_dir = app_data_dir() / "image-generations"
         session_store = self._image_session_store()
         try:
@@ -3416,30 +3743,17 @@ class AppController:
             self.active_image_sets = active_sets
         active_sets.add(request_id)
 
-        def emit(event_type: str, item_index: int | None = None, **details: Any) -> None:
-            if event_callback is None:
-                return
-            event = {
-                "type": event_type,
-                "requestId": request_id,
-                "setId": request_id,
-                "sessionId": session_id,
-                "parentSetId": parent_set_id,
-                "roundNumber": int(round_data["roundNumber"]),
-                **details,
-            }
-            if item_index is not None:
-                event["itemIndex"] = item_index
-            try:
-                event_callback(event)
-            except Exception:
-                pass
-
         emit(
             "set_started",
             requestedCount=image_count,
             prompt=request.prompt,
             referenceCount=len(request.image_paths),
+            roundNumber=int(round_data["roundNumber"]),
+            originalPrompt=original_prompt,
+            reasoningMode=reasoning_mode,
+            reasoningModel=reasoning_model,
+            reasoningEffort=reasoning_effort,
+            reasoningSummary=reasoning_summary,
         )
 
         def generate_one(item_index: int) -> dict[str, Any]:
@@ -3497,6 +3811,11 @@ class AppController:
             "requestedCount": image_count,
             "items": items,
             "prompt": request.prompt,
+            "originalPrompt": original_prompt,
+            "reasoningMode": reasoning_mode,
+            "reasoningModel": reasoning_model,
+            "reasoningEffort": reasoning_effort,
+            "reasoningSummary": reasoning_summary,
             "referenceCount": len(request.image_paths),
         }
         if not successful:
@@ -3897,6 +4216,9 @@ class WebApi:
     ) -> dict[str, Any]:
         return self._controller.generate_image(key_id, prompt, image_paths, options)
 
+    def polish_prompt(self, key_id: str, prompt: str) -> dict[str, Any]:
+        return self._controller.polish_prompt(key_id, prompt)
+
     def refresh_now(self, trace_id: Any = None) -> dict[str, Any]:
         return self._controller.refresh_now(trace_id)
 
@@ -4198,6 +4520,14 @@ class RemoteWebApi(WebApi):
             prompt,
             image_paths,
             options,
+            on_event=self._controller.push_image_generation_event,
+        )
+
+    def polish_prompt(self, key_id: str, prompt: str) -> dict[str, Any]:
+        return self._rpc_client.call_with_events(
+            "polish_prompt",
+            key_id,
+            prompt,
             on_event=self._controller.push_image_generation_event,
         )
 

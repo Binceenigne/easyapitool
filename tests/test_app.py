@@ -608,6 +608,88 @@ class UtilityTests(unittest.TestCase):
         self.assertEqual(usage["usage"]["total"]["cost"], 5)
         self.assertIsNone(models)
 
+    def test_client_streams_responses_output_text_deltas(self):
+        class FakeHeaders:
+            @staticmethod
+            def get(_name):
+                return "text/event-stream"
+
+        class FakeResponse:
+            headers = FakeHeaders()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def __iter__(self):
+                return iter(
+                    [
+                        b"event: response.output_text.delta\n",
+                        b'data: {"type":"response.output_text.delta","delta":"Analyze "}\n',
+                        b"\n",
+                        b'data: {"type":"response.output_text.delta","delta":"the scene"}\n',
+                        b"\n",
+                        b'data: {"type":"response.completed","response":{"output":[]}}\n',
+                        b"\n",
+                    ]
+                )
+
+        deltas = []
+        with patch("app.urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+            text = app.EasyClinClient.stream_response(
+                "https://example.test/v1",
+                "secret",
+                "gpt-test",
+                "instructions",
+                "input",
+                on_delta=deltas.append,
+                reasoning_effort="high",
+            )
+
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(request.full_url, "https://example.test/v1/responses")
+        self.assertEqual(request.headers["Authorization"], "Bearer secret")
+        self.assertEqual(payload["model"], "gpt-test")
+        self.assertEqual(payload["reasoning"], {"effort": "high"})
+        self.assertTrue(payload["stream"])
+        self.assertEqual(text, "Analyze the scene")
+        self.assertEqual(deltas, ["Analyze ", "the scene"])
+
+    def test_client_accepts_non_streaming_responses_payload(self):
+        class FakeHeaders:
+            @staticmethod
+            def get(_name):
+                return "application/json"
+
+        class FakeResponse:
+            headers = FakeHeaders()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def read():
+                return json.dumps(
+                    {
+                        "output": [
+                            {"content": [{"type": "output_text", "text": "Polished prompt"}]}
+                        ]
+                    }
+                ).encode("utf-8")
+
+        with patch("app.urllib.request.urlopen", return_value=FakeResponse()):
+            text = app.EasyClinClient.stream_response(
+                "https://example.test/v1", "secret", "model", "instructions", "input"
+            )
+
+        self.assertEqual(text, "Polished prompt")
+
     def test_client_posts_multiple_edit_images_as_multipart(self):
         class FakeResponse:
             def __enter__(self):
@@ -766,6 +848,9 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('role="alertdialog"', page)
         self.assertNotIn("window.confirm", page)
         self.assertIn("copy_generated_image", page)
+        self.assertIn("function copyGeneratedImage(result)", page)
+        self.assertIn("card.addEventListener('contextmenu'", page)
+        self.assertIn("canvas.addEventListener('contextmenu'", page)
         self.assertIn("document.getElementById('editImageSelection').hidden = active", page)
         self.assertIn("? '请输入要调整的内容'", page)
         self.assertIn("const files = session ? session.references : window.imageEditState.files", page)
@@ -1021,6 +1106,101 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn("--ui-scale", page)
         self.assertNotIn("∞", page)
 
+    def test_image_prompt_assistance_controls_and_streaming_summary(self):
+        project_root = Path(__file__).parents[1]
+        page = (project_root / app.MAIN_PAGE_NAME).read_text(encoding="utf-8")
+        stylesheet = (project_root / "assets" / "app.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="polishImagePromptButton"', page)
+        self.assertIn('onclick="polishImagePrompt()"', page)
+        self.assertIn('id="imageReasoningControl"', page)
+        self.assertIn('id="imageReasoningMenu"', page)
+        for mode in ("instant", "low", "medium", "high", "max"):
+            self.assertIn(f'data-mode="{mode}"', page)
+            self.assertIn(f'setImageReasoningMode(\'{mode}\')', page)
+        self.assertIn("reasoningMode: window.imageEditState.reasoningMode", page)
+        self.assertIn("event.type === 'prompt_polish_delta'", page)
+        self.assertIn("event.type === 'react_summary_delta'", page)
+        self.assertIn("function queueReasoningSummaryRender(setId)", page)
+        self.assertIn("reasoningSummaryRenderFrame = requestAnimationFrame", page)
+        self.assertIn("data-reasoning-summary", page)
+        self.assertIn(".image-reasoning-control[data-mode=low]", stylesheet)
+        self.assertIn(".image-reasoning-control[data-mode=max]", stylesheet)
+        self.assertRegex(
+            stylesheet,
+            r"\.image-reasoning-menu\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\)",
+        )
+        self.assertNotRegex(
+            stylesheet,
+            r"\.image-reasoning-control\s*\{[^}]*isolation:",
+        )
+        self.assertRegex(
+            stylesheet,
+            r"\.image-reasoning-control\[data-mode=max\]::before\s*\{[^}]*background-size: 200% 100%[^}]*reasoningGradient 16s linear infinite",
+        )
+        self.assertNotIn("reasoningLightning", stylesheet)
+        self.assertIn("background-position: 100% 0", stylesheet)
+        self.assertNotIn("reasoningPulse", stylesheet)
+        self.assertNotIn('.image-reasoning-control[data-mode=low] > button', stylesheet)
+        self.assertIn("controlRect.right - menuWidth", page)
+        self.assertIn(".image-reasoning-menu.is-open", stylesheet)
+        self.assertIn(".image-reasoning-panel", stylesheet)
+        self.assertIn("@keyframes reasoningCursor", stylesheet)
+        self.assertIn("const IMAGE_STREAM_PARTIAL_DURATION = 10000", page)
+        self.assertIn("const IMAGE_STREAM_FINAL_DURATION = 3000", page)
+        self.assertIn("const IMAGE_STREAM_CROSSFADE_DURATION = 10000", page)
+        self.assertIn("function currentImageRevealBlur(item, beforeFrameIndex", page)
+        self.assertIn("function freezeImageRevealFrame(frame, image, blur, opacity", page)
+        self.assertIn("frame.frozenOpacity", page)
+        self.assertIn("frame.fromBlur = Math.max(Number(frame.toBlur) || 0, visibleBlur)", page)
+        self.assertIn("item.revealFrames.push(frame)", page)
+        self.assertIn("const imageRevealElementCache = new WeakMap()", page)
+        self.assertIn("createImageRevealElement(item, frame, frameIndex)", page)
+        self.assertIn("function scheduleFinalImageFrameCleanup(item, frame)", page)
+        self.assertIn("Math.max(frame.duration, IMAGE_STREAM_CROSSFADE_DURATION)", page)
+        self.assertIn("item.revealFrames = [frame]", page)
+        self.assertIn("function toggleImageGenerationSet(setId)", page)
+        self.assertIn("if (!set || set.status === 'running') return", page)
+        self.assertIn("if (set.status !== 'running')", page)
+        self.assertIn("if (!set.expanded && set.history)", page)
+        self.assertIn("set.previewsLoaded = false", page)
+        self.assertIn("existingSet.expanded = false", page)
+        self.assertNotIn("set.status = 'completed';\n                set.expanded = false", page)
+        self.assertIn("if (!expanded)", page)
+        self.assertIn("function loadImageGenerationSetPreviews(set)", page)
+        self.assertIn("previewPath = item.previewPath || item.result?.previewPath", page)
+        self.assertIn("function copyImagePrompt(text, label)", page)
+        self.assertIn("复制原始提示词", page)
+        self.assertIn("复制思维优化提示词", page)
+        self.assertIn("image-generation-set-title-row", page)
+        self.assertIn("image-reasoning-final-prompt", page)
+        self.assertIn("item.previewUri || item.uri", page)
+        self.assertIn("item.result?.previewUri || item.previewUri || item.result?.uri || item.uri", page)
+        self.assertIn("window.pywebview.api.load_generated_image(item.result.path)", page)
+        self.assertIn("--image-reveal-from-blur", page)
+        self.assertIn("--image-reveal-to-blur", page)
+        self.assertIn("--image-reveal-delay", page)
+        self.assertIn("--image-reveal-crossfade-delay", page)
+        self.assertIn(".image-generation-item img.is-image-reveal", stylesheet)
+        self.assertIn("animation-name: imageBlurReveal, imageLayerReveal", stylesheet)
+        self.assertIn("will-change: filter, opacity, transform", stylesheet)
+        self.assertIn("transform: translate3d(0, 0, 0)", stylesheet)
+        self.assertIn("backface-visibility: hidden", stylesheet)
+        self.assertIn("contain: paint", stylesheet)
+        self.assertIn("@keyframes imageBlurReveal", stylesheet)
+        self.assertIn("@keyframes imageLayerReveal", stylesheet)
+        self.assertIn(".image-generation-item img.is-reveal-pending", stylesheet)
+        self.assertIn(".image-generation-set-loading", stylesheet)
+        self.assertIn(".image-prompt-copy", stylesheet)
+        self.assertRegex(
+            stylesheet,
+            r"\.image-prompt-copy\s*\{[^}]*width: 16px[^}]*height: 16px[^}]*border: 0[^}]*background: transparent",
+        )
+        self.assertNotIn("background: rgba(2, 6, 23, 0.46)", stylesheet)
+        self.assertNotIn("@keyframes imagePartialReveal", stylesheet)
+        self.assertNotIn("@keyframes imageFinalReveal", stylesheet)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", stylesheet)
+
     def test_main_page_window_controls_use_lucide_icons(self):
         project_root = Path(__file__).parents[1]
         page = (project_root / app.MAIN_PAGE_NAME).read_text(encoding="utf-8")
@@ -1200,6 +1380,138 @@ class ControllerTests(unittest.TestCase):
                 result = controller.generate_image("key-1", "Generate image", [], {})
 
         self.assertTrue(result["ok"])
+
+    def test_polish_prompt_uses_terra_and_streams_events(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.store = SimpleNamespace(
+            get_key_record=lambda key_id: {
+                "id": key_id,
+                "base_url": "https://example.test/v1",
+            },
+            get_secret=lambda _key_id: "secret",
+        )
+        events = []
+
+        def stream_response(*_args, **kwargs):
+            kwargs["on_delta"]("polished ")
+            kwargs["on_delta"]("prompt")
+            return "polished prompt"
+
+        controller.client = SimpleNamespace(
+            stream_response=__import__("unittest.mock").mock.Mock(side_effect=stream_response)
+        )
+
+        result = controller.polish_prompt("key-1", "rough prompt", events.append)
+
+        self.assertEqual(result["prompt"], "polished prompt")
+        self.assertEqual(controller.client.stream_response.call_args.args[2], app.PROMPT_POLISH_MODEL)
+        self.assertEqual(
+            controller.client.stream_response.call_args.kwargs["reasoning_effort"],
+            "medium",
+        )
+        self.assertEqual(
+            [event["type"] for event in events],
+            [
+                "prompt_polish_started",
+                "prompt_polish_delta",
+                "prompt_polish_delta",
+                "prompt_polish_completed",
+            ],
+        )
+
+    def test_reasoning_modes_keep_model_and_effort_separate(self):
+        self.assertEqual(
+            {
+                mode: (config["model"], config["effort"])
+                for mode, config in app.IMAGE_REASONING_MODES.items()
+            },
+            {
+                "low": ("gpt-5.6-luna", "low"),
+                "medium": ("gpt-5.6-terra", "medium"),
+                "high": ("gpt-5.6-sol", "medium"),
+                "max": ("gpt-5.6-sol", "xhigh"),
+            },
+        )
+        self.assertEqual(app.PROMPT_POLISH_MODEL, "gpt-5.6-terra")
+        self.assertEqual(app.PROMPT_POLISH_REASONING_EFFORT, "medium")
+
+    def test_generate_image_medium_react_streams_summary_and_uses_final_prompt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_path = root / "reference.png"
+            Image.new("RGB", (8, 8), "red").save(input_path)
+            output_path = root / "result.png"
+            Image.new("RGB", (8, 8), "blue").save(output_path)
+            service = SimpleNamespace(
+                generate=__import__("unittest.mock").mock.Mock(
+                    return_value={
+                        "ok": True,
+                        "path": str(output_path),
+                        "uri": output_path.as_uri(),
+                        "width": 8,
+                        "height": 8,
+                        "format": "png",
+                        "actualSize": "8x8",
+                    }
+                )
+            )
+            controller = app.AppController.__new__(app.AppController)
+            controller.image_generator = service
+            controller.store = SimpleNamespace(
+                get_key_record=lambda key_id: {
+                    "id": key_id,
+                    "base_url": "https://example.test/v1",
+                },
+                get_secret=lambda _key_id: "secret",
+            )
+
+            def stream_response(*_args, **kwargs):
+                text = "环境：工作创作\n方案：清晰图表\n<<<FINAL_PROMPT>>>A clean professional chart"
+                for chunk in [
+                    "环境：工作创作\n",
+                    "方案：清晰图表\n<<<FINAL_",
+                    "PROMPT>>>A clean professional chart",
+                ]:
+                    kwargs["on_delta"](chunk)
+                return text
+
+            controller.client = SimpleNamespace(
+                stream_response=__import__("unittest.mock").mock.Mock(side_effect=stream_response)
+            )
+            events = []
+            with patch("app.app_data_dir", return_value=root / "data"), patch(
+                "app.generated_pictures_dir", return_value=root / "Pictures"
+            ):
+                result = controller.generate_image(
+                    "key-1",
+                    "make this clearer",
+                    [str(input_path)],
+                    {"requestId": "react-1", "reasoningMode": "medium"},
+                    event_callback=events.append,
+                )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["prompt"], "A clean professional chart")
+        self.assertEqual(result["originalPrompt"], "make this clearer")
+        self.assertEqual(result["reasoningModel"], "gpt-5.6-terra")
+        self.assertEqual(result["reasoningEffort"], "medium")
+        self.assertEqual(service.generate.call_args.args[2].prompt, "A clean professional chart")
+        response_call = controller.client.stream_response.call_args
+        self.assertEqual(response_call.args[2], "gpt-5.6-terra")
+        self.assertEqual(response_call.kwargs["reasoning_effort"], "medium")
+        response_input = response_call.args[4]
+        self.assertEqual(response_input[0]["content"][0]["type"], "input_text")
+        self.assertEqual(response_input[0]["content"][1]["type"], "input_image")
+        event_types = [event["type"] for event in events]
+        self.assertEqual(event_types[0], "react_started")
+        self.assertIn("react_summary_delta", event_types)
+        self.assertLess(event_types.index("react_completed"), event_types.index("set_started"))
+        visible_summary = "".join(
+            event.get("delta", "")
+            for event in events
+            if event["type"] == "react_summary_delta"
+        )
+        self.assertNotIn("<<<FINAL_PROMPT>>>", visible_summary)
 
     def test_github_request_retries_without_system_proxy_when_proxy_refuses(self):
         request = app.urllib.request.Request("https://api.github.com/test")
@@ -2278,6 +2590,7 @@ class ControllerTests(unittest.TestCase):
                 "native_drag",
                 "open_devtools",
                 "open_generated_pictures",
+                "polish_prompt",
                 "refresh_now",
                 "report_startup",
                 "restart_app",
@@ -2295,6 +2608,7 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertNotIn("store", public_names)
         self.assertNotIn("window", public_names)
+        self.assertIn("open_generated_pictures", app.RPC_METHODS)
 
     def test_load_generated_image_allows_only_managed_output(self):
         controller = app.AppController.__new__(app.AppController)
@@ -2358,7 +2672,20 @@ class ControllerTests(unittest.TestCase):
             source = Path(temp) / "source.png"
             Image.new("RGB", (12, 8), "teal").save(source)
             store = image_editor.ImageSessionStore(pictures_root)
-            store.begin_round("session-1", "set-1", "测试提示词", 1, 0, {})
+            store.begin_round(
+                "session-1",
+                "set-1",
+                "专业产品图，三分构图",
+                1,
+                0,
+                {
+                    "reasoningMode": "high",
+                    "reasoningModel": "gpt-5.6-sol",
+                    "reasoningEffort": "medium",
+                    "reasoningSummary": "识别产品展示场景并比较构图方案。",
+                    "originalPrompt": "制作产品图",
+                },
+            )
             store.persist_result(
                 "session-1",
                 "set-1",
@@ -2374,7 +2701,14 @@ class ControllerTests(unittest.TestCase):
                 listed_after = controller.list_image_sets()
 
         self.assertTrue(listed["ok"])
-        self.assertEqual(listed["sets"][0]["prompt"], "测试提示词")
+        self.assertEqual(listed["sets"][0]["prompt"], "专业产品图，三分构图")
+        self.assertEqual(listed["sets"][0]["originalPrompt"], "制作产品图")
+        self.assertEqual(listed["sets"][0]["reasoningMode"], "high")
+        self.assertEqual(listed["sets"][0]["reasoningModel"], "gpt-5.6-sol")
+        self.assertEqual(listed["sets"][0]["reasoningEffort"], "medium")
+        self.assertEqual(listed["sets"][0]["reasoningSummary"], "识别产品展示场景并比较构图方案。")
+        self.assertEqual(listed["sets"][0]["reasoningStatus"], "completed")
+        self.assertEqual(listed["sets"][0]["effectivePrompt"], "专业产品图，三分构图")
         self.assertTrue(deleted["ok"])
         self.assertEqual(listed_after["sets"], [])
 
@@ -2421,18 +2755,28 @@ class ControllerTests(unittest.TestCase):
             def close(self):
                 self.closed = True
 
-        controller = SimpleNamespace(get_state=lambda: {"keys": ["key-1"]})
+        controller = SimpleNamespace(
+            get_state=lambda: {"keys": ["key-1"]},
+            open_generated_pictures=lambda: {"ok": True, "path": "Pictures/API_TOOLS"},
+        )
         server = app.ControllerRpcServer(controller, "pipe", b"secret")
         allowed = FakeConnection({"method": "get_state", "args": []})
+        open_pictures = FakeConnection({"method": "open_generated_pictures", "args": []})
         blocked = FakeConnection({"method": "__dict__", "args": []})
 
         server._handle_connection(allowed)
+        server._handle_connection(open_pictures)
         server._handle_connection(blocked)
 
         self.assertEqual(allowed.responses, [{"ok": True, "result": {"keys": ["key-1"]}}])
+        self.assertEqual(
+            open_pictures.responses,
+            [{"ok": True, "result": {"ok": True, "path": "Pictures/API_TOOLS"}}],
+        )
         self.assertTrue(blocked.responses[0]["ok"] is False)
         self.assertIn("不允许", blocked.responses[0]["error"])
         self.assertTrue(allowed.closed)
+        self.assertTrue(open_pictures.closed)
         self.assertTrue(blocked.closed)
 
     def test_rpc_server_streams_generation_events_before_result(self):
@@ -2464,6 +2808,33 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(connection.responses[1]["result"]["setId"], "set-1")
         self.assertTrue(connection.closed)
 
+    def test_rpc_server_streams_prompt_polish_events_before_result(self):
+        class FakeConnection:
+            def __init__(self):
+                self.responses = []
+
+            def recv(self):
+                return {"method": "polish_prompt", "args": ["key", "prompt"]}
+
+            def send(self, response):
+                self.responses.append(response)
+
+            def close(self):
+                pass
+
+        def polish_prompt(*_args, event_callback=None):
+            event_callback({"type": "prompt_polish_delta", "delta": "better"})
+            return {"ok": True, "prompt": "better"}
+
+        connection = FakeConnection()
+        server = app.ControllerRpcServer(
+            SimpleNamespace(polish_prompt=polish_prompt), "pipe", b"secret"
+        )
+        server._handle_connection(connection)
+
+        self.assertEqual(connection.responses[0]["event"]["type"], "prompt_polish_delta")
+        self.assertEqual(connection.responses[1]["result"]["prompt"], "better")
+
     def test_remote_web_api_routes_data_calls_and_keeps_window_calls_local(self):
         mock = __import__("unittest.mock").mock
         rpc = SimpleNamespace(call=mock.Mock(), call_with_events=mock.Mock())
@@ -2489,6 +2860,7 @@ class ControllerTests(unittest.TestCase):
         state = api.get_state()
         refresh = api.refresh_now("trace-1")
         generated = api.generate_image("key-1", "combine", ["a.png", "b.png"], {"quality": "low"})
+        polished = api.polish_prompt("key-1", "rough")
         listed = api.list_image_sets()
         deleted_set = api.delete_image_set("session-1", "set-1")
         choose = api.choose_edit_images()
@@ -2504,6 +2876,10 @@ class ControllerTests(unittest.TestCase):
                 "method": "generate_image",
                 "args": ("key-1", "combine", ["a.png", "b.png"], {"quality": "low"}),
             },
+        )
+        self.assertEqual(
+            polished,
+            {"method": "polish_prompt", "args": ("key-1", "rough")},
         )
         self.assertIs(
             rpc.call_with_events.call_args.kwargs["on_event"],
