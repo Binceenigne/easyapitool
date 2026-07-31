@@ -166,6 +166,11 @@ class ImageSessionStore:
                     "reasoningEffort": str(options.get("reasoningEffort") or ""),
                     "reasoningSummary": str(options.get("reasoningSummary") or ""),
                     "originalPrompt": str(options.get("originalPrompt") or prompt),
+                    "webSearchEnabled": bool(options.get("webSearchEnabled")),
+                    "webSearchUsed": bool(options.get("webSearchUsed")),
+                    "webSearchFailed": bool(options.get("webSearchFailed")),
+                    "webSearchResultCount": int(options.get("webSearchResultCount") or 0),
+                    "webReferenceCount": int(options.get("webReferenceCount") or 0),
                 },
                 "items": [
                     {"itemIndex": item_index, "status": "queued", "error": ""}
@@ -273,6 +278,67 @@ class ImageSessionStore:
             {"itemIndex": item_index, "status": "failed", "error": str(error)},
         )
 
+    def persist_web_references(
+        self,
+        session_id: str,
+        set_id: str,
+        references: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        clean_session_id = self._safe_id(session_id)
+        clean_set_id = self._safe_id(set_id)
+        with self._manifest_lock:
+            manifest = self._read_manifest(clean_session_id)
+            if manifest is None:
+                raise RuntimeError("图片会话不存在")
+            round_data = next(
+                (item for item in manifest["rounds"] if item.get("setId") == clean_set_id),
+                None,
+            )
+            if round_data is None:
+                raise RuntimeError("图片生成轮次不存在")
+            round_dir = self._session_dir(clean_session_id) / str(round_data["directory"])
+            round_dir.mkdir(parents=True, exist_ok=True)
+            persisted: list[dict[str, Any]] = []
+            stored: list[dict[str, Any]] = []
+            for reference in references:
+                source_path = Path(str(reference.get("path") or ""))
+                if not source_path.is_file():
+                    continue
+                try:
+                    image_bytes = source_path.read_bytes()
+                    preview_bytes = image_preview_bytes(image_bytes)
+                except (OSError, ValueError):
+                    continue
+                index = len(persisted) + 1
+                original_path = round_dir / f"web-reference-{index:02d}.jpg"
+                preview_path = round_dir / f"web-reference-{index:02d}-preview.jpg"
+                shutil.copy2(source_path, original_path)
+                preview_path.write_bytes(preview_bytes)
+                stored_reference = {
+                    "id": str(reference.get("id") or "")[:80],
+                    "title": str(reference.get("title") or "")[:240],
+                    "caption": str(reference.get("caption") or "")[:400],
+                    "provider": str(reference.get("provider") or "")[:120],
+                    "sourceUrl": str(reference.get("sourceUrl") or "")[:4096],
+                    "imageUrl": str(reference.get("imageUrl") or "")[:4096],
+                    "original": original_path.relative_to(self._session_dir(clean_session_id)).as_posix(),
+                    "preview": preview_path.relative_to(self._session_dir(clean_session_id)).as_posix(),
+                }
+                stored.append(stored_reference)
+                persisted.append(
+                    {
+                        **{key: value for key, value in stored_reference.items() if key not in {"original", "preview"}},
+                        "path": str(original_path),
+                        "previewPath": str(preview_path),
+                        "previewUri": f"data:image/jpeg;base64,{base64.b64encode(preview_bytes).decode('ascii')}",
+                    }
+                )
+            round_data["webReferences"] = stored
+            options = round_data.setdefault("options", {})
+            options["webReferenceCount"] = len(persisted)
+            self._write_manifest(manifest)
+            return persisted
+
     def complete_round(self, session_id: str, set_id: str) -> None:
         clean_session_id = self._safe_id(session_id)
         clean_set_id = self._safe_id(set_id)
@@ -311,6 +377,25 @@ class ImageSessionStore:
                         options = {}
                     reasoning_mode = str(options.get("reasoningMode") or "instant")
                     reasoning_summary = str(options.get("reasoningSummary") or "")
+                    web_references: list[dict[str, Any]] = []
+                    for reference in round_data.get("webReferences") or []:
+                        original_path = session_dir / str(reference.get("original") or "")
+                        preview_path = session_dir / str(reference.get("preview") or "")
+                        if not original_path.is_file() or not preview_path.is_file():
+                            continue
+                        web_references.append(
+                            {
+                                "id": str(reference.get("id") or ""),
+                                "title": str(reference.get("title") or ""),
+                                "caption": str(reference.get("caption") or ""),
+                                "provider": str(reference.get("provider") or ""),
+                                "sourceUrl": str(reference.get("sourceUrl") or ""),
+                                "imageUrl": str(reference.get("imageUrl") or ""),
+                                "path": str(original_path),
+                                "previewPath": str(preview_path),
+                                "previewUri": "",
+                            }
+                        )
                     items: list[dict[str, Any]] = []
                     for item_data in round_data.get("items") or []:
                         item_index = int(item_data.get("itemIndex") or 0)
@@ -373,6 +458,12 @@ class ImageSessionStore:
                             "reasoningSummary": reasoning_summary,
                             "reasoningStatus": "completed" if reasoning_mode != "instant" and reasoning_summary else "idle",
                             "effectivePrompt": str(round_data.get("prompt") or "") if reasoning_mode != "instant" else "",
+                            "webSearchEnabled": bool(options.get("webSearchEnabled")),
+                            "webSearchUsed": bool(options.get("webSearchUsed")),
+                            "webSearchFailed": bool(options.get("webSearchFailed")),
+                            "webSearchResultCount": int(options.get("webSearchResultCount") or 0),
+                            "webReferenceCount": len(web_references),
+                            "webReferences": web_references,
                             "createdAt": str(round_data.get("createdAt") or manifest.get("createdAt") or ""),
                             "status": str(round_data.get("status") or "completed"),
                             "items": items,

@@ -5,12 +5,15 @@ import binascii
 import concurrent.futures
 import ctypes
 import hashlib
+from html import unescape
 from html.parser import HTMLParser
+import ipaddress
 import io
 import json
 import math
 import multiprocessing
 import os
+import socket
 import shutil
 import ssl
 import sqlite3
@@ -20,6 +23,7 @@ import tarfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import xml.etree.ElementTree as ElementTree
@@ -45,7 +49,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.17"
+APP_VERSION = "1.0.18"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -66,6 +70,10 @@ LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
 STATIC_UI_VERSION = "43"
+IMAGE_STREAM_DEBUG_LOG_MAX_BYTES = 20 * 1024 * 1024
+WEB_SEARCH_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
+WEB_REFERENCE_IMAGE_MAX_BYTES = 16 * 1024 * 1024
+WEB_REFERENCE_MAX_COUNT = 3
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -125,6 +133,70 @@ IMAGE_REASONING_MODES = {
     "high": {"model": "gpt-5.6-sol", "effort": "medium", "depth": "深入比较可行方案并反思关键风险后再选择方案"},
     "max": {"model": "gpt-5.6-sol", "effort": "xhigh", "depth": "充分探索与比较方案，进行多角度反思和严格可用性评估"},
 }
+IMAGE_WEB_SEARCH_MODES = {"high", "max"}
+IMAGE_AGENT_WEB_TOOLS = (
+    {
+        "type": "function",
+        "name": "search_web",
+        "description": (
+            "Search current public web pages for factual or visual-design context. Use when current, "
+            "real-world, product, place, event, or historically accurate information can improve the image."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Focused web search query."},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 8},
+            },
+            "required": ["query", "max_results"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+    {
+        "type": "function",
+        "name": "search_visual_references",
+        "description": (
+            "Search public image sources and return visual candidates with thumbnails. Use when seeing real "
+            "objects, products, landmarks, people, events, or styles would materially improve accuracy."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Focused image-search query."},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 8},
+            },
+            "required": ["query", "max_results"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+    {
+        "type": "function",
+        "name": "select_visual_references",
+        "description": (
+            "Select zero to three candidate IDs after inspecting visual-search thumbnails. Only selected IDs "
+            "are downloaded and supplied to the image model. Use an empty list when none are suitable."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reference_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": WEB_REFERENCE_MAX_COUNT,
+                },
+                "rationale": {
+                    "type": "string",
+                    "description": "Brief auditable reason for selecting or rejecting the candidates.",
+                },
+            },
+            "required": ["reference_ids", "rationale"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+)
 
 
 class NetworkTransportError(RuntimeError):
@@ -1013,6 +1085,7 @@ def trace_startup(stage: str, **details: Any) -> None:
 
 RPC_METHODS = {
     "add_key",
+    "append_image_stream_debug",
     "check_for_updates",
     "delete_key",
     "delete_image_set",
@@ -1354,6 +1427,376 @@ def annotate_limit_changes(
     else:
         payload.pop("_limit_changes", None)
     return changed_names
+
+
+class BingImageResultParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.results: list[dict[str, Any]] = []
+
+    def handle_starttag(self, tag: str, attributes: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "a":
+            return
+        values = {name.lower(): value or "" for name, value in attributes}
+        if "iusc" not in values.get("class", "").split():
+            return
+        metadata = values.get("m")
+        if not metadata:
+            return
+        try:
+            payload = json.loads(unescape(metadata))
+        except (json.JSONDecodeError, TypeError):
+            return
+        if isinstance(payload, dict):
+            self.results.append(payload)
+
+
+class HtmlTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        clean = " ".join(data.split())
+        if clean:
+            self.parts.append(clean)
+
+    def text(self) -> str:
+        return " ".join(self.parts)
+
+
+def html_text(value: Any) -> str:
+    parser = HtmlTextParser()
+    parser.feed(str(value or ""))
+    parser.close()
+    return parser.text()
+
+
+def require_public_https_url(value: Any) -> str:
+    url = str(value or "").strip()
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise ValueError("仅允许公开 HTTPS 图片地址")
+    if parsed.username or parsed.password or parsed.port not in {None, 443}:
+        raise ValueError("图片地址包含不允许的连接信息")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith((".localhost", ".local")):
+        raise ValueError("图片地址不能指向本机或局域网")
+    try:
+        addresses = [ipaddress.ip_address(hostname)]
+    except ValueError:
+        try:
+            addresses = [
+                ipaddress.ip_address(result[4][0])
+                for result in socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
+            ]
+        except (OSError, ValueError) as exc:
+            raise ValueError("图片地址无法解析") from exc
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ValueError("图片地址不能指向非公开网络")
+    return urllib.parse.urlunsplit(parsed)
+
+
+class PublicHttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        request: urllib.request.Request,
+        file_pointer: Any,
+        code: int,
+        message: str,
+        headers: Any,
+        new_url: str,
+    ) -> urllib.request.Request | None:
+        require_public_https_url(new_url)
+        return super().redirect_request(
+            request,
+            file_pointer,
+            code,
+            message,
+            headers,
+            new_url,
+        )
+
+
+def read_limited_response(response: Any, max_bytes: int) -> bytes:
+    content_length = response.headers.get("Content-Length")
+    try:
+        if content_length and int(content_length) > max_bytes:
+            raise ValueError("远程图片超过大小限制")
+    except (TypeError, ValueError) as exc:
+        if isinstance(exc, ValueError) and str(exc) == "远程图片超过大小限制":
+            raise
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = response.read(min(64 * 1024, max_bytes + 1 - total))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError("远程图片超过大小限制")
+    return b"".join(chunks)
+
+
+class WebSearchService:
+    USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) API_TOOLS/1.0"
+
+    @staticmethod
+    def _query(value: Any) -> str:
+        query = " ".join(str(value or "").split())[:240]
+        if not query:
+            raise ValueError("搜索词不能为空")
+        return query
+
+    @staticmethod
+    def _candidate_id(image_url: str) -> str:
+        return "webref-" + hashlib.sha256(image_url.encode("utf-8")).hexdigest()[:12]
+
+    @staticmethod
+    def _fixed_get(url: str, accept: str) -> bytes:
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": WebSearchService.USER_AGENT, "Accept": accept},
+        )
+        return get_small_url_bytes(request, timeout=20)
+
+    @staticmethod
+    def _public_image_bytes(url: str, max_bytes: int) -> bytes:
+        clean_url = require_public_https_url(url)
+        request = urllib.request.Request(
+            clean_url,
+            headers={
+                "User-Agent": WebSearchService.USER_AGENT,
+                "Accept": "image/avif,image/webp,image/png,image/jpeg,*/*;q=0.5",
+            },
+        )
+        openers = (
+            urllib.request.build_opener(PublicHttpsRedirectHandler()),
+            urllib.request.build_opener(
+                urllib.request.ProxyHandler({}),
+                PublicHttpsRedirectHandler(),
+            ),
+        )
+        errors: list[str] = []
+        for opener in openers:
+            try:
+                with opener.open(request, timeout=20) as response:
+                    final_url = response.geturl()
+                    require_public_https_url(final_url)
+                    content_type = str(response.headers.get("Content-Type") or "").lower()
+                    if content_type and not content_type.startswith("image/"):
+                        raise ValueError("远程地址未返回图片")
+                    return read_limited_response(response, max_bytes)
+            except (OSError, ValueError, urllib.error.URLError) as exc:
+                errors.append(str(exc))
+        raise RuntimeError(errors[-1] if errors else "无法下载远程图片")
+
+    @staticmethod
+    def _normalized_image_bytes(image_bytes: bytes, max_side: int | None = None) -> bytes:
+        with Image.open(io.BytesIO(image_bytes)) as source:
+            width, height = source.size
+            if width < 32 or height < 32 or width * height > 40_000_000:
+                raise ValueError("远程图片尺寸不符合要求")
+            source.load()
+            image = source.copy()
+        if max_side:
+            image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+        if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+            rgba_image = image.convert("RGBA")
+            flattened = Image.new("RGB", rgba_image.size, "white")
+            flattened.paste(rgba_image, mask=rgba_image.getchannel("A"))
+            image = flattened
+        else:
+            image = image.convert("RGB")
+        output = io.BytesIO()
+        image.save(output, format="JPEG", quality=90, optimize=True)
+        return output.getvalue()
+
+    def search_web(self, query: Any, max_results: int = 5) -> dict[str, Any]:
+        clean_query = self._query(query)
+        limit = max(1, min(8, int(max_results)))
+        url = "https://www.bing.com/search?" + urllib.parse.urlencode(
+            {"q": clean_query, "format": "rss"}
+        )
+        payload = self._fixed_get(url, "application/rss+xml,application/xml,text/xml")
+        root = ElementTree.fromstring(payload)
+        results: list[dict[str, str]] = []
+        for item in root.findall("./channel/item")[:limit]:
+            result_url = str(item.findtext("link") or "").strip()
+            if not result_url.startswith(("https://", "http://")):
+                continue
+            results.append(
+                {
+                    "title": html_text(item.findtext("title"))[:240],
+                    "url": result_url[:2048],
+                    "snippet": html_text(item.findtext("description"))[:600],
+                }
+            )
+        return {"query": clean_query, "results": results}
+
+    def _bing_images(self, query: str, limit: int) -> list[dict[str, Any]]:
+        url = "https://www.bing.com/images/search?" + urllib.parse.urlencode(
+            {"q": query, "form": "HDRSC2"}
+        )
+        parser = BingImageResultParser()
+        parser.feed(self._fixed_get(url, "text/html").decode("utf-8", "replace"))
+        parser.close()
+        results: list[dict[str, Any]] = []
+        for metadata in parser.results:
+            image_url = str(metadata.get("murl") or "").strip()
+            thumbnail_url = str(metadata.get("turl") or "").strip()
+            if not image_url.startswith("https://") or not thumbnail_url.startswith("https://"):
+                continue
+            results.append(
+                {
+                    "id": self._candidate_id(image_url),
+                    "title": html_text(metadata.get("t") or metadata.get("desc"))[:240],
+                    "caption": html_text(metadata.get("desc") or metadata.get("t"))[:400],
+                    "imageUrl": image_url[:4096],
+                    "thumbnailUrl": thumbnail_url[:4096],
+                    "sourceUrl": str(metadata.get("purl") or "")[:4096],
+                    "width": int(metadata.get("w") or 0),
+                    "height": int(metadata.get("h") or 0),
+                    "provider": "Bing Images",
+                }
+            )
+            if len(results) >= limit:
+                break
+        return results
+
+    def _commons_images(self, query: str, limit: int) -> list[dict[str, Any]]:
+        url = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode(
+            {
+                "action": "query",
+                "generator": "search",
+                "gsrsearch": query,
+                "gsrnamespace": 6,
+                "gsrlimit": limit,
+                "prop": "imageinfo",
+                "iiprop": "url|size|mime|extmetadata",
+                "iiurlwidth": 720,
+                "format": "json",
+                "origin": "*",
+            }
+        )
+        payload = json.loads(self._fixed_get(url, "application/json").decode("utf-8"))
+        pages = (payload.get("query") or {}).get("pages") or {}
+        results: list[dict[str, Any]] = []
+        for page in pages.values():
+            image_info = ((page.get("imageinfo") or [{}])[0])
+            image_url = str(image_info.get("url") or "").strip()
+            thumbnail_url = str(image_info.get("thumburl") or image_url).strip()
+            if not image_url.startswith("https://") or not thumbnail_url.startswith("https://"):
+                continue
+            metadata = image_info.get("extmetadata") or {}
+            caption = html_text(
+                (metadata.get("ImageDescription") or {}).get("value")
+                or (metadata.get("ObjectName") or {}).get("value")
+            )
+            title = str(page.get("title") or "").removeprefix("File:")
+            results.append(
+                {
+                    "id": self._candidate_id(image_url),
+                    "title": title[:240],
+                    "caption": caption[:400],
+                    "imageUrl": image_url[:4096],
+                    "thumbnailUrl": thumbnail_url[:4096],
+                    "sourceUrl": f"https://commons.wikimedia.org/?curid={page.get('pageid')}",
+                    "width": int(image_info.get("width") or 0),
+                    "height": int(image_info.get("height") or 0),
+                    "provider": "Wikimedia Commons",
+                }
+            )
+        return results[:limit]
+
+    def search_visual_references(self, query: Any, max_results: int = 6) -> dict[str, Any]:
+        clean_query = self._query(query)
+        limit = max(1, min(8, int(max_results)))
+        candidates: list[dict[str, Any]] = []
+        errors: list[str] = []
+        for provider in (self._bing_images, self._commons_images):
+            try:
+                candidates.extend(provider(clean_query, limit))
+            except (OSError, RuntimeError, ValueError, json.JSONDecodeError, ElementTree.ParseError) as exc:
+                errors.append(str(exc))
+        unique: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            image_url = str(candidate.get("imageUrl") or "")
+            if not image_url or image_url in seen:
+                continue
+            seen.add(image_url)
+            try:
+                preview_source = self._public_image_bytes(
+                    str(candidate.get("thumbnailUrl") or image_url),
+                    WEB_SEARCH_RESPONSE_MAX_BYTES,
+                )
+                preview_bytes = self._normalized_image_bytes(preview_source, max_side=720)
+            except (OSError, RuntimeError, ValueError, Image.UnidentifiedImageError):
+                continue
+            clean_candidate = dict(candidate)
+            clean_candidate["_previewBytes"] = preview_bytes
+            clean_candidate["previewDataUrl"] = (
+                "data:image/jpeg;base64," + base64.b64encode(preview_bytes).decode("ascii")
+            )
+            unique.append(clean_candidate)
+            if len(unique) >= limit:
+                break
+        return {"query": clean_query, "results": unique, "errors": errors}
+
+    def stage_reference_records(
+        self,
+        candidates: list[dict[str, Any]],
+        target_dir: Path,
+        max_count: int = WEB_REFERENCE_MAX_COUNT,
+    ) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for candidate in candidates[:max_count]:
+            image_bytes = b""
+            for url in (candidate.get("imageUrl"), candidate.get("thumbnailUrl")):
+                if not url:
+                    continue
+                try:
+                    image_bytes = self._public_image_bytes(
+                        str(url), WEB_REFERENCE_IMAGE_MAX_BYTES
+                    )
+                    image_bytes = self._normalized_image_bytes(image_bytes)
+                    break
+                except (OSError, RuntimeError, ValueError, Image.UnidentifiedImageError):
+                    image_bytes = b""
+            if not image_bytes:
+                preview_bytes = candidate.get("_previewBytes")
+                if isinstance(preview_bytes, bytes):
+                    image_bytes = preview_bytes
+            if not image_bytes:
+                continue
+            output_path = target_dir / f"reference-{len(records) + 1}.jpg"
+            output_path.write_bytes(image_bytes)
+            records.append(
+                {
+                    "id": str(candidate.get("id") or "")[:80],
+                    "title": str(candidate.get("title") or "")[:240],
+                    "caption": str(candidate.get("caption") or "")[:400],
+                    "provider": str(candidate.get("provider") or "")[:120],
+                    "sourceUrl": str(candidate.get("sourceUrl") or "")[:4096],
+                    "imageUrl": str(candidate.get("imageUrl") or "")[:4096],
+                    "path": str(output_path),
+                }
+            )
+        return records
+
+    def stage_references(
+        self,
+        candidates: list[dict[str, Any]],
+        target_dir: Path,
+        max_count: int = WEB_REFERENCE_MAX_COUNT,
+    ) -> tuple[Path, ...]:
+        return tuple(
+            Path(record["path"])
+            for record in self.stage_reference_records(candidates, target_dir, max_count)
+        )
 
 
 class Store:
@@ -2115,6 +2558,13 @@ class EasyClinClient:
         on_delta: Any = None,
         timeout: int = 240,
         reasoning_effort: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
+        include: list[str] | None = None,
+        max_tool_calls: int | None = None,
+        parallel_tool_calls: bool | None = None,
+        on_completed: Any = None,
+        allow_empty_text: bool = False,
     ) -> str:
         url = f"{base_url.rstrip('/')}/responses"
         payload = {
@@ -2125,6 +2575,15 @@ class EasyClinClient:
         }
         if reasoning_effort:
             payload["reasoning"] = {"effort": reasoning_effort}
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice or "auto"
+        if include:
+            payload["include"] = include
+        if max_tool_calls is not None:
+            payload["max_tool_calls"] = max(1, int(max_tool_calls))
+        if parallel_tool_calls is not None:
+            payload["parallel_tool_calls"] = bool(parallel_tool_calls)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             url,
@@ -2141,8 +2600,10 @@ class EasyClinClient:
                 content_type = str(response.headers.get("Content-Type") or "").lower()
                 if "text/event-stream" not in content_type:
                     payload = json.loads(response.read().decode("utf-8"))
+                    if on_completed is not None:
+                        on_completed(payload)
                     text = EasyClinClient._response_output_text(payload)
-                    if not text:
+                    if not text and not allow_empty_text:
                         raise RuntimeError("Responses 接口未返回文本")
                     if on_delta is not None:
                         on_delta(text)
@@ -2185,6 +2646,9 @@ class EasyClinClient:
                             chunks.append(completed_text)
                             if on_delta is not None:
                                 on_delta(completed_text)
+                    if payload_type == "response.completed" and on_completed is not None:
+                        completed = payload.get("response")
+                        on_completed(completed if isinstance(completed, dict) else payload)
 
                 for raw_line in response:
                     line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
@@ -2196,7 +2660,7 @@ class EasyClinClient:
                         data_lines.append(line[5:].lstrip())
                 flush_event()
                 text = "".join(chunks)
-                if not text:
+                if not text and not allow_empty_text:
                     raise RuntimeError("Responses 接口未返回文本")
                 return text
         except urllib.error.HTTPError as exc:
@@ -2226,6 +2690,7 @@ class AppController:
         self.active_title_bar_mode = self.store.get_title_bar_mode()
         self.client = EasyClinClient()
         self.image_generator = ImageGenerationService()
+        self.web_search = WebSearchService()
         self.store.import_environment_key()
         self.window: webview.Window | None = None
         self.tray: Any = None
@@ -2243,6 +2708,7 @@ class AppController:
         self.manual_refresh_lock = threading.Lock()
         self.manual_refresh_available_at = 0.0
         self.update_lock = threading.Lock()
+        self.image_stream_debug_lock = threading.Lock()
         self.active_image_sets: set[str] = set()
         full_release_notes = bundled_changelog()
         self.update_state: dict[str, Any] = {
@@ -2415,6 +2881,71 @@ class AppController:
             return {"ok": True, "sets": sets}
         except OSError as exc:
             return {"ok": False, "error": f"无法读取图片集历史：{exc}", "sets": []}
+
+    def append_image_stream_debug(self, records: Any) -> dict[str, Any]:
+        if not isinstance(records, list):
+            return {"ok": False, "error": "流式图片日志格式无效"}
+
+        sensitive_keys = {"src", "dataurl", "base64"}
+
+        def sanitized(value: Any, depth: int = 0) -> Any:
+            if depth > 8:
+                return "[max-depth]"
+            if isinstance(value, dict):
+                clean: dict[str, Any] = {}
+                for raw_key, raw_value in list(value.items())[:100]:
+                    key = str(raw_key)
+                    normalized_key = key.casefold().replace("_", "").replace("-", "")
+                    if normalized_key.endswith("uri") or normalized_key in sensitive_keys:
+                        continue
+                    clean[key] = sanitized(raw_value, depth + 1)
+                return clean
+            if isinstance(value, (list, tuple)):
+                return [sanitized(item, depth + 1) for item in value[:100]]
+            if isinstance(value, str):
+                if value.casefold().startswith("data:image/"):
+                    return "[redacted-image-data]"
+                return value[:8192]
+            if value is None or isinstance(value, (bool, int)):
+                return value
+            if isinstance(value, float):
+                return value if math.isfinite(value) else None
+            return str(value)[:8192]
+
+        lines: list[str] = []
+        for record in records[:500]:
+            if not isinstance(record, dict):
+                continue
+            encoded = json.dumps(
+                sanitized(record), ensure_ascii=False, separators=(",", ":")
+            )
+            if len(encoded.encode("utf-8")) <= 128 * 1024:
+                lines.append(encoded + "\n")
+
+        log_path = app_data_dir() / "image-stream-blur.jsonl"
+        if not lines:
+            return {"ok": True, "written": 0, "path": str(log_path)}
+
+        payload = "".join(lines)
+        lock = getattr(self, "image_stream_debug_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self.image_stream_debug_lock = lock
+        try:
+            with lock:
+                if (
+                    log_path.is_file()
+                    and log_path.stat().st_size + len(payload.encode("utf-8"))
+                    > IMAGE_STREAM_DEBUG_LOG_MAX_BYTES
+                ):
+                    previous_path = log_path.with_name("image-stream-blur.previous.jsonl")
+                    previous_path.unlink(missing_ok=True)
+                    log_path.replace(previous_path)
+                with log_path.open("a", encoding="utf-8", newline="\n") as handle:
+                    handle.write(payload)
+        except OSError as exc:
+            return {"ok": False, "error": f"写入流式图片日志失败：{exc}"}
+        return {"ok": True, "written": len(lines), "path": str(log_path)}
 
     def delete_image_set(self, session_id: str, set_id: str) -> dict[str, Any]:
         active_sets = getattr(self, "active_image_sets", set())
@@ -3581,12 +4112,19 @@ class AppController:
         image_paths: tuple[Path, ...],
         reasoning_mode: str,
         emit: Any,
-    ) -> tuple[str, str, str]:
+    ) -> dict[str, Any]:
         config = IMAGE_REASONING_MODES[reasoning_mode]
         model = str(config["model"])
         reasoning_effort = str(config["effort"])
+        web_search_enabled = reasoning_mode in IMAGE_WEB_SEARCH_MODES
         complete_text = ""
         published_length = 0
+        candidate_by_id: dict[str, dict[str, Any]] = {}
+        selected_ids: list[str] = []
+        selected_rationale = ""
+        selection_submitted = False
+        web_search_calls = 0
+        web_search_succeeded = False
 
         def on_delta(delta: str) -> None:
             nonlocal complete_text, published_length
@@ -3604,23 +4142,231 @@ class AppController:
             mode=reasoning_mode,
             model=model,
             reasoningEffort=reasoning_effort,
+            webSearchEnabled=web_search_enabled,
         )
-        output = self.client.stream_response(
-            record["base_url"],
-            secret,
-            model,
-            (
-                "你是一个用于图片创作的轻量 ReAct 智能体。根据用户文字和可选参考图，从需求理解"
-                "出发，自主选择必要的分析、方案设计、工具化检查与反思步骤；不要机械套用固定步骤数。"
-                f"当前深度建议：{config['depth']}。"
-                "请流畅输出面向用户、可审计的简短工作摘要，描述正在判断的创作环境、关键需求、"
-                "候选方案与可用性评估；不要披露隐藏内部推理、逐 token 思维链或敏感信息。"
-                f"摘要结束后单独输出标记 {PROMPT_RESULT_MARKER}，标记后只写可直接提交给图片模型的最终提示词。"
-            ),
-            self._agent_input(prompt, image_paths),
-            on_delta=on_delta,
-            reasoning_effort=reasoning_effort,
+        instructions = (
+            "你是一个用于图片创作的轻量 ReAct 智能体。根据用户文字和可选参考图，从需求理解"
+            "出发，自主选择必要的分析、方案设计、工具化检查与反思步骤；不要机械套用固定步骤数。"
+            f"当前深度建议：{config['depth']}。"
+            "如果用户明确指定现有 IP、作品、品牌、世界观、人物或角色，必须保留其名称、身份、"
+            "所属设定和标志性视觉特征，按用户要求直接构思；不要仅因对象属于知名 IP 就改写为"
+            "原创角色、致敬款、同类替代或主动规避相似性。只有用户明确要求原创、重新设计或避开"
+            "现有 IP 时，才进行原创化处理。"
+            "请流畅输出面向用户、可审计的简短工作摘要，描述正在判断的创作环境、关键需求、"
+            "候选方案与可用性评估；不要披露隐藏内部推理、逐 token 思维链或敏感信息。"
         )
+        if web_search_enabled:
+            instructions += (
+                "你可以按需调用网页与视觉参考搜索工具。涉及真实产品、地点、事件、人物、时效信息、"
+                "历史考据或难以仅靠文字准确描述的视觉对象时，鼓励先搜索；纯想象创作或已有参考足够时"
+                "可以完全不调用。视觉搜索后请检查缩略图，只有确实能提高构图、形态、材质或事实准确性"
+                "的候选才通过 select_visual_references 选择；不合适时选择空列表。不要仅凭标题纳入图片。"
+                "你可以在同一轮并行发起多个不同检索，也可以根据首轮结果在后续轮次继续搜索；在完成"
+                "必要检索并比较全部候选后，再统一调用 select_visual_references 提交最终采用列表。"
+            )
+        instructions += (
+            f"摘要结束后单独输出标记 {PROMPT_RESULT_MARKER}，标记后只写可直接提交给图片模型的最终提示词。"
+        )
+        initial_input = self._agent_input(prompt, image_paths)
+        if isinstance(initial_input, list):
+            current_input: list[dict[str, Any]] = list(initial_input)
+        else:
+            current_input = [{"role": "user", "content": initial_input}]
+        output = ""
+        max_agent_turns = 8
+        for turn_index in range(max_agent_turns):
+            completed_payloads: list[dict[str, Any]] = []
+            tools = (
+                list(IMAGE_AGENT_WEB_TOOLS)
+                if web_search_enabled and turn_index < max_agent_turns - 1 and not selection_submitted
+                else None
+            )
+            output = self.client.stream_response(
+                record["base_url"],
+                secret,
+                model,
+                instructions,
+                current_input,
+                on_delta=on_delta,
+                reasoning_effort=reasoning_effort,
+                tools=tools,
+                tool_choice="auto" if tools else None,
+                parallel_tool_calls=True if tools else None,
+                on_completed=completed_payloads.append,
+                allow_empty_text=bool(tools),
+            )
+            response = completed_payloads[-1] if completed_payloads else {}
+            response_output = [
+                item for item in response.get("output") or [] if isinstance(item, dict)
+            ]
+            function_calls = [
+                item for item in response_output if item.get("type") == "function_call"
+            ]
+            if not function_calls:
+                break
+            current_input.extend(response_output)
+            parsed_calls: list[dict[str, Any]] = []
+            for tool_call in function_calls:
+                parsed_call = {
+                    "callId": str(tool_call.get("call_id") or ""),
+                    "name": str(tool_call.get("name") or ""),
+                    "arguments": {},
+                    "error": None,
+                    "output": None,
+                }
+                try:
+                    arguments = json.loads(str(tool_call.get("arguments") or "{}"))
+                    if not isinstance(arguments, dict):
+                        raise ValueError("工具参数必须是对象")
+                    parsed_call["arguments"] = arguments
+                    emit("react_tool_started", tool=parsed_call["name"])
+                except (ValueError, json.JSONDecodeError) as exc:
+                    parsed_call["error"] = exc
+                parsed_calls.append(parsed_call)
+
+            search_futures: dict[int, concurrent.futures.Future[Any]] = {}
+            search_indexes = [
+                index
+                for index, call in enumerate(parsed_calls)
+                if call["error"] is None
+                and call["name"] in {"search_web", "search_visual_references"}
+            ]
+            if search_indexes:
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(4, len(search_indexes)),
+                    thread_name_prefix="image-web-search",
+                ) as executor:
+                    for index in search_indexes:
+                        call = parsed_calls[index]
+                        arguments = call["arguments"]
+                        web_search_calls += 1
+                        if call["name"] == "search_web":
+                            search_futures[index] = executor.submit(
+                                self.web_search.search_web,
+                                arguments.get("query"),
+                                arguments.get("max_results", 5),
+                            )
+                        else:
+                            search_futures[index] = executor.submit(
+                                self.web_search.search_visual_references,
+                                arguments.get("query"),
+                                arguments.get("max_results", 6),
+                            )
+
+            for index in search_indexes:
+                call = parsed_calls[index]
+                try:
+                    tool_result = search_futures[index].result()
+                    web_search_succeeded = True
+                    if call["name"] == "search_web":
+                        call["output"] = json.dumps(tool_result, ensure_ascii=False)
+                        continue
+                    public_results: list[dict[str, Any]] = []
+                    visual_output: list[dict[str, str]] = []
+                    for candidate in tool_result.get("results") or []:
+                        candidate_id = str(candidate.get("id") or "")
+                        if not candidate_id:
+                            continue
+                        candidate_by_id[candidate_id] = candidate
+                        public_candidate = {
+                            key: value
+                            for key, value in candidate.items()
+                            if not key.startswith("_") and key != "previewDataUrl"
+                        }
+                        public_results.append(public_candidate)
+                        visual_output.extend(
+                            [
+                                {
+                                    "type": "input_text",
+                                    "text": json.dumps(public_candidate, ensure_ascii=False),
+                                },
+                                {
+                                    "type": "input_image",
+                                    "image_url": str(candidate["previewDataUrl"]),
+                                },
+                            ]
+                        )
+                    if not visual_output:
+                        visual_output.append(
+                            {
+                                "type": "input_text",
+                                "text": json.dumps(
+                                    {
+                                        "query": tool_result.get("query"),
+                                        "results": [],
+                                        "message": "未找到可验证的视觉候选",
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            }
+                        )
+                    call["output"] = visual_output
+                    call["visualEvent"] = {
+                        "query": tool_result.get("query"),
+                        "resultCount": len(public_results),
+                        "webSearchResultCount": len(candidate_by_id),
+                    }
+                except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+                    call["error"] = exc
+
+            for call in parsed_calls:
+                call_id = call["callId"]
+                name = call["name"]
+                error = call["error"]
+                if error is not None:
+                    tool_output: Any = json.dumps(
+                        {"ok": False, "error": str(error)[:500]}, ensure_ascii=False
+                    )
+                    emit("react_tool_failed", tool=name, error=str(error))
+                elif name in {"search_web", "search_visual_references"}:
+                    tool_output = call["output"]
+                    if call.get("visualEvent"):
+                        emit("react_visual_results", **call["visualEvent"])
+                    emit("react_tool_completed", tool=name)
+                elif name == "select_visual_references":
+                    arguments = call["arguments"]
+                    try:
+                        selection_submitted = True
+                        requested_ids = arguments.get("reference_ids") or []
+                        if not isinstance(requested_ids, list):
+                            raise ValueError("reference_ids 必须是数组")
+                        selected_ids = []
+                        for candidate_id in requested_ids[:WEB_REFERENCE_MAX_COUNT]:
+                            clean_id = str(candidate_id)
+                            if clean_id in candidate_by_id and clean_id not in selected_ids:
+                                selected_ids.append(clean_id)
+                        selected_rationale = str(arguments.get("rationale") or "")[:600]
+                        tool_result = {
+                            "selectedIds": selected_ids,
+                            "acceptedCount": len(selected_ids),
+                        }
+                        tool_output = json.dumps(tool_result, ensure_ascii=False)
+                        emit(
+                            "react_visual_selected",
+                            selectedCount=len(selected_ids),
+                            rationale=selected_rationale,
+                        )
+                        emit("react_tool_completed", tool=name)
+                    except (ValueError, json.JSONDecodeError) as exc:
+                        tool_output = json.dumps(
+                            {"ok": False, "error": str(exc)[:500]}, ensure_ascii=False
+                        )
+                        emit("react_tool_failed", tool=name, error=str(exc))
+                else:
+                    tool_output = json.dumps(
+                        {"ok": False, "error": "未知工具"}, ensure_ascii=False
+                    )
+                    emit("react_tool_failed", tool=name, error="未知工具")
+                current_input.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": tool_output,
+                    }
+                )
+        else:
+            raise RuntimeError("ReAct 工具调用次数超过限制")
+        output = complete_text or output
         marker_index = output.find(PROMPT_RESULT_MARKER)
         if marker_index < 0:
             raise RuntimeError("ReAct 未返回最终提示词标记")
@@ -3635,8 +4381,23 @@ class AppController:
             reasoningEffort=reasoning_effort,
             summary=summary,
             prompt=final_prompt,
+            webSearchEnabled=web_search_enabled,
+            webSearchUsed=web_search_calls > 0,
+            webSearchFailed=web_search_calls > 0 and not web_search_succeeded,
+            webSearchResultCount=len(candidate_by_id),
+            webReferenceCount=len(selected_ids),
         )
-        return final_prompt, summary, model
+        return {
+            "prompt": final_prompt,
+            "summary": summary,
+            "model": model,
+            "webSearchEnabled": web_search_enabled,
+            "webSearchUsed": web_search_calls > 0,
+            "webSearchFailed": web_search_calls > 0 and not web_search_succeeded,
+            "webSearchResultCount": len(candidate_by_id),
+            "webCandidates": [candidate_by_id[candidate_id] for candidate_id in selected_ids],
+            "webSelectionRationale": selected_rationale,
+        }
 
     def generate_image(
         self,
@@ -3699,10 +4460,18 @@ class AppController:
         reasoning_summary = ""
         reasoning_model = ""
         reasoning_effort = ""
+        web_search_enabled = False
+        web_search_used = False
+        web_search_failed = False
+        web_search_result_count = 0
+        staged_web_references: list[dict[str, Any]] = []
+        persisted_web_references: list[dict[str, Any]] = []
+        web_reference_paths: tuple[Path, ...] = ()
+        web_reference_dir = app_data_dir() / "image-search-references" / request_id
         if reasoning_mode != "instant":
             reasoning_effort = str(IMAGE_REASONING_MODES[reasoning_mode]["effort"])
             try:
-                final_prompt, reasoning_summary, reasoning_model = self._run_image_prompt_agent(
+                agent_result = self._run_image_prompt_agent(
                     record,
                     secret,
                     original_prompt,
@@ -3710,8 +4479,29 @@ class AppController:
                     reasoning_mode,
                     emit,
                 )
-                request = prepare_image_generation(final_prompt, image_paths, clean_options)
+                final_prompt = str(agent_result["prompt"])
+                reasoning_summary = str(agent_result["summary"])
+                reasoning_model = str(agent_result["model"])
+                web_search_enabled = bool(agent_result.get("webSearchEnabled"))
+                web_search_used = bool(agent_result.get("webSearchUsed"))
+                web_search_failed = bool(agent_result.get("webSearchFailed"))
+                web_search_result_count = int(agent_result.get("webSearchResultCount") or 0)
+                available_slots = max(0, 16 - len(request.image_paths))
+                web_candidates = list(agent_result.get("webCandidates") or [])
+                if web_candidates and available_slots:
+                    staged_web_references = self.web_search.stage_reference_records(
+                        web_candidates,
+                        web_reference_dir,
+                        min(WEB_REFERENCE_MAX_COUNT, available_slots),
+                    )
+                    web_reference_paths = tuple(
+                        Path(reference["path"]) for reference in staged_web_references
+                    )
+                combined_paths = [str(path) for path in request.image_paths]
+                combined_paths.extend(str(path) for path in web_reference_paths)
+                request = prepare_image_generation(final_prompt, combined_paths, clean_options)
             except (RuntimeError, OSError, ValueError) as exc:
+                shutil.rmtree(web_reference_dir, ignore_errors=True)
                 emit("react_failed", mode=reasoning_mode, error=str(exc))
                 return {"ok": False, "error": f"思维处理失败：{exc}"}
         clean_options.update(
@@ -3721,6 +4511,11 @@ class AppController:
                 "reasoningEffort": reasoning_effort,
                 "reasoningSummary": reasoning_summary,
                 "originalPrompt": original_prompt,
+                "webSearchEnabled": web_search_enabled,
+                "webSearchUsed": web_search_used,
+                "webSearchFailed": web_search_failed,
+                "webSearchResultCount": web_search_result_count,
+                "webReferenceCount": len(web_reference_paths),
             }
         )
         managed_output_dir = app_data_dir() / "image-generations"
@@ -3736,12 +4531,29 @@ class AppController:
                 parent_set_id=parent_set_id,
             )
         except OSError as exc:
+            shutil.rmtree(web_reference_dir, ignore_errors=True)
             return {"ok": False, "error": f"无法创建图片集：{exc}"}
         active_sets = getattr(self, "active_image_sets", None)
         if active_sets is None:
             active_sets = set()
             self.active_image_sets = active_sets
         active_sets.add(request_id)
+
+        if staged_web_references:
+            try:
+                persisted_web_references = session_store.persist_web_references(
+                    session_id,
+                    request_id,
+                    staged_web_references,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                active_sets.discard(request_id)
+                shutil.rmtree(web_reference_dir, ignore_errors=True)
+                try:
+                    session_store.delete_set(session_id, request_id)
+                except (OSError, RuntimeError):
+                    pass
+                return {"ok": False, "error": f"无法保存网络参考图：{exc}"}
 
         emit(
             "set_started",
@@ -3754,6 +4566,12 @@ class AppController:
             reasoningModel=reasoning_model,
             reasoningEffort=reasoning_effort,
             reasoningSummary=reasoning_summary,
+            webSearchEnabled=web_search_enabled,
+            webSearchUsed=web_search_used,
+            webSearchFailed=web_search_failed,
+            webSearchResultCount=web_search_result_count,
+            webReferenceCount=len(persisted_web_references),
+            webReferences=persisted_web_references,
         )
 
         def generate_one(item_index: int) -> dict[str, Any]:
@@ -3795,13 +4613,18 @@ class AppController:
                 return {"ok": False, "itemIndex": item_index, "error": error}
 
         items: list[dict[str, Any]] = []
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=min(3, image_count),
-            thread_name_prefix="image-generation",
-        ) as executor:
-            futures = [executor.submit(generate_one, index) for index in range(image_count)]
-            for future in concurrent.futures.as_completed(futures):
-                items.append(future.result())
+        try:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(3, image_count),
+                thread_name_prefix="image-generation",
+            ) as executor:
+                futures = [executor.submit(generate_one, index) for index in range(image_count)]
+                for future in concurrent.futures.as_completed(futures):
+                    items.append(future.result())
+        except BaseException:
+            active_sets.discard(request_id)
+            shutil.rmtree(web_reference_dir, ignore_errors=True)
+            raise
         items.sort(key=lambda item: int(item.get("itemIndex") or 0))
         successful = [item for item in items if item.get("ok")]
         result = {
@@ -3817,6 +4640,12 @@ class AppController:
             "reasoningEffort": reasoning_effort,
             "reasoningSummary": reasoning_summary,
             "referenceCount": len(request.image_paths),
+            "webSearchEnabled": web_search_enabled,
+            "webSearchUsed": web_search_used,
+            "webSearchFailed": web_search_failed,
+            "webSearchResultCount": web_search_result_count,
+            "webReferenceCount": len(persisted_web_references),
+            "webReferences": persisted_web_references,
         }
         if not successful:
             result["error"] = "所有图片生成请求均失败"
@@ -3824,6 +4653,7 @@ class AppController:
             session_store.complete_round(session_id, request_id)
         finally:
             active_sets.discard(request_id)
+            shutil.rmtree(web_reference_dir, ignore_errors=True)
         result.update(
             {
                 "sessionId": session_id,
@@ -4207,6 +5037,9 @@ class WebApi:
     def list_image_sets(self) -> dict[str, Any]:
         return self._controller.list_image_sets()
 
+    def append_image_stream_debug(self, records: Any) -> dict[str, Any]:
+        return self._controller.append_image_stream_debug(records)
+
     def generate_image(
         self,
         key_id: str,
@@ -4506,6 +5339,9 @@ class RemoteWebApi(WebApi):
 
     def list_image_sets(self) -> dict[str, Any]:
         return self._remote("list_image_sets")
+
+    def append_image_stream_debug(self, records: Any) -> dict[str, Any]:
+        return self._remote("append_image_stream_debug", records)
 
     def generate_image(
         self,

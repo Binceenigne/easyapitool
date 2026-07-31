@@ -2242,6 +2242,19 @@
                 reasoningEffort: metadata.reasoningEffort || '',
                 reasoningSummary: metadata.reasoningSummary || '',
                 effectivePrompt: metadata.effectivePrompt || '',
+                webSearchEnabled: metadata.webSearchEnabled === true,
+                webSearchStatus: metadata.webSearchFailed
+                    ? 'failed'
+                    : metadata.webSearchUsed
+                        ? 'completed'
+                        : metadata.webSearchEnabled && metadata.reasoningStatus === 'completed'
+                            ? 'skipped'
+                            : 'idle',
+                webSearchResultCount: Number(metadata.webSearchResultCount) || 0,
+                webReferenceCount: Number(metadata.webReferenceCount) || 0,
+                webReferences: Array.isArray(metadata.webReferences) ? metadata.webReferences.map(reference => ({ ...reference })) : [],
+                webReferencesExpanded: false,
+                webReferencesLoading: false,
                 items: Array.from({ length: requestedCount }, (_, itemIndex) => ({
                     itemIndex,
                     status: 'queued',
@@ -2320,6 +2333,33 @@
             renderImageGenerationSets();
         }
 
+        async function toggleWebReferences(setId) {
+            const set = imageGenerationSetById(setId);
+            if (!set?.webReferences?.length) return;
+            set.webReferencesExpanded = !set.webReferencesExpanded;
+            if (!set.webReferencesExpanded) {
+                renderImageGenerationSets();
+                return;
+            }
+            const missing = set.webReferences.filter(reference => !reference.previewUri && reference.previewPath);
+            if (!missing.length || !window.pywebview?.api?.load_generated_image) {
+                renderImageGenerationSets();
+                return;
+            }
+            set.webReferencesLoading = true;
+            renderImageGenerationSets();
+            await Promise.all(missing.map(async reference => {
+                try {
+                    const loaded = await window.pywebview.api.load_generated_image(reference.previewPath);
+                    if (loaded.ok && loaded.dataUrl) reference.previewUri = loaded.dataUrl;
+                } catch (error) {
+                    console.warn('网络参考图预览加载失败:', error);
+                }
+            }));
+            set.webReferencesLoading = false;
+            renderImageGenerationSets();
+        }
+
         function toggleImageGenerationSet(setId) {
             const set = imageGenerationSetById(setId);
             if (!set || set.status === 'running') return;
@@ -2340,17 +2380,177 @@
 
         const IMAGE_STREAM_INITIAL_BLUR = 32;
         const IMAGE_STREAM_PARTIAL_FLOOR_BLUR = 3;
+        const IMAGE_STREAM_PARTIAL_BLUR_STEP = 0.22;
         const IMAGE_STREAM_PARTIAL_DURATION = 10000;
         const IMAGE_STREAM_FINAL_DURATION = 3000;
         const IMAGE_STREAM_INITIAL_FADE_DURATION = 5000;
         const IMAGE_STREAM_CROSSFADE_DURATION = 10000;
+        const IMAGE_STREAM_DEBUG_PREFIX = '[ImageStreamBlur]';
+        const IMAGE_STREAM_DEBUG_LIMIT = 20000;
+        const imageStreamDebugHistory = [];
+        const imageStreamDebugPending = [];
+        const imageStreamDebugSamplers = new WeakMap();
+        const imageRevealItemContext = new WeakMap();
+        let imageStreamDebugSequence = 0;
+        let imageStreamDebugFrameSequence = 0;
+        let imageStreamDebugFlushTimer = 0;
+        let imageStreamDebugFlushing = false;
 
-        function imageRevealTargetBlur(partialIndex, partialTotal) {
-            const total = Math.max(1, Number(partialTotal) || 1);
-            const index = Math.max(1, Math.min(total, Number(partialIndex) || 1));
-            const remaining = 1 - index / total;
-            return IMAGE_STREAM_PARTIAL_FLOOR_BLUR
-                + (IMAGE_STREAM_INITIAL_BLUR - IMAGE_STREAM_PARTIAL_FLOOR_BLUR) * remaining;
+        function imageStreamFrameId(frame) {
+            if (!frame.debugId) frame.debugId = `frame-${++imageStreamDebugFrameSequence}`;
+            return frame.debugId;
+        }
+
+        function imageStreamActualStyle(image) {
+            if (!image?.isConnected) {
+                return { connected: false, filter: '', actualBlurPx: null, opacity: null };
+            }
+            const style = getComputedStyle(image);
+            const filter = style.filter || 'none';
+            const blurMatch = filter.match(/blur\((-?[\d.]+)px\)/i);
+            const animations = image.getAnimations?.().map(animation => ({
+                currentTimeMs: Number.isFinite(Number(animation.currentTime)) ? Number(animation.currentTime) : null,
+                playState: animation.playState,
+                progress: animation.effect?.getComputedTiming?.().progress ?? null
+            })) || [];
+            return {
+                connected: true,
+                filter,
+                actualBlurPx: blurMatch ? Number(blurMatch[1]) : filter === 'none' ? 0 : null,
+                opacity: Number(style.opacity),
+                animationName: style.animationName,
+                animationDuration: style.animationDuration,
+                animationDelay: style.animationDelay,
+                animations
+            };
+        }
+
+        function imageStreamDebugContext(item, frame = null, frameIndex = null) {
+            const itemContext = imageRevealItemContext.get(item) || {};
+            return {
+                setId: itemContext.setId || '',
+                itemIndex: Number.isInteger(itemContext.itemIndex) ? itemContext.itemIndex : Number(item?.itemIndex) || 0,
+                frameId: frame ? imageStreamFrameId(frame) : '',
+                frameIndex,
+                kind: frame?.kind || '',
+                configuredFromBlurPx: Number.isFinite(Number(frame?.fromBlur)) ? Number(frame.fromBlur) : null,
+                configuredToBlurPx: Number.isFinite(Number(frame?.toBlur)) ? Number(frame.toBlur) : null,
+                predictedBlurPx: frame ? imageRevealBlurAt(frame) : null
+            };
+        }
+
+        function scheduleImageStreamDebugFlush() {
+            if (imageStreamDebugFlushTimer || imageStreamDebugPending.length === 0) return;
+            imageStreamDebugFlushTimer = window.setTimeout(() => {
+                imageStreamDebugFlushTimer = 0;
+                void flushImageStreamDebugLog();
+            }, 1000);
+        }
+
+        async function flushImageStreamDebugLog() {
+            if (imageStreamDebugFlushing || imageStreamDebugPending.length === 0) return;
+            const api = window.pywebview?.api?.append_image_stream_debug;
+            if (!api) {
+                imageStreamDebugPending.length = 0;
+                return;
+            }
+            imageStreamDebugFlushing = true;
+            const records = imageStreamDebugPending.splice(0, 240);
+            try {
+                await api(records);
+            } catch (error) {
+                console.warn(IMAGE_STREAM_DEBUG_PREFIX, 'persist failed', error);
+            } finally {
+                imageStreamDebugFlushing = false;
+                if (imageStreamDebugPending.length) scheduleImageStreamDebugFlush();
+            }
+        }
+
+        function imageStreamDebugLog(event, details = {}, image = null) {
+            const entry = {
+                sequence: ++imageStreamDebugSequence,
+                timestamp: new Date().toISOString(),
+                performanceMs: Math.round(performance.now() * 1000) / 1000,
+                event,
+                ...details,
+                ...(image ? imageStreamActualStyle(image) : {})
+            };
+            imageStreamDebugHistory.push(entry);
+            if (imageStreamDebugHistory.length > IMAGE_STREAM_DEBUG_LIMIT) imageStreamDebugHistory.shift();
+            imageStreamDebugPending.push(entry);
+            if (event !== 'sample') console.info(IMAGE_STREAM_DEBUG_PREFIX, entry);
+            scheduleImageStreamDebugFlush();
+            return entry;
+        }
+
+        function sampleImageStreamFrames(item) {
+            const frames = Array.isArray(item.revealFrames) ? item.revealFrames : [];
+            const layers = frames.map((frame, frameIndex) => {
+                const image = imageRevealElementCache.get(frame);
+                return {
+                    ...imageStreamDebugContext(item, frame, frameIndex),
+                    ...imageStreamActualStyle(image)
+                };
+            });
+            const visibleLayers = layers.filter(layer => layer.connected && Number(layer.opacity) > 0.01);
+            const topVisibleLayer = visibleLayers.at(-1) || null;
+            imageStreamDebugLog('sample', {
+                ...imageStreamDebugContext(item),
+                layerCount: layers.length,
+                topVisibleFrameId: topVisibleLayer?.frameId || '',
+                topVisibleActualBlurPx: topVisibleLayer?.actualBlurPx ?? null,
+                layers
+            });
+        }
+
+        function ensureImageStreamDebugSampler(item) {
+            let state = imageStreamDebugSamplers.get(item);
+            if (!state) {
+                state = { frameRequest: 0, activeUntil: 0 };
+                imageStreamDebugSamplers.set(item, state);
+            }
+            state.activeUntil = Math.max(state.activeUntil, Date.now() + 12000);
+            if (state.frameRequest) return;
+            const tick = () => {
+                state.frameRequest = 0;
+                sampleImageStreamFrames(item);
+                const frames = Array.isArray(item.revealFrames) ? item.revealFrames : [];
+                const latestEnd = frames.reduce((endAt, frame) => {
+                    if (!frame.startedAt) return Math.max(endAt, Date.now() + 1000);
+                    return Math.max(endAt, frame.startedAt + Math.max(
+                        Number(frame.duration) || 0,
+                        frame.kind === 'final' ? IMAGE_STREAM_CROSSFADE_DURATION : 0
+                    ));
+                }, 0);
+                if (Date.now() <= Math.max(state.activeUntil, latestEnd) + 250) {
+                    state.frameRequest = requestAnimationFrame(tick);
+                } else {
+                    imageStreamDebugLog('sampling-stopped', imageStreamDebugContext(item));
+                    imageStreamDebugSamplers.delete(item);
+                }
+            };
+            state.frameRequest = requestAnimationFrame(tick);
+        }
+
+        window.getImageStreamDebugLog = setId => imageStreamDebugHistory
+            .filter(entry => !setId || entry.setId === setId)
+            .map(entry => structuredClone(entry));
+        window.clearImageStreamDebugLog = () => {
+            imageStreamDebugHistory.length = 0;
+            imageStreamDebugPending.length = 0;
+            imageStreamDebugSequence = 0;
+            console.info(IMAGE_STREAM_DEBUG_PREFIX, 'debug history cleared');
+        };
+        window.flushImageStreamDebugLog = flushImageStreamDebugLog;
+
+        function imageRevealTargetBlur(partialIndex) {
+            const index = Math.max(1, Math.floor(Number(partialIndex) || 1));
+            const regularSteps = Math.min(index, 3);
+            const extraSteps = Math.max(0, index - 3);
+            const regularReduction = regularSteps * IMAGE_STREAM_PARTIAL_BLUR_STEP;
+            const extraReduction = IMAGE_STREAM_PARTIAL_BLUR_STEP * (1 - 1 / (2 ** extraSteps));
+            const remaining = Math.max(0, 1 - regularReduction - extraReduction);
+            return Math.max(IMAGE_STREAM_PARTIAL_FLOOR_BLUR, IMAGE_STREAM_INITIAL_BLUR * remaining);
         }
 
         function imageRevealBlurAt(frame, timestamp = Date.now()) {
@@ -2382,6 +2582,12 @@
             image.style.filter = `blur(${frame.frozenBlur}px)`;
             image.style.opacity = String(frame.frozenOpacity);
             image.style.willChange = 'auto';
+            const context = imageRevealElementContext.get(image);
+            imageStreamDebugLog('frame-frozen', {
+                ...imageStreamDebugContext(context?.item, frame, context?.frameIndex),
+                requestedBlurPx: frame.frozenBlur,
+                requestedOpacity: frame.frozenOpacity
+            }, image);
         }
 
         function appendImageRevealFrame(item, uri, kind, options = {}) {
@@ -2396,7 +2602,7 @@
                 : IMAGE_STREAM_INITIAL_BLUR;
             const requestedTarget = kind === 'final'
                 ? 0
-                : imageRevealTargetBlur(options.partialIndex, options.partialTotal);
+                : imageRevealTargetBlur(options.partialIndex);
             const frame = {
                 uri,
                 fallbackUri: options.fallbackUri || '',
@@ -2408,6 +2614,15 @@
                 toBlur: Math.min(previousTarget, requestedTarget)
             };
             item.revealFrames.push(frame);
+            const previousImage = previousFrame ? imageRevealElementCache.get(previousFrame) : null;
+            imageStreamDebugLog('frame-inserted', {
+                ...imageStreamDebugContext(item, frame, item.revealFrames.length - 1),
+                partialIndex: Number(options.partialIndex) || 0,
+                partialTotal: Number(options.partialTotal) || 0,
+                previousFrameId: previousFrame ? imageStreamFrameId(previousFrame) : '',
+                previousActual: imageStreamActualStyle(previousImage)
+            });
+            ensureImageStreamDebugSampler(item);
             return frame;
         }
 
@@ -2430,6 +2645,12 @@
             image.style.setProperty('--image-reveal-from-opacity', initialPartial || frameIndex > 0 ? '0' : '1');
             image.style.setProperty('--image-reveal-crossfade-duration', `${crossfadeDuration}ms`);
             image.style.setProperty('--image-reveal-crossfade-delay', `${-Math.min(elapsed, crossfadeDuration)}ms`);
+            const context = imageRevealElementContext.get(image);
+            imageStreamDebugLog('animation-applied', {
+                ...imageStreamDebugContext(context?.item, frame, frameIndex),
+                elapsedMs: elapsed,
+                crossfadeDurationMs: crossfadeDuration
+            }, image);
         }
 
         function scheduleFinalImageFrameCleanup(item, frame) {
@@ -2446,6 +2667,13 @@
         }
 
         function startImageRevealFrame(item, frame, image, frameIndex) {
+            imageStreamDebugLog('frame-start-requested', {
+                ...imageStreamDebugContext(item, frame, frameIndex),
+                previousLayers: item.revealFrames.slice(0, frameIndex).map((previousFrame, previousIndex) => ({
+                    ...imageStreamDebugContext(item, previousFrame, previousIndex),
+                    ...imageStreamActualStyle(imageRevealElementCache.get(previousFrame))
+                }))
+            }, image);
             if (Number.isFinite(Number(frame.frozenBlur))) {
                 freezeImageRevealFrame(frame, image, frame.frozenBlur);
                 return;
@@ -2465,9 +2693,14 @@
                 });
                 frame.fromBlur = Math.max(Number(frame.toBlur) || 0, visibleBlur);
                 frame.startedAt = timestamp;
+                imageStreamDebugLog('frame-started', {
+                    ...imageStreamDebugContext(item, frame, frameIndex),
+                    selectedVisibleBlurPx: visibleBlur
+                }, image);
             }
             applyImageRevealAnimation(image, frame, frameIndex);
             scheduleFinalImageFrameCleanup(item, frame);
+            ensureImageStreamDebugSampler(item);
         }
 
         const imageRevealElementCache = new WeakMap();
@@ -2480,7 +2713,14 @@
                 image.className = 'image-generation-frame is-reveal-pending';
                 image.addEventListener('load', () => {
                     const context = imageRevealElementContext.get(image);
-                    if (context) startImageRevealFrame(context.item, context.frame, image, context.frameIndex);
+                    if (context) {
+                        imageStreamDebugLog('image-loaded', imageStreamDebugContext(
+                            context.item,
+                            context.frame,
+                            context.frameIndex
+                        ), image);
+                        startImageRevealFrame(context.item, context.frame, image, context.frameIndex);
+                    }
                 });
                 let recoveryAttempted = false;
                 image.addEventListener('error', async () => {
@@ -2504,6 +2744,10 @@
                 imageRevealElementCache.set(frame, image);
             }
             imageRevealElementContext.set(image, { item, frame, frameIndex });
+            imageRevealItemContext.set(item, imageRevealItemContext.get(item) || {
+                setId: '',
+                itemIndex: Number(item.itemIndex) || 0
+            });
             image.alt = frame.kind === 'final' ? '生成图片' : '过程预览';
             if (!image.getAttribute('src')) image.src = frame.uri;
             if (Number.isFinite(Number(frame.frozenBlur))) {
@@ -2619,11 +2863,67 @@
                     reasoningPanel.className = `image-reasoning-panel is-${set.reasoningStatus}`;
                     const reasoningHeader = document.createElement('div');
                     reasoningHeader.innerHTML = `${iconMarkup(set.reasoningStatus === 'running' ? 'loader-circle' : 'brain-circuit', `icon-13${set.reasoningStatus === 'running' ? ' is-spinning' : ''}`)}<strong>${IMAGE_REASONING_LABELS[set.reasoningMode] || 'ReAct'} · ${set.reasoningStatus === 'running' ? '正在思考' : set.reasoningStatus === 'failed' ? '思考失败' : '方案已确定'}</strong>`;
+                    if (set.webSearchEnabled && set.webSearchStatus !== 'idle') {
+                        const hasWebReferences = set.webReferenceCount > 0 && set.webReferences.length > 0;
+                        const webStatus = document.createElement(hasWebReferences ? 'button' : 'span');
+                        if (hasWebReferences) {
+                            webStatus.type = 'button';
+                            webStatus.title = set.webReferencesExpanded ? '收起网络参考图' : '查看采用的网络参考图';
+                            webStatus.setAttribute('aria-expanded', String(set.webReferencesExpanded));
+                            webStatus.addEventListener('click', () => void toggleWebReferences(set.setId));
+                        }
+                        webStatus.className = `image-reasoning-web-status is-${set.webSearchStatus}`;
+                        const webStatusText = set.webSearchStatus === 'running'
+                            ? '联网检索中'
+                            : set.webSearchStatus === 'failed'
+                                ? '联网检索失败，已继续'
+                                : set.webSearchStatus === 'skipped'
+                                    ? '本轮未调用网络搜索'
+                            : set.webReferenceCount > 0
+                                ? `已采用 ${set.webReferenceCount} 张网络参考`
+                                : set.webSearchResultCount > 0
+                                    ? `已检索 ${set.webSearchResultCount} 个候选`
+                                    : '已检索网络';
+                        const webStatusIcon = set.webSearchStatus === 'running'
+                            ? 'loader-circle'
+                            : set.webSearchStatus === 'failed' ? 'triangle-alert' : 'globe-2';
+                        webStatus.innerHTML = `${iconMarkup(webStatusIcon, `icon-10${set.webSearchStatus === 'running' ? ' is-spinning' : ''}`)}<span>${webStatusText}</span>`;
+                        reasoningHeader.append(webStatus);
+                    }
                     const summary = document.createElement('p');
                     summary.dataset.reasoningSummary = set.setId;
                     summary.textContent = set.reasoningSummary || '正在理解创作环境与目标…';
                     if (set.reasoningStatus === 'running') summary.classList.add('is-streaming');
                     reasoningPanel.append(reasoningHeader, summary);
+                    if (set.webReferencesExpanded && set.webReferences.length) {
+                        const references = document.createElement('div');
+                        references.className = 'image-reasoning-web-references';
+                        if (set.webReferencesLoading) {
+                            references.innerHTML = `${iconMarkup('loader-circle', 'icon-13 is-spinning')}<span>正在加载网络参考图</span>`;
+                        } else {
+                            set.webReferences.forEach((reference, referenceIndex) => {
+                                const referenceButton = document.createElement('button');
+                                referenceButton.type = 'button';
+                                referenceButton.className = 'image-reasoning-web-reference';
+                                referenceButton.title = reference.title || `网络参考图 ${referenceIndex + 1}`;
+                                const image = document.createElement('img');
+                                image.src = reference.previewUri || reference.uri || '';
+                                image.alt = reference.title || `网络参考图 ${referenceIndex + 1}`;
+                                const label = document.createElement('span');
+                                label.textContent = reference.title || reference.provider || `参考图 ${referenceIndex + 1}`;
+                                referenceButton.append(image, label);
+                                referenceButton.addEventListener('click', () => openImageResultModal({
+                                    ...reference,
+                                    uri: reference.previewUri || reference.uri || '',
+                                    actualSize: reference.provider || '网络参考',
+                                    format: 'jpg',
+                                    status: 'reference'
+                                }));
+                                references.append(referenceButton);
+                            });
+                        }
+                        reasoningPanel.append(references);
+                    }
                     if (set.effectivePrompt) {
                         const finalPrompt = document.createElement('details');
                         const finalPromptSummary = document.createElement('summary');
@@ -2656,6 +2956,10 @@
                     grid.append(loading);
                 }
                 if (!set.loadingPreviews) set.items.forEach(item => {
+                    imageRevealItemContext.set(item, {
+                        setId: set.setId,
+                        itemIndex: Number(item.itemIndex) || 0
+                    });
                     const completed = item.status === 'completed';
                     const card = document.createElement(completed ? 'button' : 'div');
                     if (completed) card.type = 'button';
@@ -2753,6 +3057,16 @@
                 set.reasoningEffort = event.reasoningEffort || set.reasoningEffort;
                 set.reasoningSummary = event.reasoningSummary || set.reasoningSummary;
                 set.effectivePrompt = event.prompt || set.effectivePrompt;
+                set.webSearchEnabled = event.webSearchEnabled === true || set.webSearchEnabled;
+                if (event.webSearchFailed) set.webSearchStatus = 'failed';
+                else if (event.webSearchUsed) set.webSearchStatus = 'completed';
+                else if (set.webSearchEnabled) set.webSearchStatus = 'skipped';
+                set.webSearchResultCount = Number(event.webSearchResultCount) || set.webSearchResultCount;
+                set.webReferenceCount = Number(event.webReferenceCount) || set.webReferenceCount;
+                if (Array.isArray(event.webReferences)) {
+                    set.webReferences = event.webReferences.map(reference => ({ ...reference }));
+                    set.webReferenceCount = set.webReferences.length;
+                }
                 if (set.reasoningStatus === 'running') set.reasoningStatus = 'completed';
                 while (set.items.length < set.requestedCount) {
                     set.items.push({ itemIndex: set.items.length, status: 'queued', uri: '', previewUri: '', path: '', result: null, error: '', revealFrames: [], partialIndex: 0, partialTotal: 3 });
@@ -2762,6 +3076,19 @@
                 set.reasoningMode = event.mode || set.reasoningMode;
                 set.reasoningModel = event.model || '';
                 set.reasoningEffort = event.reasoningEffort || '';
+                set.webSearchEnabled = event.webSearchEnabled === true;
+            } else if (event.type === 'react_tool_started' && ['search_web', 'search_visual_references'].includes(event.tool)) {
+                set.webSearchStatus = 'running';
+            } else if (event.type === 'react_tool_completed' && ['search_web', 'search_visual_references'].includes(event.tool)) {
+                set.webSearchStatus = 'completed';
+            } else if (event.type === 'react_tool_failed' && ['search_web', 'search_visual_references'].includes(event.tool)) {
+                set.webSearchStatus = 'failed';
+            } else if (event.type === 'react_visual_results') {
+                set.webSearchStatus = 'running';
+                set.webSearchResultCount = Number(event.webSearchResultCount) || set.webSearchResultCount;
+            } else if (event.type === 'react_visual_selected') {
+                set.webSearchStatus = 'completed';
+                set.webReferenceCount = Number(event.selectedCount) || 0;
             } else if (event.type === 'react_summary_delta') {
                 set.reasoningStatus = 'running';
                 set.reasoningSummary += event.delta || '';
@@ -2776,26 +3103,47 @@
                 set.effectivePrompt = event.prompt || '';
                 set.reasoningModel = event.model || set.reasoningModel;
                 set.reasoningEffort = event.reasoningEffort || set.reasoningEffort;
+                set.webSearchEnabled = event.webSearchEnabled === true || set.webSearchEnabled;
+                if (event.webSearchFailed) set.webSearchStatus = 'failed';
+                else if (event.webSearchUsed) set.webSearchStatus = 'completed';
+                else if (set.webSearchEnabled) set.webSearchStatus = 'skipped';
+                set.webSearchResultCount = Number(event.webSearchResultCount) || set.webSearchResultCount;
+                set.webReferenceCount = Number(event.webReferenceCount) || set.webReferenceCount;
             } else if (event.type === 'react_failed') {
                 set.reasoningStatus = 'failed';
                 set.reasoningSummary = event.error || '思维处理失败';
             } else if (Number.isInteger(event.itemIndex) && set.items[event.itemIndex]) {
                 const item = set.items[event.itemIndex];
+                imageRevealItemContext.set(item, {
+                    setId: set.setId,
+                    itemIndex: event.itemIndex
+                });
                 if (event.type === 'item_started') item.status = 'running';
                 if (event.type === 'item_partial' && item.status !== 'completed') {
-                    item.status = 'partial';
-                    item.uri = event.uri || item.uri;
-                    item.previewUri = event.previewUri || item.previewUri;
-                    item.path = event.path || item.path;
                     const previousPartialIndex = Number(item.partialIndex) || 0;
-                    item.partialIndex = Math.max(previousPartialIndex, Math.max(1, Math.min(3, Number(event.partialIndex) || previousPartialIndex + 1)));
-                    item.partialTotal = Math.max(item.partialIndex, Number(event.partialTotal) || 3);
-                    appendImageRevealFrame(item, item.previewUri || item.uri, 'partial', {
-                        fallbackUri: item.uri,
-                        path: item.path,
-                        partialIndex: item.partialIndex,
-                        partialTotal: item.partialTotal
-                    });
+                    const incomingPartialIndex = Number(event.partialIndex) || previousPartialIndex + 1;
+                    const incomingPartialTotal = Math.max(1, Number(event.partialTotal) || 3);
+                    if (incomingPartialIndex <= previousPartialIndex) {
+                        imageStreamDebugLog('partial-ignored', {
+                            ...imageStreamDebugContext(item),
+                            incomingPartialIndex,
+                            incomingPartialTotal,
+                            previousPartialIndex
+                        });
+                    } else {
+                        item.status = 'partial';
+                        item.uri = event.uri || item.uri;
+                        item.previewUri = event.previewUri || item.previewUri;
+                        item.path = event.path || item.path;
+                        item.partialIndex = incomingPartialIndex;
+                        item.partialTotal = Math.max(item.partialIndex, item.partialTotal, incomingPartialTotal);
+                        appendImageRevealFrame(item, item.previewUri || item.uri, 'partial', {
+                            fallbackUri: item.uri,
+                            path: item.path,
+                            partialIndex: item.partialIndex,
+                            partialTotal: item.partialTotal
+                        });
+                    }
                 }
                 if (event.type === 'item_completed') {
                     item.status = 'completed';
@@ -2870,6 +3218,15 @@
             set.effectivePrompt = result.reasoningMode && result.reasoningMode !== 'instant'
                 ? result.prompt || set.effectivePrompt
                 : set.effectivePrompt;
+            set.webSearchEnabled = result.webSearchEnabled === true || set.webSearchEnabled;
+            if (result.webSearchFailed) set.webSearchStatus = 'failed';
+            else if (result.webSearchUsed) set.webSearchStatus = 'completed';
+            else if (set.webSearchEnabled) set.webSearchStatus = 'skipped';
+            set.webSearchResultCount = Number(result.webSearchResultCount) || set.webSearchResultCount;
+            if (Array.isArray(result.webReferences)) {
+                set.webReferences = result.webReferences.map(reference => ({ ...reference }));
+                set.webReferenceCount = set.webReferences.length;
+            }
             set.items = (result.items || []).map((item, itemIndex) => {
                 const previousItem = previousItems[itemIndex];
                 return {
@@ -3097,9 +3454,11 @@
             image.src = result.uri || result.previewUri || '';
             document.getElementById('imageResultModalMeta').textContent = result.status === 'partial'
                 ? '过程预览 · 生成仍在继续'
-                : `${result.actualSize || `${result.width || 0}x${result.height || 0}`} · ${String(result.format || '').toUpperCase()} · 已自动保存`;
-            document.getElementById('saveEditedImageButton').disabled = result.status === 'partial' || !result.path;
-            if (preferFullImage && result.status !== 'partial' && result.path && window.pywebview?.api?.load_generated_image) {
+                : result.status === 'reference'
+                    ? `${result.provider || '网络参考'} · 已纳入本轮生成`
+                    : `${result.actualSize || `${result.width || 0}x${result.height || 0}`} · ${String(result.format || '').toUpperCase()} · 已自动保存`;
+            document.getElementById('saveEditedImageButton').disabled = ['partial', 'reference'].includes(result.status) || !result.path;
+            if (preferFullImage && !['partial', 'reference'].includes(result.status) && result.path && window.pywebview?.api?.load_generated_image) {
                 try {
                     const loaded = await window.pywebview.api.load_generated_image(result.path);
                     if (loaded.ok && window.imageEditState.viewerResult?.path === result.path) image.src = loaded.dataUrl;

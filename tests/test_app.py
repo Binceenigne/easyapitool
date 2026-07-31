@@ -637,6 +637,7 @@ class UtilityTests(unittest.TestCase):
                 )
 
         deltas = []
+        completed = []
         with patch("app.urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
             text = app.EasyClinClient.stream_response(
                 "https://example.test/v1",
@@ -646,6 +647,12 @@ class UtilityTests(unittest.TestCase):
                 "input",
                 on_delta=deltas.append,
                 reasoning_effort="high",
+                tools=[{"type": "web_search", "search_content_types": ["image", "text"]}],
+                tool_choice="auto",
+                include=["web_search_call.results"],
+                max_tool_calls=3,
+                parallel_tool_calls=True,
+                on_completed=completed.append,
             )
 
         request = urlopen.call_args.args[0]
@@ -654,9 +661,18 @@ class UtilityTests(unittest.TestCase):
         self.assertEqual(request.headers["Authorization"], "Bearer secret")
         self.assertEqual(payload["model"], "gpt-test")
         self.assertEqual(payload["reasoning"], {"effort": "high"})
+        self.assertEqual(
+            payload["tools"],
+            [{"type": "web_search", "search_content_types": ["image", "text"]}],
+        )
+        self.assertEqual(payload["tool_choice"], "auto")
+        self.assertEqual(payload["include"], ["web_search_call.results"])
+        self.assertEqual(payload["max_tool_calls"], 3)
+        self.assertTrue(payload["parallel_tool_calls"])
         self.assertTrue(payload["stream"])
         self.assertEqual(text, "Analyze the scene")
         self.assertEqual(deltas, ["Analyze ", "the scene"])
+        self.assertEqual(completed, [{"output": []}])
 
     def test_client_accepts_non_streaming_responses_payload(self):
         class FakeHeaders:
@@ -689,6 +705,116 @@ class UtilityTests(unittest.TestCase):
             )
 
         self.assertEqual(text, "Polished prompt")
+
+    def test_client_allows_tool_only_response_without_text(self):
+        class FakeHeaders:
+            @staticmethod
+            def get(_name):
+                return "application/json"
+
+        class FakeResponse:
+            headers = FakeHeaders()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def read():
+                return json.dumps(
+                    {
+                        "output": [
+                            {
+                                "type": "function_call",
+                                "name": "search_visual_references",
+                                "call_id": "call-1",
+                                "arguments": '{"query":"Shanghai Tower"}',
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+
+        completed = []
+        with patch("app.urllib.request.urlopen", return_value=FakeResponse()):
+            text = app.EasyClinClient.stream_response(
+                "https://example.test/v1",
+                "secret",
+                "model",
+                "instructions",
+                "input",
+                allow_empty_text=True,
+                on_completed=completed.append,
+            )
+
+        self.assertEqual(text, "")
+        self.assertEqual(completed[0]["output"][0]["name"], "search_visual_references")
+
+    def test_bing_image_parser_reads_structured_metadata(self):
+        parser = app.BingImageResultParser()
+        parser.feed(
+            '<a class="iusc image" m="{&quot;murl&quot;:&quot;https://images.example/a.jpg&quot;,'
+            '&quot;turl&quot;:&quot;https://thumbs.example/a.jpg&quot;,'
+            '&quot;purl&quot;:&quot;https://source.example/page&quot;,'
+            '&quot;t&quot;:&quot;Shanghai Tower&quot;}"></a>'
+        )
+
+        self.assertEqual(len(parser.results), 1)
+        self.assertEqual(parser.results[0]["murl"], "https://images.example/a.jpg")
+        self.assertEqual(parser.results[0]["t"], "Shanghai Tower")
+
+    def test_visual_search_combines_candidates_and_adds_previews(self):
+        service = app.WebSearchService()
+        image_buffer = __import__("io").BytesIO()
+        Image.new("RGB", (64, 48), "blue").save(image_buffer, format="PNG")
+        image_bytes = image_buffer.getvalue()
+        bing_candidate = {
+            "id": "webref-one",
+            "title": "Bing result",
+            "caption": "Exterior",
+            "imageUrl": "https://images.example/shared.jpg",
+            "thumbnailUrl": "https://thumbs.example/shared.jpg",
+            "sourceUrl": "https://source.example/bing",
+            "width": 1200,
+            "height": 800,
+            "provider": "Bing Images",
+        }
+        commons_duplicate = dict(
+            bing_candidate,
+            id="webref-duplicate",
+            provider="Wikimedia Commons",
+        )
+        commons_unique = dict(
+            bing_candidate,
+            id="webref-two",
+            imageUrl="https://images.example/unique.jpg",
+            thumbnailUrl="https://thumbs.example/unique.jpg",
+            provider="Wikimedia Commons",
+        )
+
+        with patch.object(service, "_bing_images", return_value=[bing_candidate]), patch.object(
+            service,
+            "_commons_images",
+            return_value=[commons_duplicate, commons_unique],
+        ), patch.object(service, "_public_image_bytes", return_value=image_bytes):
+            result = service.search_visual_references("Shanghai Tower", max_results=6)
+
+        self.assertEqual(result["query"], "Shanghai Tower")
+        self.assertEqual([item["id"] for item in result["results"]], ["webref-one", "webref-two"])
+        self.assertTrue(
+            all(item["previewDataUrl"].startswith("data:image/jpeg;base64,") for item in result["results"])
+        )
+        self.assertTrue(all(isinstance(item["_previewBytes"], bytes) for item in result["results"]))
+
+    def test_public_image_url_rejects_private_and_non_https_hosts(self):
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            app.require_public_https_url("http://example.com/image.jpg")
+        with self.assertRaisesRegex(ValueError, "非公开网络"):
+            app.require_public_https_url("https://127.0.0.1/image.jpg")
+        with patch("app.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("10.0.0.8", 443))]):
+            with self.assertRaisesRegex(ValueError, "非公开网络"):
+                app.require_public_https_url("https://images.example/image.jpg")
 
     def test_client_posts_multiple_edit_images_as_multipart(self):
         class FakeResponse:
@@ -1121,6 +1247,20 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("reasoningMode: window.imageEditState.reasoningMode", page)
         self.assertIn("event.type === 'prompt_polish_delta'", page)
         self.assertIn("event.type === 'react_summary_delta'", page)
+        self.assertIn("event.type === 'react_tool_started'", page)
+        self.assertIn("event.type === 'react_tool_completed'", page)
+        self.assertIn("event.type === 'react_tool_failed'", page)
+        self.assertIn("event.type === 'react_visual_results'", page)
+        self.assertIn("event.type === 'react_visual_selected'", page)
+        self.assertIn("联网检索中", page)
+        self.assertIn("联网检索失败，已继续", page)
+        self.assertIn("本轮未调用网络搜索", page)
+        self.assertIn("function toggleWebReferences(setId)", page)
+        self.assertIn("set.webReferencesExpanded", page)
+        self.assertIn("image-reasoning-web-references", page)
+        self.assertIn("查看采用的网络参考图", page)
+        self.assertIn("已检索 ${set.webSearchResultCount} 个候选", page)
+        self.assertIn("已采用 ${set.webReferenceCount} 张网络参考", page)
         self.assertIn("function queueReasoningSummaryRender(setId)", page)
         self.assertIn("reasoningSummaryRenderFrame = requestAnimationFrame", page)
         self.assertIn("data-reasoning-summary", page)
@@ -1148,16 +1288,29 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("controlRect.right - menuWidth", page)
         self.assertIn(".image-reasoning-menu.is-open", stylesheet)
         self.assertIn(".image-reasoning-panel", stylesheet)
+        self.assertIn(".image-reasoning-web-status", stylesheet)
+        self.assertIn(".image-reasoning-web-references", stylesheet)
+        self.assertIn(".image-reasoning-web-reference", stylesheet)
         self.assertIn("@keyframes reasoningCursor", stylesheet)
         self.assertIn("const IMAGE_STREAM_PARTIAL_DURATION = 10000", page)
+        self.assertIn("const IMAGE_STREAM_PARTIAL_BLUR_STEP = 0.22", page)
         self.assertIn("const IMAGE_STREAM_FINAL_DURATION = 3000", page)
         self.assertIn("const IMAGE_STREAM_INITIAL_FADE_DURATION = 5000", page)
         self.assertIn("const IMAGE_STREAM_CROSSFADE_DURATION = 10000", page)
+        self.assertIn("const IMAGE_STREAM_DEBUG_PREFIX = '[ImageStreamBlur]'", page)
+        self.assertIn("function imageStreamActualStyle(image)", page)
+        self.assertIn("const style = getComputedStyle(image)", page)
+        self.assertIn("actualBlurPx", page)
+        self.assertIn("window.getImageStreamDebugLog", page)
+        self.assertIn("append_image_stream_debug", page)
         self.assertIn("frameIndex === 0 && frame.kind === 'partial'", page)
         self.assertIn("function currentImageRevealBlur(item, beforeFrameIndex", page)
         self.assertIn("function freezeImageRevealFrame(frame, image, blur, opacity", page)
         self.assertIn("frame.frozenOpacity", page)
         self.assertIn("frame.fromBlur = Math.max(Number(frame.toBlur) || 0, visibleBlur)", page)
+        self.assertIn("const extraReduction = IMAGE_STREAM_PARTIAL_BLUR_STEP * (1 - 1 / (2 ** extraSteps))", page)
+        self.assertIn("if (incomingPartialIndex <= previousPartialIndex)", page)
+        self.assertIn("imageStreamDebugLog('partial-ignored'", page)
         self.assertIn("item.revealFrames.push(frame)", page)
         self.assertIn("const imageRevealElementCache = new WeakMap()", page)
         self.assertIn("createImageRevealElement(item, frame, frameIndex)", page)
@@ -1439,6 +1592,7 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(app.PROMPT_POLISH_MODEL, "gpt-5.6-terra")
         self.assertEqual(app.PROMPT_POLISH_REASONING_EFFORT, "medium")
+        self.assertEqual(app.IMAGE_WEB_SEARCH_MODES, {"high", "max"})
 
     def test_generate_image_medium_react_streams_summary_and_uses_final_prompt(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1504,6 +1658,7 @@ class ControllerTests(unittest.TestCase):
         response_call = controller.client.stream_response.call_args
         self.assertEqual(response_call.args[2], "gpt-5.6-terra")
         self.assertEqual(response_call.kwargs["reasoning_effort"], "medium")
+        self.assertIsNone(response_call.kwargs["tools"])
         response_input = response_call.args[4]
         self.assertEqual(response_input[0]["content"][0]["type"], "input_text")
         self.assertEqual(response_input[0]["content"][1]["type"], "input_image")
@@ -1517,6 +1672,452 @@ class ControllerTests(unittest.TestCase):
             if event["type"] == "react_summary_delta"
         )
         self.assertNotIn("<<<FINAL_PROMPT>>>", visible_summary)
+
+    def test_generate_image_high_uses_custom_visual_search_and_selected_reference(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            output_path = root / "result.png"
+            Image.new("RGB", (8, 8), "blue").save(output_path)
+            service = SimpleNamespace(
+                generate=__import__("unittest.mock").mock.Mock(
+                    return_value={
+                        "ok": True,
+                        "path": str(output_path),
+                        "uri": output_path.as_uri(),
+                        "width": 8,
+                        "height": 8,
+                        "format": "png",
+                        "actualSize": "8x8",
+                    }
+                )
+            )
+            candidate = {
+                "id": "webref-shanghai",
+                "title": "Shanghai Tower exterior",
+                "caption": "Glass facade and twisting silhouette",
+                "imageUrl": "https://images.example/shanghai.jpg",
+                "thumbnailUrl": "https://thumbs.example/shanghai.jpg",
+                "sourceUrl": "https://source.example/shanghai",
+                "width": 1200,
+                "height": 1800,
+                "provider": "Bing Images",
+                "previewDataUrl": "data:image/jpeg;base64,cHJldmlldw==",
+                "_previewBytes": b"preview",
+            }
+            search_service = SimpleNamespace(
+                search_web=__import__("unittest.mock").mock.Mock(),
+                search_visual_references=__import__("unittest.mock").mock.Mock(
+                    return_value={"query": "Shanghai Tower exterior", "results": [candidate]}
+                ),
+                stage_reference_records=__import__("unittest.mock").mock.Mock(),
+            )
+
+            def stage_reference_records(_candidates, target_dir, _max_count):
+                target_dir.mkdir(parents=True, exist_ok=True)
+                reference_path = target_dir / "reference-1.jpg"
+                Image.new("RGB", (16, 16), "silver").save(reference_path, format="JPEG")
+                return [{
+                    "id": candidate["id"],
+                    "title": candidate["title"],
+                    "caption": candidate["caption"],
+                    "provider": candidate["provider"],
+                    "sourceUrl": candidate["sourceUrl"],
+                    "imageUrl": candidate["imageUrl"],
+                    "path": str(reference_path),
+                }]
+
+            search_service.stage_reference_records.side_effect = stage_reference_records
+            controller = app.AppController.__new__(app.AppController)
+            controller.image_generator = service
+            controller.web_search = search_service
+            controller.store = SimpleNamespace(
+                get_key_record=lambda key_id: {
+                    "id": key_id,
+                    "base_url": "https://example.test/v1",
+                },
+                get_secret=lambda _key_id: "secret",
+            )
+            response_inputs = []
+            response_tools = []
+            response_instructions = []
+            response_index = __import__("itertools").count()
+
+            def stream_response(*args, **kwargs):
+                response_inputs.append(args[4])
+                response_tools.append(kwargs.get("tools"))
+                response_instructions.append(args[3])
+                index = next(response_index)
+                if index == 0:
+                    kwargs["on_completed"](
+                        {
+                            "output": [
+                                {
+                                    "type": "function_call",
+                                    "name": "search_visual_references",
+                                    "call_id": "call-search",
+                                    "arguments": json.dumps(
+                                        {"query": "Shanghai Tower exterior", "max_results": 6}
+                                    ),
+                                }
+                            ]
+                        }
+                    )
+                    return ""
+                if index == 1:
+                    kwargs["on_completed"](
+                        {
+                            "output": [
+                                {
+                                    "type": "function_call",
+                                    "name": "select_visual_references",
+                                    "call_id": "call-select",
+                                    "arguments": json.dumps(
+                                        {
+                                            "reference_ids": ["webref-shanghai"],
+                                            "rationale": "The facade and silhouette improve accuracy.",
+                                        }
+                                    ),
+                                }
+                            ]
+                        }
+                    )
+                    return ""
+                text = (
+                    "环境：真实建筑写实创作\n"
+                    "参考：采用已核验的外观轮廓\n"
+                    "<<<FINAL_PROMPT>>>Photorealistic Shanghai Tower with twisting glass facade"
+                )
+                kwargs["on_delta"](text)
+                kwargs["on_completed"](
+                    {
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": text}],
+                            }
+                        ]
+                    }
+                )
+                return text
+
+            controller.client = SimpleNamespace(
+                stream_response=__import__("unittest.mock").mock.Mock(
+                    side_effect=stream_response
+                )
+            )
+            events = []
+            data_root = root / "data"
+            with patch("app.app_data_dir", return_value=data_root), patch(
+                "app.generated_pictures_dir", return_value=root / "Pictures"
+            ):
+                result = controller.generate_image(
+                    "key-1",
+                    "Create an accurate Shanghai Tower exterior",
+                    [],
+                    {"requestId": "react-high-1", "reasoningMode": "high"},
+                    event_callback=events.append,
+                )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["webSearchEnabled"])
+        self.assertTrue(result["webSearchUsed"])
+        self.assertEqual(result["webSearchResultCount"], 1)
+        self.assertFalse(result["webSearchFailed"])
+        self.assertEqual(result["webReferenceCount"], 1)
+        self.assertEqual(result["referenceCount"], 1)
+        self.assertEqual(len(response_inputs), 3)
+        self.assertTrue(all("必须保留其名称、身份" in value for value in response_instructions))
+        self.assertTrue(all("不要仅因对象属于知名 IP 就改写为原创角色" in value for value in response_instructions))
+        self.assertTrue(response_tools[0])
+        self.assertTrue(response_tools[1])
+        self.assertIsNone(response_tools[2])
+        first_tool_output = next(
+            item for item in response_inputs[1] if item.get("type") == "function_call_output"
+        )
+        self.assertTrue(
+            any(content.get("type") == "input_image" for content in first_tool_output["output"])
+        )
+        selected_tool_output = next(
+            item
+            for item in response_inputs[2]
+            if item.get("type") == "function_call_output" and item.get("call_id") == "call-select"
+        )
+        self.assertEqual(json.loads(selected_tool_output["output"])["acceptedCount"], 1)
+        generation_request = service.generate.call_args.args[2]
+        self.assertEqual(len(generation_request.image_paths), 1)
+        self.assertIn("image-search-references", str(generation_request.image_paths[0]))
+        self.assertFalse((data_root / "image-search-references" / "react-high-1").exists())
+        event_types = [event["type"] for event in events]
+        self.assertIn("react_visual_results", event_types)
+        self.assertIn("react_visual_selected", event_types)
+        set_started = next(event for event in events if event["type"] == "set_started")
+        self.assertEqual(set_started["webReferences"][0]["title"], "Shanghai Tower exterior")
+        self.assertTrue(set_started["webReferences"][0]["previewUri"].startswith("data:image/jpeg;base64,"))
+        self.assertIn("Pictures", set_started["webReferences"][0]["path"])
+
+    def test_generate_image_cleans_staged_web_references_after_unexpected_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data_root = root / "data"
+            request_id = "react-high-error"
+            candidate = {"id": "webref-error"}
+            controller = app.AppController.__new__(app.AppController)
+            controller.active_image_sets = set()
+            controller.image_generator = SimpleNamespace(
+                generate=__import__("unittest.mock").mock.Mock(
+                    side_effect=TypeError("unexpected generator failure")
+                )
+            )
+            controller.store = SimpleNamespace(
+                get_key_record=lambda key_id: {
+                    "id": key_id,
+                    "base_url": "https://example.test/v1",
+                },
+                get_secret=lambda _key_id: "secret",
+            )
+            controller._run_image_prompt_agent = __import__("unittest.mock").mock.Mock(
+                return_value={
+                    "prompt": "Final prompt",
+                    "summary": "Checked a visual reference",
+                    "model": "gpt-5.6-sol",
+                    "webSearchEnabled": True,
+                    "webSearchUsed": True,
+                    "webSearchResultCount": 1,
+                    "webCandidates": [candidate],
+                }
+            )
+
+            def stage_reference_records(_candidates, target_dir, _max_count):
+                target_dir.mkdir(parents=True, exist_ok=True)
+                reference_path = target_dir / "reference-1.jpg"
+                Image.new("RGB", (8, 8), "silver").save(reference_path, format="JPEG")
+                return [{"id": "webref-error", "path": str(reference_path)}]
+
+            controller.web_search = SimpleNamespace(stage_reference_records=stage_reference_records)
+            with patch("app.app_data_dir", return_value=data_root), patch(
+                "app.generated_pictures_dir", return_value=root / "Pictures"
+            ):
+                with self.assertRaisesRegex(TypeError, "unexpected generator failure"):
+                    controller.generate_image(
+                        "key-1",
+                        "Create an accurate landmark",
+                        [],
+                        {"requestId": request_id, "reasoningMode": "high"},
+                    )
+
+            self.assertNotIn(request_id, controller.active_image_sets)
+            self.assertFalse((data_root / "image-search-references" / request_id).exists())
+
+    def test_image_agent_ignores_unknown_visual_reference_ids(self):
+        candidate = {
+            "id": "webref-known",
+            "title": "Known reference",
+            "imageUrl": "https://images.example/known.jpg",
+            "thumbnailUrl": "https://thumbs.example/known.jpg",
+            "sourceUrl": "https://source.example/known",
+            "provider": "Bing Images",
+            "previewDataUrl": "data:image/jpeg;base64,cHJldmlldw==",
+        }
+        controller = app.AppController.__new__(app.AppController)
+        controller.web_search = SimpleNamespace(
+            search_visual_references=lambda *_args, **_kwargs: {
+                "query": "known subject",
+                "results": [candidate],
+            }
+        )
+        response_inputs = []
+        response_index = __import__("itertools").count()
+
+        def stream_response(*args, **kwargs):
+            response_inputs.append(__import__("copy").deepcopy(args[4]))
+            index = next(response_index)
+            if index == 0:
+                kwargs["on_completed"](
+                    {
+                        "output": [{
+                            "type": "function_call",
+                            "name": "search_visual_references",
+                            "call_id": "call-search",
+                            "arguments": '{"query":"known subject"}',
+                        }]
+                    }
+                )
+                return ""
+            if index == 1:
+                kwargs["on_completed"](
+                    {
+                        "output": [{
+                            "type": "function_call",
+                            "name": "select_visual_references",
+                            "call_id": "call-select",
+                            "arguments": '{"reference_ids":["webref-unknown"]}',
+                        }]
+                    }
+                )
+                return ""
+            text = "No candidate adopted\n<<<FINAL_PROMPT>>>Final prompt without a web reference"
+            kwargs["on_delta"](text)
+            kwargs["on_completed"]({"output": []})
+            return text
+
+        controller.client = SimpleNamespace(stream_response=stream_response)
+        events = []
+        result = controller._run_image_prompt_agent(
+            {"base_url": "https://example.test/v1"},
+            "secret",
+            "Create the subject",
+            (),
+            "high",
+            lambda event_type, **details: events.append({"type": event_type, **details}),
+        )
+
+        selection_output = next(
+            item
+            for item in response_inputs[2]
+            if item.get("type") == "function_call_output" and item.get("call_id") == "call-select"
+        )
+        self.assertEqual(json.loads(selection_output["output"])["acceptedCount"], 0)
+        self.assertEqual(result["webSearchResultCount"], 1)
+        self.assertEqual(result["webCandidates"], [])
+        selected_event = next(event for event in events if event["type"] == "react_visual_selected")
+        self.assertEqual(selected_event["selectedCount"], 0)
+
+    def test_image_agent_returns_search_error_to_model_and_continues(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.web_search = SimpleNamespace(
+            search_visual_references=__import__("unittest.mock").mock.Mock(
+                side_effect=RuntimeError("search temporarily unavailable")
+            )
+        )
+        response_inputs = []
+        response_index = __import__("itertools").count()
+
+        def stream_response(*args, **kwargs):
+            response_inputs.append(args[4])
+            if next(response_index) == 0:
+                kwargs["on_completed"](
+                    {
+                        "output": [{
+                            "type": "function_call",
+                            "name": "search_visual_references",
+                            "call_id": "call-failed-search",
+                            "arguments": '{"query":"subject"}',
+                        }]
+                    }
+                )
+                return ""
+            text = "Search unavailable; proceeding from the request\n<<<FINAL_PROMPT>>>Fallback final prompt"
+            kwargs["on_delta"](text)
+            kwargs["on_completed"]({"output": []})
+            return text
+
+        controller.client = SimpleNamespace(stream_response=stream_response)
+        events = []
+        result = controller._run_image_prompt_agent(
+            {"base_url": "https://example.test/v1"},
+            "secret",
+            "Create the subject",
+            (),
+            "high",
+            lambda event_type, **details: events.append({"type": event_type, **details}),
+        )
+
+        failed_output = next(
+            item
+            for item in response_inputs[1]
+            if item.get("type") == "function_call_output"
+        )
+        self.assertFalse(json.loads(failed_output["output"])["ok"])
+        self.assertEqual(result["prompt"], "Fallback final prompt")
+        self.assertTrue(result["webSearchUsed"])
+        self.assertTrue(result["webSearchFailed"])
+        self.assertEqual(result["webCandidates"], [])
+        self.assertIn("react_tool_failed", [event["type"] for event in events])
+
+    def test_image_agent_runs_same_turn_visual_searches_concurrently(self):
+        controller = app.AppController.__new__(app.AppController)
+        barrier = __import__("threading").Barrier(2, timeout=2)
+        search_threads = []
+
+        def search_visual_references(query, _max_results):
+            search_threads.append(__import__("threading").get_ident())
+            barrier.wait()
+            candidate_id = f"webref-{query}"
+            return {
+                "query": query,
+                "results": [{
+                    "id": candidate_id,
+                    "title": f"Reference {query}",
+                    "imageUrl": f"https://images.example/{query}.jpg",
+                    "thumbnailUrl": f"https://thumbs.example/{query}.jpg",
+                    "sourceUrl": f"https://source.example/{query}",
+                    "provider": "Test Search",
+                    "previewDataUrl": "data:image/jpeg;base64,cHJldmlldw==",
+                }],
+            }
+
+        controller.web_search = SimpleNamespace(
+            search_visual_references=search_visual_references,
+        )
+        response_inputs = []
+        response_index = __import__("itertools").count()
+
+        def stream_response(*args, **kwargs):
+            response_inputs.append(__import__("copy").deepcopy(args[4]))
+            index = next(response_index)
+            if index == 0:
+                kwargs["on_completed"]({
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "name": "search_visual_references",
+                            "call_id": "call-a",
+                            "arguments": '{"query":"alpha"}',
+                        },
+                        {
+                            "type": "function_call",
+                            "name": "search_visual_references",
+                            "call_id": "call-b",
+                            "arguments": '{"query":"beta"}',
+                        },
+                    ]
+                })
+                return ""
+            if index == 1:
+                kwargs["on_completed"]({
+                    "output": [{
+                        "type": "function_call",
+                        "name": "select_visual_references",
+                        "call_id": "call-select",
+                        "arguments": '{"reference_ids":["webref-alpha","webref-beta"]}',
+                    }]
+                })
+                return ""
+            text = "Compared both searches\n<<<FINAL_PROMPT>>>Final prompt with two references"
+            kwargs["on_delta"](text)
+            kwargs["on_completed"]({"output": []})
+            return text
+
+        controller.client = SimpleNamespace(stream_response=stream_response)
+        result = controller._run_image_prompt_agent(
+            {"base_url": "https://example.test/v1"},
+            "secret",
+            "Create a comparison",
+            (),
+            "high",
+            lambda *_args, **_kwargs: None,
+        )
+
+        self.assertEqual(len(set(search_threads)), 2)
+        self.assertEqual(result["webSearchResultCount"], 2)
+        self.assertEqual(
+            [candidate["id"] for candidate in result["webCandidates"]],
+            ["webref-alpha", "webref-beta"],
+        )
+        first_round_outputs = [
+            item for item in response_inputs[1] if item.get("type") == "function_call_output"
+        ]
+        self.assertEqual([item["call_id"] for item in first_round_outputs], ["call-a", "call-b"])
 
     def test_github_request_retries_without_system_proxy_when_proxy_refuses(self):
         request = app.urllib.request.Request("https://api.github.com/test")
@@ -2575,6 +3176,7 @@ class ControllerTests(unittest.TestCase):
             public_names,
             {
                 "add_key",
+                "append_image_stream_debug",
                 "check_for_updates",
                 "choose_edit_images",
                 "complete_initialization",
@@ -2614,6 +3216,63 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("store", public_names)
         self.assertNotIn("window", public_names)
         self.assertIn("open_generated_pictures", app.RPC_METHODS)
+        self.assertIn("append_image_stream_debug", app.RPC_METHODS)
+
+    def test_append_image_stream_debug_writes_sanitized_json_lines(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.image_stream_debug_lock = __import__("threading").Lock()
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "app.app_data_dir", return_value=Path(temp)
+        ):
+            result = controller.append_image_stream_debug(
+                [
+                    {
+                        "event": "sample",
+                        "setId": "set-1",
+                        "actualBlurPx": 12.5,
+                        "uri": "data:image/png;base64,not-logged",
+                        "layers": [
+                            {
+                                "actualBlurPx": 8.25,
+                                "previewUri": "data:image/png;base64,also-not-logged",
+                            }
+                        ],
+                    },
+                    "invalid",
+                ]
+            )
+            log_path = Path(result["path"])
+            records = [
+                json.loads(line)
+                for line in log_path.read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["written"], 1)
+        self.assertEqual(records[0]["actualBlurPx"], 12.5)
+        self.assertEqual(records[0]["layers"][0]["actualBlurPx"], 8.25)
+        self.assertNotIn("uri", records[0])
+        self.assertNotIn("previewUri", records[0]["layers"][0])
+
+    def test_append_image_stream_debug_rotates_full_log(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.image_stream_debug_lock = __import__("threading").Lock()
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "app.app_data_dir", return_value=Path(temp)
+        ), patch("app.IMAGE_STREAM_DEBUG_LOG_MAX_BYTES", 16):
+            log_path = Path(temp) / "image-stream-blur.jsonl"
+            log_path.write_text("old-log\n", encoding="utf-8")
+            result = controller.append_image_stream_debug(
+                [{"event": "sample", "actualBlurPx": 3.5}]
+            )
+            previous = (Path(temp) / "image-stream-blur.previous.jsonl").read_text(
+                encoding="utf-8"
+            )
+            current = log_path.read_text(encoding="utf-8")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(previous, "old-log\n")
+        self.assertEqual(json.loads(current)["actualBlurPx"], 3.5)
 
     def test_load_generated_image_allows_only_managed_output(self):
         controller = app.AppController.__new__(app.AppController)
@@ -2763,14 +3422,22 @@ class ControllerTests(unittest.TestCase):
         controller = SimpleNamespace(
             get_state=lambda: {"keys": ["key-1"]},
             open_generated_pictures=lambda: {"ok": True, "path": "Pictures/API_TOOLS"},
+            append_image_stream_debug=lambda records: {
+                "ok": True,
+                "written": len(records),
+            },
         )
         server = app.ControllerRpcServer(controller, "pipe", b"secret")
         allowed = FakeConnection({"method": "get_state", "args": []})
         open_pictures = FakeConnection({"method": "open_generated_pictures", "args": []})
+        append_debug = FakeConnection(
+            {"method": "append_image_stream_debug", "args": [[{"event": "sample"}]]}
+        )
         blocked = FakeConnection({"method": "__dict__", "args": []})
 
         server._handle_connection(allowed)
         server._handle_connection(open_pictures)
+        server._handle_connection(append_debug)
         server._handle_connection(blocked)
 
         self.assertEqual(allowed.responses, [{"ok": True, "result": {"keys": ["key-1"]}}])
@@ -2778,10 +3445,15 @@ class ControllerTests(unittest.TestCase):
             open_pictures.responses,
             [{"ok": True, "result": {"ok": True, "path": "Pictures/API_TOOLS"}}],
         )
+        self.assertEqual(
+            append_debug.responses,
+            [{"ok": True, "result": {"ok": True, "written": 1}}],
+        )
         self.assertTrue(blocked.responses[0]["ok"] is False)
         self.assertIn("不允许", blocked.responses[0]["error"])
         self.assertTrue(allowed.closed)
         self.assertTrue(open_pictures.closed)
+        self.assertTrue(append_debug.closed)
         self.assertTrue(blocked.closed)
 
     def test_rpc_server_streams_generation_events_before_result(self):

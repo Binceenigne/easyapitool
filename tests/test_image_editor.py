@@ -367,7 +367,8 @@ class ImageEditorTests(unittest.TestCase):
 
             def generate_image(_base_url, _secret, _fields, on_partial=None, **_kwargs):
                 on_partial(partial_encoded, 1)
-                return {"data": [{"b64_json": final_encoded}], "partial_images_received": 1}
+                on_partial(partial_encoded, 4)
+                return {"data": [{"b64_json": final_encoded}], "partial_images_received": 4}
 
             service = image_editor.ImageGenerationService(
                 SimpleNamespace(generate_image=generate_image, edit_images=Mock())
@@ -388,10 +389,10 @@ class ImageEditorTests(unittest.TestCase):
             )
 
             self.assertTrue(result["ok"])
-            self.assertEqual(len(partial_events), 1)
-            self.assertEqual(partial_events[0]["partialIndex"], 1)
-            self.assertEqual(partial_events[0]["partialTotal"], 3)
-            self.assertTrue(Path(partial_events[0]["path"]).is_file())
+            self.assertEqual([event["partialIndex"] for event in partial_events], [1, 4])
+            self.assertTrue(all(event["partialTotal"] == 3 for event in partial_events))
+            self.assertTrue(all(Path(event["path"]).is_file() for event in partial_events))
+            self.assertTrue(any(root.glob("partials/*-4.png")))
             self.assertTrue(partial_events[0]["uri"].startswith("file:"))
             self.assertTrue(partial_events[0]["previewUri"].startswith("data:image/jpeg;base64,"))
             self.assertTrue(result["previewUri"].startswith("data:image/jpeg;base64,"))
@@ -401,6 +402,8 @@ class ImageEditorTests(unittest.TestCase):
             root = Path(temp)
             source = root / "source.png"
             Image.new("RGB", (32, 24), "purple").save(source)
+            web_reference = root / "web-reference.jpg"
+            Image.new("RGB", (24, 32), "silver").save(web_reference, format="JPEG")
             store = image_editor.ImageSessionStore(root / "pictures")
 
             first = store.begin_round(
@@ -425,7 +428,16 @@ class ImageEditorTests(unittest.TestCase):
                 "追加霓虹灯",
                 1,
                 1,
-                {"size": "2048x2048", "quality": "high", "outputPreset": "large"},
+                {
+                    "size": "2048x2048",
+                    "quality": "high",
+                    "outputPreset": "large",
+                    "webSearchEnabled": True,
+                    "webSearchUsed": True,
+                    "webSearchFailed": False,
+                    "webSearchResultCount": 4,
+                    "webReferenceCount": 1,
+                },
                 parent_set_id="set-1",
             )
             store.persist_result(
@@ -434,6 +446,19 @@ class ImageEditorTests(unittest.TestCase):
                 0,
                 source,
                 {"width": 32, "height": 24, "format": "png", "actualSize": "32x24"},
+            )
+            persisted_references = store.persist_web_references(
+                "session-1",
+                "set-2",
+                [{
+                    "id": "webref-1",
+                    "title": "Neon reference",
+                    "caption": "Silver neon geometry",
+                    "provider": "Bing Images",
+                    "sourceUrl": "https://example.test/source",
+                    "imageUrl": "https://example.test/image.jpg",
+                    "path": str(web_reference),
+                }],
             )
             store.complete_round("session-1", "set-2")
 
@@ -445,6 +470,13 @@ class ImageEditorTests(unittest.TestCase):
             self.assertEqual(manifest["roundCount"], 2)
             self.assertEqual([item["prompt"] for item in manifest["rounds"]], ["初始生成", "追加霓虹灯"])
             self.assertEqual(manifest["rounds"][1]["parentSetId"], "set-1")
+            self.assertTrue(manifest["rounds"][1]["options"]["webSearchEnabled"])
+            self.assertFalse(manifest["rounds"][1]["options"]["webSearchFailed"])
+            self.assertEqual(manifest["rounds"][1]["options"]["webSearchResultCount"], 4)
+            self.assertEqual(manifest["rounds"][1]["options"]["webReferenceCount"], 1)
+            self.assertEqual(manifest["rounds"][1]["webReferences"][0]["title"], "Neon reference")
+            self.assertTrue(Path(persisted_references[0]["path"]).is_file())
+            self.assertTrue(Path(persisted_references[0]["previewPath"]).is_file())
             self.assertTrue(Path(first_result["path"]).is_file())
             self.assertTrue(Path(first_result["previewPath"]).is_file())
             self.assertEqual([item["setId"] for item in restored], ["set-2", "set-1"])
@@ -452,6 +484,12 @@ class ImageEditorTests(unittest.TestCase):
             self.assertTrue(restored[0]["items"][0]["uri"].startswith("file:"))
             self.assertEqual(restored[0]["items"][0]["result"]["previewUri"], "")
             self.assertTrue(Path(restored[0]["items"][0]["previewPath"]).is_file())
+            self.assertTrue(restored[0]["webSearchUsed"])
+            self.assertFalse(restored[0]["webSearchFailed"])
+            self.assertEqual(restored[0]["webSearchResultCount"], 4)
+            self.assertEqual(restored[0]["webReferenceCount"], 1)
+            self.assertEqual(restored[0]["webReferences"][0]["provider"], "Bing Images")
+            self.assertTrue(Path(restored[0]["webReferences"][0]["previewPath"]).is_file())
 
             self.assertTrue(store.delete_set("session-1", "set-1"))
             remaining_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
