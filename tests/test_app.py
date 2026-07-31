@@ -902,6 +902,30 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertEqual(self.cache.status()["status"], "ready")
         self.assertTrue((self.cache.release_dir / "vendor/lucide/lucide.min.js").is_file())
 
+    def test_replace_release_path_retries_transient_permission_errors(self):
+        source = self.data / "staging"
+        destination = self.data / "release"
+        source.mkdir(parents=True)
+
+        real_replace = app.os.replace
+        attempts = 0
+
+        def replace_with_transient_lock(source_path, destination_path):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise PermissionError(5, "Access is denied")
+            real_replace(source_path, destination_path)
+
+        with patch.object(app.os, "replace", side_effect=replace_with_transient_lock), patch.object(
+            app.time, "sleep"
+        ) as sleep:
+            self.cache._replace_release_path(source, destination)
+
+        self.assertEqual(attempts, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.08, 0.16])
+        self.assertTrue(destination.is_dir())
+
     def test_corrupted_lucide_invalidates_release(self):
         script = b"lucide-test-script"
         digest = app.sha256_bytes(script)
@@ -1233,6 +1257,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn("∞", page)
 
     def test_image_prompt_assistance_controls_and_streaming_summary(self):
+        self.maxDiff = 600
         project_root = Path(__file__).parents[1]
         page = (project_root / app.MAIN_PAGE_NAME).read_text(encoding="utf-8")
         stylesheet = (project_root / "assets" / "app.css").read_text(encoding="utf-8")
@@ -1241,9 +1266,18 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('onclick="polishImagePrompt()"', page)
         self.assertIn('id="imageReasoningControl"', page)
         self.assertIn('id="imageReasoningMenu"', page)
-        for mode in ("instant", "low", "medium", "high", "max"):
-            self.assertIn(f'data-mode="{mode}"', page)
-            self.assertIn(f'setImageReasoningMode(\'{mode}\')', page)
+        self.assertIn('id="reasoningSliderTrack"', page)
+        self.assertIn('role="slider"', page)
+        self.assertIn('aria-valuemax="4"', page)
+        for mode in ("instant", "flash", "medium", "high", "max"):
+            self.assertIn(f'data-layer-mode="{mode}"', page)
+        self.assertIn("const IMAGE_REASONING_MODES = ['instant', 'flash', 'medium', 'high', 'max']", page)
+        self.assertIn("function setImageReasoningModeFromPointer(event)", page)
+        self.assertIn("function initializeImageReasoningSlider()", page)
+        self.assertIn("sliderTrack.addEventListener('keydown'", page)
+        self.assertIn("if (window.imageEditState.busy) return;", page)
+        self.assertIn("window.clearTimeout(imageReasoningGradientTimer);\n            if (nextGradient !== activeImageReasoningGradient)", page)
+        self.assertIn("createImageReasoningColorPulse(window.imageEditState.reasoningMode)", page)
         self.assertIn("reasoningMode: window.imageEditState.reasoningMode", page)
         self.assertIn("event.type === 'prompt_polish_delta'", page)
         self.assertIn("event.type === 'react_summary_delta'", page)
@@ -1252,43 +1286,133 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("event.type === 'react_tool_failed'", page)
         self.assertIn("event.type === 'react_visual_results'", page)
         self.assertIn("event.type === 'react_visual_selected'", page)
-        self.assertIn("联网检索中", page)
-        self.assertIn("联网检索失败，已继续", page)
-        self.assertIn("本轮未调用网络搜索", page)
+        self.assertIn('id="imageWebSearchEnabled"', page)
+        self.assertIn("setImageWebSearchEnabled(this.checked)", page)
+        self.assertIn("webSearchEnabled: window.imageEditState.webSearchEnabled", page)
+        self.assertIn("IMAGE_GENERATION_PREFERENCES_KEY", page)
+        self.assertIn("restoreImageGenerationPreferences()", page)
         self.assertIn("function toggleWebReferences(setId)", page)
         self.assertIn("set.webReferencesExpanded", page)
         self.assertIn("image-reasoning-web-references", page)
         self.assertIn("查看采用的网络参考图", page)
-        self.assertIn("已检索 ${set.webSearchResultCount} 个候选", page)
-        self.assertIn("已采用 ${set.webReferenceCount} 张网络参考", page)
-        self.assertIn("function queueReasoningSummaryRender(setId)", page)
-        self.assertIn("reasoningSummaryRenderFrame = requestAnimationFrame", page)
-        self.assertIn("data-reasoning-summary", page)
-        self.assertIn(".image-reasoning-control[data-mode=low]", stylesheet)
+        self.assertIn("网络参考 ${set.webReferenceCount}", page)
+        self.assertIn("function toggleFinalPrompt(setId)", page)
+        self.assertIn("set.finalPromptExpanded = !set.finalPromptExpanded", page)
+        self.assertIn("if (set.finalPromptExpanded) set.webReferencesExpanded = false", page)
+        self.assertIn("if (set.webReferencesExpanded) set.finalPromptExpanded = false", page)
+        self.assertNotIn("const finalPrompt = document.createElement('details')", page)
+        self.assertIn("function queueReasoningTurnRender(setId, turnNumber)", page)
+        self.assertIn("reasoningTurnRenderFrame = requestAnimationFrame", page)
+        self.assertIn("data-reasoning-turn-text", page)
+        self.assertIn("event.type === 'react_turn_started'", page)
+        self.assertIn("event.type === 'react_turn_delta'", page)
+        self.assertIn("event.type === 'react_turn_completed'", page)
+        self.assertIn("function toggleReasoningPanel(setId)", page)
+        self.assertIn("function toggleReasoningContent(setId)", page)
+        self.assertIn("function updateReasoningTimers()", page)
+        self.assertIn("totalReasoningElapsed(set)", page)
+        self.assertIn("reasoningToolLabel(activeTool)", page)
+        self.assertIn("flash: 'Flash'", page)
+        self.assertIn("flash: 'Flash 模式：快速高效思考优化结果质量'", page)
+        self.assertIn("max: 'Max 模式：使用最强大的模型深度推导反思'", page)
+        self.assertIn(".image-reasoning-control[data-mode=flash]", stylesheet)
         self.assertIn(".image-reasoning-control[data-mode=max]", stylesheet)
         self.assertRegex(
             stylesheet,
-            r"\.image-reasoning-menu\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\)",
-        )
-        self.assertNotRegex(
-            stylesheet,
-            r"\.image-reasoning-control\s*\{[^}]*isolation:",
+            r"\.image-reasoning-menu\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*width: var\(--reasoning-menu-width, 220px\)",
         )
         self.assertRegex(
             stylesheet,
-            r"\.image-reasoning-control\[data-mode=max\]::before\s*\{[^}]*background-size: 200% 100%[^}]*reasoningGradient 16s linear infinite",
+            r"\.image-reasoning-control\s*\{[^}]*overflow: hidden;[^}]*isolation: isolate;",
         )
-        self.assertNotIn("reasoningLightning", stylesheet)
-        self.assertIn("@keyframes reasoningSheen", stylesheet)
-        self.assertIn("background: #7c3aed", stylesheet)
-        self.assertIn("filter: blur(14px) saturate(1.22)", stylesheet)
-        self.assertIn("background-position: 100% 0", stylesheet)
-        self.assertNotIn("reasoningPulse", stylesheet)
-        self.assertNotIn('.image-reasoning-control[data-mode=low] > button', stylesheet)
+        self.assertRegex(
+            stylesheet,
+            r"\.reasoning-bg-layer\s*\{[^}]*transition: opacity 0\.5s cubic-bezier\(0\.4, 0, 0\.2, 1\)",
+        )
+        self.assertRegex(stylesheet, r"\.reasoning-bg-layer\s*\{[^}]*inset: -1px;")
+        self.assertRegex(
+            stylesheet,
+            r"\.image-reasoning-control\[data-mode=flash\]\s*\{[^}]*background: #8fd3ff;[^}]*box-shadow: none;",
+        )
+        self.assertIn('.reasoning-bg-layer[data-layer-mode=flash] .reasoning-gradient', stylesheet)
+        self.assertIn('.reasoning-bg-layer[data-layer-mode=medium] .reasoning-gradient', stylesheet)
+        self.assertIn('.reasoning-bg-layer[data-layer-mode=high] .reasoning-gradient', stylesheet)
+        self.assertIn('.reasoning-bg-layer[data-layer-mode=max] .reasoning-gradient', stylesheet)
+        self.assertIn("@keyframes flashFluidGradient", stylesheet)
+        self.assertIn("@keyframes mediumSeamlessFlow", stylesheet)
+        self.assertIn("@keyframes highGlowPulse", stylesheet)
+        self.assertIn("@keyframes maxGlowPulse", stylesheet)
+        self.assertIn("@keyframes maxSliderBorderPulse", stylesheet)
+        self.assertIn("@keyframes maxSliderAmbientGlow", stylesheet)
+        self.assertNotIn("@keyframes maxSliderInternalPulse", stylesheet)
+        self.assertNotIn(".slider-track-bg::after", stylesheet)
+        self.assertIn("sliderTrack.classList.add('is-max-entering')", page)
+        self.assertIn("sliderTrack.classList.add('is-max-settled')", page)
+        self.assertIn("animation: maxSliderBorderPulse 460ms cubic-bezier(0.18, 0.72, 0.24, 1) 60ms both", stylesheet)
+        self.assertIn("}, 540);", page)
+        self.assertRegex(
+            stylesheet,
+            r"#generateEditedImageButton,\s*#imageReasoningMenuButton\s*\{[^}]*backface-visibility: hidden;[^}]*transform: translate3d\(0, 0, 0\);[^}]*will-change: filter, background-color, transform;",
+        )
+        self.assertRegex(
+            stylesheet,
+            r"\.image-reasoning-control\s*\{[^}]*backface-visibility: hidden;[^}]*contain: style;[^}]*will-change: box-shadow;",
+        )
+        self.assertNotRegex(
+            stylesheet,
+            r"\.image-reasoning-control\s*\{[^}]*contain: layout",
+        )
+        self.assertNotRegex(
+            stylesheet,
+            r"\.image-reasoning-control\s*\{[^}]*transform: translate3d",
+        )
+        self.assertIn("0 0 24px rgba(167, 139, 250, 0.16)", stylesheet)
+        self.assertIn("0 0 29px rgba(168, 85, 247, 0.24)", stylesheet)
+        self.assertIn("mix-blend-mode: screen", stylesheet)
+        self.assertIn(".toggle-switch input:checked + .toggle-slider", stylesheet)
+        self.assertIn(".horizontal-slider-container", stylesheet)
+        self.assertIn(".slider-gradient-next.is-blending", stylesheet)
+        self.assertIn("transition: opacity 520ms cubic-bezier(0.22, 1, 0.36, 1)", stylesheet)
+        self.assertIn(
+            'id="sliderTrackFill" class="slider-track-fill" '
+            'style="transform: translate3d(0, 0, 0) scaleX(0);"',
+            page,
+        )
+        self.assertNotIn(
+            'id="sliderTrackFill" class="slider-track-fill" style="width: 0%;"',
+            page,
+        )
+        self.assertIn("sliderFill.style.transform = `translate3d(0, 0, 0) scaleX(${percentage / 100})`", page)
+        self.assertIn("transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1)", stylesheet)
+        self.assertIn("transform-origin: left center", stylesheet)
         self.assertIn("controlRect.right - menuWidth", page)
         self.assertIn(".image-reasoning-menu.is-open", stylesheet)
         self.assertIn(".image-reasoning-panel", stylesheet)
-        self.assertIn(".image-reasoning-web-status", stylesheet)
+        self.assertIn(".image-reasoning-toggle", stylesheet)
+        self.assertIn(".image-reasoning-log", stylesheet)
+        self.assertIn("max-height: calc(9.9em + 14px)", stylesheet)
+        self.assertIn(".image-reasoning-log.is-fully-expanded", stylesheet)
+        self.assertIn(".image-reasoning-log-shell", stylesheet)
+        self.assertIn(".image-reasoning-content-toggle", stylesheet)
+        self.assertRegex(
+            stylesheet,
+            r"\.image-reasoning-content-toggle\s*\{[^}]*right: 14px;[^}]*border: 0;[^}]*background: transparent;",
+        )
+        self.assertIn(".image-reasoning-supplement-tabs", stylesheet)
+        self.assertIn(".image-reasoning-supplement-toggle.is-active", stylesheet)
+        self.assertIn(".web-search-row", stylesheet)
+        self.assertIn(".toggle-switch", stylesheet)
+        self.assertIn(".image-reasoning-panel.mode-flash", stylesheet)
+        self.assertIn(".image-reasoning-panel.mode-medium", stylesheet)
+        self.assertIn(".image-reasoning-panel.mode-high", stylesheet)
+        self.assertIn(".image-reasoning-panel.mode-max", stylesheet)
+        self.assertNotIn("@keyframes reasoningPanelBreath", stylesheet)
+        self.assertIn("@keyframes reasoningBorderSweep", stylesheet)
+        self.assertIn("@keyframes reasoningInnerSweep", stylesheet)
+        self.assertIn("background-position: 115% 0", stylesheet)
+        self.assertIn("background-position: -15% 0", stylesheet)
+        self.assertIn("@keyframes reasoningPanelComplete", stylesheet)
+        self.assertIn("@keyframes reasoningPanelInnerComplete", stylesheet)
         self.assertIn(".image-reasoning-web-references", stylesheet)
         self.assertIn(".image-reasoning-web-reference", stylesheet)
         self.assertIn("@keyframes reasoningCursor", stylesheet)
@@ -1584,7 +1708,7 @@ class ControllerTests(unittest.TestCase):
                 for mode, config in app.IMAGE_REASONING_MODES.items()
             },
             {
-                "low": ("gpt-5.6-luna", "low"),
+                "flash": ("gpt-5.6-luna", "low"),
                 "medium": ("gpt-5.6-terra", "medium"),
                 "high": ("gpt-5.6-sol", "medium"),
                 "max": ("gpt-5.6-sol", "xhigh"),
@@ -1592,7 +1716,36 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(app.PROMPT_POLISH_MODEL, "gpt-5.6-terra")
         self.assertEqual(app.PROMPT_POLISH_REASONING_EFFORT, "medium")
-        self.assertEqual(app.IMAGE_WEB_SEARCH_MODES, {"high", "max"})
+        self.assertEqual(app.IMAGE_WEB_SEARCH_MODES, {"flash", "medium", "high", "max"})
+        self.assertEqual(
+            {
+                mode: (config["max_turns"], config["max_references"])
+                for mode, config in app.IMAGE_REASONING_MODES.items()
+            },
+            {
+                "flash": (4, 1),
+                "medium": (6, 3),
+                "high": (9, 4),
+                "max": (12, 6),
+            },
+        )
+        flash_depth = app.IMAGE_REASONING_MODES["flash"]["depth"]
+        self.assertIn("自己要完成什么", flash_depth)
+        self.assertIn("信息缺口", flash_depth)
+        self.assertIn("若开启搜索且缺口重要", flash_depth)
+
+    def test_generate_image_rejects_removed_low_reasoning_mode(self):
+        controller = app.AppController.__new__(app.AppController)
+
+        result = controller.generate_image(
+            "key-1",
+            "Generate image",
+            [],
+            {"reasoningMode": "low"},
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "无效的思维模式")
 
     def test_generate_image_medium_react_streams_summary_and_uses_final_prompt(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1658,12 +1811,18 @@ class ControllerTests(unittest.TestCase):
         response_call = controller.client.stream_response.call_args
         self.assertEqual(response_call.args[2], "gpt-5.6-terra")
         self.assertEqual(response_call.kwargs["reasoning_effort"], "medium")
-        self.assertIsNone(response_call.kwargs["tools"])
+        self.assertEqual(
+            [tool["name"] for tool in response_call.kwargs["tools"]],
+            ["search_web", "search_visual_references", "select_visual_references"],
+        )
         response_input = response_call.args[4]
         self.assertEqual(response_input[0]["content"][0]["type"], "input_text")
         self.assertEqual(response_input[0]["content"][1]["type"], "input_image")
         event_types = [event["type"] for event in events]
         self.assertEqual(event_types[0], "react_started")
+        self.assertIn("react_turn_started", event_types)
+        self.assertIn("react_turn_delta", event_types)
+        self.assertIn("react_turn_completed", event_types)
         self.assertIn("react_summary_delta", event_types)
         self.assertLess(event_types.index("react_completed"), event_types.index("set_started"))
         visible_summary = "".join(
@@ -1672,6 +1831,44 @@ class ControllerTests(unittest.TestCase):
             if event["type"] == "react_summary_delta"
         )
         self.assertNotIn("<<<FINAL_PROMPT>>>", visible_summary)
+        completed_turn = next(
+            event for event in events if event["type"] == "react_turn_completed"
+        )
+        self.assertEqual(completed_turn["text"], "环境：工作创作\n方案：清晰图表")
+
+    def test_flash_agent_assesses_information_gaps_and_keeps_search_tools(self):
+        controller = app.AppController.__new__(app.AppController)
+        captured = {}
+
+        def stream_response(*args, **kwargs):
+            captured["instructions"] = args[3]
+            captured["tools"] = kwargs["tools"]
+            captured["reasoning_effort"] = kwargs["reasoning_effort"]
+            text = "已判断任务目标与信息缺口。\n<<<FINAL_PROMPT>>>Fast final prompt"
+            kwargs["on_delta"](text)
+            kwargs["on_completed"]({"output": []})
+            return text
+
+        controller.client = SimpleNamespace(stream_response=stream_response)
+        result = controller._run_image_prompt_agent(
+            {"base_url": "https://example.test/v1"},
+            "secret",
+            "Create an accurate product image",
+            (),
+            "flash",
+            True,
+            lambda *_args, **_kwargs: None,
+        )
+
+        self.assertEqual(captured["reasoning_effort"], "low")
+        self.assertIn("第一步都必须先判断", captured["instructions"])
+        self.assertIn("不得因为处于 Flash 模式就跳过", captured["instructions"])
+        self.assertIn("若缺口会影响事实", captured["instructions"])
+        self.assertEqual(
+            [tool["name"] for tool in captured["tools"]],
+            ["search_web", "search_visual_references", "select_visual_references"],
+        )
+        self.assertEqual(result["prompt"], "Fast final prompt")
 
     def test_generate_image_high_uses_custom_visual_search_and_selected_reference(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1968,6 +2165,7 @@ class ControllerTests(unittest.TestCase):
             "Create the subject",
             (),
             "high",
+            True,
             lambda event_type, **details: events.append({"type": event_type, **details}),
         )
 
@@ -2019,6 +2217,7 @@ class ControllerTests(unittest.TestCase):
             "Create the subject",
             (),
             "high",
+            True,
             lambda event_type, **details: events.append({"type": event_type, **details}),
         )
 
@@ -2033,6 +2232,61 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(result["webSearchFailed"])
         self.assertEqual(result["webCandidates"], [])
         self.assertIn("react_tool_failed", [event["type"] for event in events])
+
+    def test_image_agent_flushes_turn_text_before_tool_event(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.web_search = SimpleNamespace(
+            search_web=__import__("unittest.mock").mock.Mock(
+                return_value={"query": "Siamese cat", "results": []}
+            )
+        )
+        response_index = __import__("itertools").count()
+
+        def stream_response(*_args, **kwargs):
+            if next(response_index) == 0:
+                kwargs["on_delta"]("先核对产品外观。")
+                kwargs["on_completed"]({
+                    "output": [{
+                        "type": "function_call",
+                        "name": "search_web",
+                        "call_id": "call-search",
+                        "arguments": '{"query":"Siamese cat","max_results":5}',
+                    }]
+                })
+                return "先核对产品外观。"
+            text = "已完成核对。\n<<<FINAL_PROMPT>>>Final image prompt"
+            kwargs["on_delta"](text)
+            kwargs["on_completed"]({"output": []})
+            return text
+
+        controller.client = SimpleNamespace(stream_response=stream_response)
+        events = []
+        result = controller._run_image_prompt_agent(
+            {"base_url": "https://example.test/v1"},
+            "secret",
+            "Create a product image",
+            (),
+            "medium",
+            True,
+            lambda event_type, **details: events.append({"type": event_type, **details}),
+        )
+
+        tool_index = next(
+            index for index, event in enumerate(events)
+            if event["type"] == "react_tool_started"
+        )
+        visible_before_tool = "".join(
+            event.get("delta", "")
+            for event in events[:tool_index]
+            if event["type"] == "react_turn_delta"
+        )
+        first_turn = next(
+            event for event in events[:tool_index]
+            if event["type"] == "react_turn_completed"
+        )
+        self.assertEqual(visible_before_tool, "先核对产品外观。")
+        self.assertEqual(first_turn["text"], "先核对产品外观。")
+        self.assertEqual(result["prompt"], "Final image prompt")
 
     def test_image_agent_runs_same_turn_visual_searches_concurrently(self):
         controller = app.AppController.__new__(app.AppController)
@@ -2105,6 +2359,7 @@ class ControllerTests(unittest.TestCase):
             "Create a comparison",
             (),
             "high",
+            True,
             lambda *_args, **_kwargs: None,
         )
 

@@ -1033,14 +1033,50 @@
                                 </div>
                             </div>
                             <div id="imageReasoningControl" class="image-reasoning-control" data-mode="instant">
-                                <button type="submit" id="generateEditedImageButton" data-reasoning-mode="instant"><i data-lucide="sparkles" aria-hidden="true"></i><span>生成 1 张</span></button>
-                                <button type="button" id="imageReasoningMenuButton" aria-expanded="false" onclick="toggleImageReasoningMenu()" title="选择思维深度" aria-label="选择思维深度"><i data-lucide="chevron-up" aria-hidden="true"></i></button>
-                                <div id="imageReasoningMenu" class="image-reasoning-menu" hidden role="radiogroup" aria-label="思维深度">
-                                    <button type="button" class="is-active" data-mode="instant" aria-pressed="true" onclick="setImageReasoningMode('instant')"><strong>Instant</strong><span>直接生成</span></button>
-                                    <button type="button" data-mode="low" aria-pressed="false" onclick="setImageReasoningMode('low')"><strong>Low</strong><span>快速思考</span></button>
-                                    <button type="button" data-mode="medium" aria-pressed="false" onclick="setImageReasoningMode('medium')"><strong>Medium</strong><span>中度思考</span></button>
-                                    <button type="button" data-mode="high" aria-pressed="false" onclick="setImageReasoningMode('high')"><strong>High</strong><span>深度思考</span></button>
-                                    <button type="button" data-mode="max" aria-pressed="false" onclick="setImageReasoningMode('max')"><strong>Max</strong><span>充分反思</span></button>
+                                <span class="reasoning-bg-layer is-visible" data-layer-mode="instant" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <span class="reasoning-bg-layer" data-layer-mode="flash" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <span class="reasoning-bg-layer" data-layer-mode="medium" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <span class="reasoning-bg-layer" data-layer-mode="high" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <span class="reasoning-bg-layer" data-layer-mode="max" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <button type="submit" id="generateEditedImageButton" data-reasoning-mode="instant"><span>生成 1 张</span></button>
+                                <button type="button" id="imageReasoningMenuButton" aria-expanded="false" aria-controls="imageReasoningMenu" onclick="toggleImageReasoningMenu()" title="选择思维深度" aria-label="选择思维深度"><i data-lucide="chevron-up" aria-hidden="true"></i></button>
+                                <div id="imageReasoningMenu" class="image-reasoning-menu" hidden aria-label="思维深度设置">
+                                    <div class="web-search-row">
+                                        <label for="imageWebSearchEnabled" class="web-search-label">
+                                            <i data-lucide="globe" aria-hidden="true"></i>
+                                            <span>网络搜索</span>
+                                        </label>
+                                        <label class="toggle-switch">
+                                            <input id="imageWebSearchEnabled" type="checkbox" checked onchange="setImageWebSearchEnabled(this.checked)">
+                                            <span class="toggle-slider"></span>
+                                        </label>
+                                    </div>
+                                    <div class="reasoning-slider-section">
+                                        <div class="reasoning-slider-header">
+                                            <span class="reasoning-slider-title">
+                                                <span>思维深度</span>
+                                                <i data-lucide="chevron-right" aria-hidden="true"></i>
+                                            </span>
+                                            <span id="reasoningBadge" class="reasoning-current-badge">Instant</span>
+                                        </div>
+                                        <div id="reasoningSliderTrack" class="horizontal-slider-container" role="slider" tabindex="0" aria-label="思维深度" aria-valuemin="0" aria-valuemax="4" aria-valuenow="0" aria-valuetext="Instant">
+                                            <div class="slider-track-bg">
+                                                <div id="sliderTrackFill" class="slider-track-fill" style="transform: translate3d(0, 0, 0) scaleX(0);">
+                                                    <span id="sliderGradientCurrent" class="slider-gradient-layer slider-gradient-current"></span>
+                                                    <span id="sliderGradientNext" class="slider-gradient-layer slider-gradient-next"></span>
+                                                </div>
+                                            </div>
+                                            <div class="slider-dots" aria-hidden="true">
+                                                <span class="slider-dot"></span>
+                                                <span class="slider-dot inactive"></span>
+                                                <span class="slider-dot inactive"></span>
+                                                <span class="slider-dot inactive"></span>
+                                                <span class="slider-dot inactive"></span>
+                                            </div>
+                                            <div id="sliderThumb" class="slider-thumb" style="left: 0%;" aria-hidden="true"></div>
+                                        </div>
+                                        <div id="reasoningSliderDesc" class="slider-desc">直接生成</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1702,6 +1738,7 @@
             outputPreset: 'lossless',
             imageCount: 1,
             reasoningMode: 'instant',
+            webSearchEnabled: true,
             polishing: false,
             busy: false,
             mode: 'image-edit'
@@ -1711,6 +1748,35 @@
             auto: 'auto', '9:16': '720x1280', '2:3': '768x1152', '3:4': '768x1024',
             '1:1': '1024x1024', '4:3': '1024x768', '3:2': '1152x768', '16:9': '1280x720', '21:9': '1344x576'
         };
+        const IMAGE_GENERATION_PREFERENCES_KEY = 'api-tools-image-generation-preferences-v1';
+
+        function persistImageGenerationPreferences() {
+            const state = window.imageEditState;
+            localStorage.setItem(IMAGE_GENERATION_PREFERENCES_KEY, JSON.stringify({
+                quality: state.quality,
+                outputPreset: state.outputPreset,
+                aspectRatio: state.aspectRatio,
+                imageCount: state.imageCount,
+                reasoningMode: state.reasoningMode,
+                webSearchEnabled: state.webSearchEnabled
+            }));
+        }
+
+        function restoreImageGenerationPreferences() {
+            let saved = null;
+            try {
+                saved = JSON.parse(localStorage.getItem(IMAGE_GENERATION_PREFERENCES_KEY) || 'null');
+            } catch (error) {
+                console.warn('图片生成配置读取失败:', error);
+            }
+            if (!saved || typeof saved !== 'object') saved = {};
+            setImageQuality(saved.quality || 'auto', false);
+            setImageOutputPreset(saved.outputPreset || 'lossless', false);
+            setImageAspectRatio(saved.aspectRatio || 'auto', false);
+            setImageGenerationCount(saved.imageCount || 1, false);
+            setImageWebSearchEnabled(saved.webSearchEnabled !== false, false);
+            setImageReasoningMode(normalizeImageReasoningMode(saved.reasoningMode), false);
+        }
 
         function setWorkspaceMode(mode) {
             const imageMode = mode === 'image-edit';
@@ -2048,7 +2114,7 @@
             requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.add('is-open')));
         }
 
-        function setImageQuality(quality) {
+        function setImageQuality(quality, persist = true) {
             if (!['auto', 'low', 'medium', 'high'].includes(quality)) return;
             window.imageEditState.quality = quality;
             document.getElementById('imageEditQuality').value = quality;
@@ -2058,9 +2124,10 @@
                 button.setAttribute('aria-pressed', String(active));
             });
             updateImageGenerationControlSummary();
+            if (persist) persistImageGenerationPreferences();
         }
 
-        function setImageOutputPreset(preset) {
+        function setImageOutputPreset(preset, persist = true) {
             if (!['lossless', 'large', 'medium', 'small'].includes(preset)) return;
             window.imageEditState.outputPreset = preset;
             document.getElementById('imageEditOutputPreset').value = preset;
@@ -2070,9 +2137,10 @@
                 button.setAttribute('aria-pressed', String(active));
             });
             updateImageGenerationControlSummary();
+            if (persist) persistImageGenerationPreferences();
         }
 
-        function setImageAspectRatio(ratio) {
+        function setImageAspectRatio(ratio, persist = true) {
             if (!IMAGE_SIZE_PRESETS[ratio]) return;
             window.imageEditState.aspectRatio = ratio;
             document.querySelectorAll('#imageAspectRatioButtons button').forEach(button => {
@@ -2081,9 +2149,10 @@
                 button.setAttribute('aria-pressed', String(active));
             });
             updateImageGenerationControlSummary();
+            if (persist) persistImageGenerationPreferences();
         }
 
-        function setImageGenerationCount(count) {
+        function setImageGenerationCount(count, persist = true) {
             window.imageEditState.imageCount = Math.max(1, Math.min(9, Number(count) || 1));
             document.querySelectorAll('#imageGenerationCountButtons button').forEach(button => {
                 const active = Number(button.dataset.count) === window.imageEditState.imageCount;
@@ -2091,6 +2160,7 @@
                 button.setAttribute('aria-pressed', String(active));
             });
             updateImageGenerationControlSummary();
+            if (persist) persistImageGenerationPreferences();
         }
 
         function updateImageGenerationControlSummary() {
@@ -2113,16 +2183,101 @@
             }
         }
 
+        const IMAGE_REASONING_MODES = ['instant', 'flash', 'medium', 'high', 'max'];
         const IMAGE_REASONING_LABELS = {
-            instant: 'Instant', low: 'Low', medium: 'Medium', high: 'High', max: 'Max'
+            instant: 'Instant', flash: 'Flash', medium: 'Medium', high: 'High', max: 'Max'
         };
+        const IMAGE_REASONING_DESCRIPTIONS = {
+            instant: 'Instant 模式：不经过额外思考直接生成',
+            flash: 'Flash 模式：快速高效思考优化结果质量',
+            medium: 'Medium 模式：均衡思考分析并优化生成方案',
+            high: 'High 模式：使用更强模型深入分析生成需求',
+            max: 'Max 模式：使用最强大的模型深度推导反思'
+        };
+        const IMAGE_REASONING_TRACK_GRADIENTS = [
+            'linear-gradient(90deg, #64748b 0%, #94a3b8 100%)',
+            'linear-gradient(90deg, #a9dcff 0%, #86ceff 42%, #a8c9ff 100%)',
+            'linear-gradient(90deg, #9fcaff 0%, #8fddff 48%, #b5e8ff 100%)',
+            'linear-gradient(90deg, #aeaaff 0%, #c4b7ff 50%, #dfd3ff 100%)',
+            'linear-gradient(90deg, #aebcff 0%, #c2b0ff 32%, #dfcdff 64%, #b7ddff 100%)'
+        ];
+        const IMAGE_REASONING_PULSE_PALETTES = {
+            flash: ['#8fd3ff', '#b9e6ff', '#79c7ff', '#9fbfff', '#d8f3ff'],
+            medium: ['#4f7df3', '#5b8def', '#5cc8ff', '#9bdcff'],
+            high: ['#6d5dfc', '#8b6cff', '#b99cff', '#d9c7ff'],
+            max: ['#536dfe', '#5b8def', '#8b6cff', '#e9ddff', '#3b82f6']
+        };
+        let imageReasoningGradientTimer = 0;
+        let imageReasoningPulseTimer = 0;
+        let imageReasoningMaxTransitionTimer = 0;
+        let activeImageReasoningGradient = IMAGE_REASONING_TRACK_GRADIENTS[0];
+
+        function normalizeImageReasoningMode(mode) {
+            const cleanMode = String(mode || 'instant').toLowerCase();
+            return IMAGE_REASONING_MODES.includes(cleanMode) ? cleanMode : 'instant';
+        }
+
+        function imageReasoningHexToRgba(hex, alpha) {
+            const value = hex.replace('#', '');
+            const normalized = value.length === 3
+                ? value.split('').map(character => character + character).join('')
+                : value;
+            const number = Number.parseInt(normalized, 16);
+            return `rgba(${(number >> 16) & 255}, ${(number >> 8) & 255}, ${number & 255}, ${alpha})`;
+        }
+
+        function createImageReasoningColorPulse(mode) {
+            if (mode === 'instant' || document.hidden || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            const control = document.getElementById('imageReasoningControl');
+            const palette = IMAGE_REASONING_PULSE_PALETTES[mode];
+            const layer = control?.querySelector(`.reasoning-bg-layer[data-layer-mode="${mode}"]`);
+            if (!control || !palette || !layer) return;
+            const color = palette[Math.floor(Math.random() * palette.length)];
+            const pulse = document.createElement('span');
+            pulse.className = 'reasoning-color-pulse';
+            const controlWidth = Math.max(control.clientWidth, 130);
+            const controlHeight = Math.max(control.clientHeight, 34);
+            const width = 68 + Math.random() * 54;
+            const height = 44 + Math.random() * 34;
+            const top = -16 + Math.random() * Math.max(18, controlHeight - 3);
+            const startX = -width * (1.05 + Math.random() * 0.22);
+            const endX = controlWidth + width * (0.95 + Math.random() * 0.28);
+            const verticalDrift = -5 + Math.random() * 10;
+            const peakAlpha = 0.19 + Math.random() * 0.11;
+            const duration = 9800 + Math.random() * 4600;
+            pulse.style.width = `${width}px`;
+            pulse.style.height = `${height}px`;
+            pulse.style.top = `${top}px`;
+            pulse.style.left = '0';
+            pulse.style.setProperty('--pulse-blur', `${8 + Math.random() * 6}px`);
+            pulse.style.background = `radial-gradient(ellipse at center, ${imageReasoningHexToRgba(color, peakAlpha)} 0%, ${imageReasoningHexToRgba(color, peakAlpha * 0.72)} 28%, ${imageReasoningHexToRgba(color, peakAlpha * 0.28)} 52%, ${imageReasoningHexToRgba(color, 0)} 76%)`;
+            layer.append(pulse);
+            const animation = pulse.animate([
+                { transform: `translate3d(${startX}px, 0, 0) scale(0.68)`, opacity: 0 },
+                { transform: `translate3d(${startX + (endX - startX) * 0.18}px, ${verticalDrift * 0.15}px, 0) scale(0.88)`, opacity: 0.46, offset: 0.18 },
+                { transform: `translate3d(${startX + (endX - startX) * 0.5}px, ${verticalDrift * 0.55}px, 0) scale(1.08)`, opacity: 0.82, offset: 0.5 },
+                { transform: `translate3d(${startX + (endX - startX) * 0.8}px, ${verticalDrift * 0.88}px, 0) scale(0.94)`, opacity: 0.38, offset: 0.8 },
+                { transform: `translate3d(${endX}px, ${verticalDrift}px, 0) scale(0.72)`, opacity: 0 }
+            ], { duration, easing: 'cubic-bezier(0.22, 0.58, 0.34, 1)', fill: 'forwards' });
+            animation.addEventListener('finish', () => pulse.remove(), { once: true });
+            animation.addEventListener('cancel', () => pulse.remove(), { once: true });
+        }
+
+        function scheduleNextImageReasoningPulse(immediate = false) {
+            window.clearTimeout(imageReasoningPulseTimer);
+            const delay = immediate ? 900 + Math.random() * 900 : 5200 + Math.random() * 3600;
+            imageReasoningPulseTimer = window.setTimeout(() => {
+                createImageReasoningColorPulse(window.imageEditState.reasoningMode);
+                scheduleNextImageReasoningPulse(false);
+            }, delay);
+        }
 
         function positionImageReasoningMenu() {
             const menu = document.getElementById('imageReasoningMenu');
             const control = document.getElementById('imageReasoningControl');
             if (!menu || menu.hidden || !control) return;
             const controlRect = control.getBoundingClientRect();
-            const menuWidth = Math.min(164, Math.max(0, window.innerWidth - 16));
+            const menuWidth = Math.min(220, Math.max(0, window.innerWidth - 16));
             const menuLeft = Math.min(
                 window.innerWidth - menuWidth - 8,
                 Math.max(8, controlRect.right - menuWidth)
@@ -2157,20 +2312,119 @@
             button?.setAttribute('aria-expanded', String(opening));
         }
 
-        function setImageReasoningMode(mode) {
-            const cleanMode = Object.hasOwn(IMAGE_REASONING_LABELS, mode) ? mode : 'instant';
+        function setImageReasoningMode(mode, persist = true) {
+            const cleanMode = normalizeImageReasoningMode(mode);
+            const modeIndex = IMAGE_REASONING_MODES.indexOf(cleanMode);
+            const previousMode = window.imageEditState.reasoningMode;
             window.imageEditState.reasoningMode = cleanMode;
             const control = document.getElementById('imageReasoningControl');
             const generateButton = document.getElementById('generateEditedImageButton');
             control.dataset.mode = cleanMode;
             generateButton.dataset.reasoningMode = cleanMode;
-            document.querySelectorAll('#imageReasoningMenu button[data-mode]').forEach(button => {
-                const active = button.dataset.mode === cleanMode;
-                button.classList.toggle('is-active', active);
-                button.setAttribute('aria-pressed', String(active));
+            control.querySelectorAll('.reasoning-bg-layer').forEach(layer => {
+                layer.classList.toggle('is-visible', layer.dataset.layerMode === cleanMode);
             });
+            const percentage = modeIndex / (IMAGE_REASONING_MODES.length - 1) * 100;
+            const sliderTrack = document.getElementById('reasoningSliderTrack');
+            const sliderFill = document.getElementById('sliderTrackFill');
+            const sliderThumb = document.getElementById('sliderThumb');
+            const sliderCurrent = document.getElementById('sliderGradientCurrent');
+            const sliderNext = document.getElementById('sliderGradientNext');
+            sliderFill.style.transform = `translate3d(0, 0, 0) scaleX(${percentage / 100})`;
+            sliderThumb.style.left = `${percentage}%`;
+            sliderTrack.setAttribute('aria-valuenow', String(modeIndex));
+            sliderTrack.setAttribute('aria-valuetext', IMAGE_REASONING_LABELS[cleanMode]);
+            sliderTrack.querySelectorAll('.slider-dot').forEach((dot, index) => {
+                dot.classList.toggle('inactive', index > modeIndex);
+            });
+            if (cleanMode !== 'max') {
+                window.clearTimeout(imageReasoningMaxTransitionTimer);
+                sliderTrack.classList.remove('is-max-entering', 'is-max-settled');
+            } else if (previousMode !== 'max') {
+                window.clearTimeout(imageReasoningMaxTransitionTimer);
+                sliderTrack.classList.remove('is-max-entering', 'is-max-settled');
+                void sliderTrack.offsetWidth;
+                sliderTrack.classList.add('is-max-entering');
+                imageReasoningMaxTransitionTimer = window.setTimeout(() => {
+                    sliderTrack.classList.remove('is-max-entering');
+                    sliderTrack.classList.add('is-max-settled');
+                }, 540);
+            } else if (!sliderTrack.classList.contains('is-max-entering')) {
+                sliderTrack.classList.add('is-max-settled');
+            }
+            const nextGradient = IMAGE_REASONING_TRACK_GRADIENTS[modeIndex];
+            window.clearTimeout(imageReasoningGradientTimer);
+            if (nextGradient !== activeImageReasoningGradient) {
+                sliderNext.style.background = nextGradient;
+                sliderNext.classList.remove('is-blending');
+                void sliderNext.offsetWidth;
+                sliderNext.classList.add('is-blending');
+                imageReasoningGradientTimer = window.setTimeout(() => {
+                    sliderCurrent.style.background = nextGradient;
+                    sliderNext.classList.remove('is-blending');
+                    activeImageReasoningGradient = nextGradient;
+                }, 540);
+            } else {
+                sliderNext.classList.remove('is-blending');
+            }
+            const badge = document.getElementById('reasoningBadge');
+            badge.textContent = IMAGE_REASONING_LABELS[cleanMode];
+            badge.dataset.mode = cleanMode;
+            document.getElementById('reasoningSliderDesc').textContent = IMAGE_REASONING_DESCRIPTIONS[cleanMode];
             document.getElementById('imageReasoningMenuButton').title = `思维深度：${IMAGE_REASONING_LABELS[cleanMode]}`;
-            closeImageReasoningMenu();
+            const searchToggle = document.getElementById('imageWebSearchEnabled');
+            searchToggle.disabled = cleanMode === 'instant';
+            scheduleNextImageReasoningPulse(true);
+            if (persist) persistImageGenerationPreferences();
+        }
+
+        function setImageWebSearchEnabled(enabled, persist = true) {
+            window.imageEditState.webSearchEnabled = enabled === true;
+            const toggle = document.getElementById('imageWebSearchEnabled');
+            if (toggle) toggle.checked = window.imageEditState.webSearchEnabled;
+            if (persist) persistImageGenerationPreferences();
+        }
+
+        function setImageReasoningModeFromPointer(event) {
+            if (window.imageEditState.busy) return;
+            const sliderTrack = document.getElementById('reasoningSliderTrack');
+            const rect = sliderTrack.getBoundingClientRect();
+            const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+            setImageReasoningMode(IMAGE_REASONING_MODES[Math.round(fraction * 4)]);
+        }
+
+        function initializeImageReasoningSlider() {
+            const sliderTrack = document.getElementById('reasoningSliderTrack');
+            if (!sliderTrack || sliderTrack.dataset.initialized === 'true') return;
+            sliderTrack.dataset.initialized = 'true';
+            let dragging = false;
+            sliderTrack.addEventListener('pointerdown', event => {
+                if (window.imageEditState.busy) return;
+                dragging = true;
+                sliderTrack.setPointerCapture(event.pointerId);
+                setImageReasoningModeFromPointer(event);
+            });
+            sliderTrack.addEventListener('pointermove', event => {
+                if (dragging) setImageReasoningModeFromPointer(event);
+            });
+            const endDrag = event => {
+                dragging = false;
+                if (sliderTrack.hasPointerCapture(event.pointerId)) sliderTrack.releasePointerCapture(event.pointerId);
+            };
+            sliderTrack.addEventListener('pointerup', endDrag);
+            sliderTrack.addEventListener('pointercancel', endDrag);
+            sliderTrack.addEventListener('keydown', event => {
+                if (window.imageEditState.busy) return;
+                const currentIndex = IMAGE_REASONING_MODES.indexOf(window.imageEditState.reasoningMode);
+                let nextIndex = currentIndex;
+                if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextIndex -= 1;
+                else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextIndex += 1;
+                else if (event.key === 'Home') nextIndex = 0;
+                else if (event.key === 'End') nextIndex = IMAGE_REASONING_MODES.length - 1;
+                else return;
+                event.preventDefault();
+                setImageReasoningMode(IMAGE_REASONING_MODES[Math.max(0, Math.min(4, nextIndex))]);
+            });
         }
 
         async function polishImagePrompt() {
@@ -2237,10 +2491,15 @@
                 previewsLoaded: metadata.previewsLoaded !== false,
                 loadingPreviews: false,
                 reasoningStatus: metadata.reasoningStatus || 'idle',
-                reasoningMode: metadata.reasoningMode || window.imageEditState.reasoningMode,
+                reasoningMode: normalizeImageReasoningMode(metadata.reasoningMode || window.imageEditState.reasoningMode),
                 reasoningModel: metadata.reasoningModel || '',
                 reasoningEffort: metadata.reasoningEffort || '',
                 reasoningSummary: metadata.reasoningSummary || '',
+                reasoningTurns: Array.isArray(metadata.reasoningTurns) ? metadata.reasoningTurns.map(turn => ({ ...turn })) : [],
+                reasoningExpanded: metadata.reasoningExpanded === true,
+                reasoningContentExpanded: metadata.reasoningContentExpanded === true,
+                reasoningStartedAt: Number(metadata.reasoningStartedAt) || 0,
+                reasoningCompletedAt: Number(metadata.reasoningCompletedAt) || 0,
                 effectivePrompt: metadata.effectivePrompt || '',
                 webSearchEnabled: metadata.webSearchEnabled === true,
                 webSearchStatus: metadata.webSearchFailed
@@ -2254,6 +2513,7 @@
                 webReferenceCount: Number(metadata.webReferenceCount) || 0,
                 webReferences: Array.isArray(metadata.webReferences) ? metadata.webReferences.map(reference => ({ ...reference })) : [],
                 webReferencesExpanded: false,
+                finalPromptExpanded: false,
                 webReferencesLoading: false,
                 items: Array.from({ length: requestedCount }, (_, itemIndex) => ({
                     itemIndex,
@@ -2275,6 +2535,77 @@
 
         function imageGenerationSetById(setId) {
             return window.imageEditState.resultSets.find(item => item.setId === setId);
+        }
+
+        function reasoningTurnByNumber(set, turnNumber) {
+            const cleanTurn = Math.max(1, Number(turnNumber) || 1);
+            let turn = set.reasoningTurns.find(item => item.turn === cleanTurn);
+            if (!turn) {
+                turn = {
+                    turn: cleanTurn,
+                    title: cleanTurn === 1 ? '正在分析问题' : '正在完善方案',
+                    text: '',
+                    status: 'running',
+                    startedAt: Date.now(),
+                    completedAt: 0,
+                    tools: []
+                };
+                set.reasoningTurns.push(turn);
+            }
+            return turn;
+        }
+
+        function activeReasoningTurn(set) {
+            return [...set.reasoningTurns].reverse().find(turn => turn.status === 'running')
+                || set.reasoningTurns.at(-1)
+                || reasoningTurnByNumber(set, 1);
+        }
+
+        function formatReasoningDuration(milliseconds) {
+            const totalSeconds = Math.max(0, Math.floor(Number(milliseconds) / 1000));
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return minutes ? `${minutes}m:${String(seconds).padStart(2, '0')}s` : `${totalSeconds}s`;
+        }
+
+        function reasoningElapsed(set, turn = activeReasoningTurn(set)) {
+            const startedAt = Number(turn?.startedAt) || Number(set.reasoningStartedAt) || Date.now();
+            const completedAt = Number(turn?.completedAt) || Number(set.reasoningCompletedAt) || Date.now();
+            return formatReasoningDuration(completedAt - startedAt);
+        }
+
+        function totalReasoningElapsed(set) {
+            const startedAt = Number(set.reasoningStartedAt) || Number(set.reasoningTurns[0]?.startedAt) || Date.now();
+            const completedAt = Number(set.reasoningCompletedAt) || Date.now();
+            return formatReasoningDuration(completedAt - startedAt);
+        }
+
+        function escapeHtml(value) {
+            const span = document.createElement('span');
+            span.textContent = String(value ?? '');
+            return span.innerHTML;
+        }
+
+        function toggleReasoningPanel(setId) {
+            const set = imageGenerationSetById(setId);
+            if (!set) return;
+            set.reasoningExpanded = !set.reasoningExpanded;
+            renderImageGenerationSets();
+        }
+
+        function toggleReasoningContent(setId) {
+            const set = imageGenerationSetById(setId);
+            if (!set) return;
+            set.reasoningContentExpanded = !set.reasoningContentExpanded;
+            renderImageGenerationSets();
+        }
+
+        function toggleFinalPrompt(setId) {
+            const set = imageGenerationSetById(setId);
+            if (!set?.effectivePrompt) return;
+            set.finalPromptExpanded = !set.finalPromptExpanded;
+            if (set.finalPromptExpanded) set.webReferencesExpanded = false;
+            renderImageGenerationSets();
         }
 
         async function copyImagePrompt(text, label) {
@@ -2337,6 +2668,7 @@
             const set = imageGenerationSetById(setId);
             if (!set?.webReferences?.length) return;
             set.webReferencesExpanded = !set.webReferencesExpanded;
+            if (set.webReferencesExpanded) set.finalPromptExpanded = false;
             if (!set.webReferencesExpanded) {
                 renderImageGenerationSets();
                 return;
@@ -2759,23 +3091,194 @@
             return image;
         }
 
-        const pendingReasoningSummaryRenders = new Set();
-        let reasoningSummaryRenderFrame = 0;
+        const pendingReasoningTurnRenders = new Set();
+        let reasoningTurnRenderFrame = 0;
 
-        function queueReasoningSummaryRender(setId) {
-            pendingReasoningSummaryRenders.add(setId);
-            if (reasoningSummaryRenderFrame) return;
-            reasoningSummaryRenderFrame = requestAnimationFrame(() => {
-                reasoningSummaryRenderFrame = 0;
-                pendingReasoningSummaryRenders.forEach(pendingSetId => {
+        function queueReasoningTurnRender(setId, turnNumber) {
+            pendingReasoningTurnRenders.add(`${setId}\n${turnNumber}`);
+            if (reasoningTurnRenderFrame) return;
+            reasoningTurnRenderFrame = requestAnimationFrame(() => {
+                reasoningTurnRenderFrame = 0;
+                pendingReasoningTurnRenders.forEach(renderKey => {
+                    const [pendingSetId, pendingTurnNumber] = renderKey.split('\n');
                     const pendingSet = imageGenerationSetById(pendingSetId);
-                    const summary = document.querySelector(`[data-reasoning-summary="${CSS.escape(pendingSetId)}"]`);
-                    if (!pendingSet || !summary) return;
-                    summary.textContent = pendingSet.reasoningSummary || '正在理解创作环境与目标…';
-                    summary.classList.toggle('is-streaming', pendingSet.reasoningStatus === 'running');
+                    const turn = pendingSet?.reasoningTurns.find(item => item.turn === Number(pendingTurnNumber));
+                    const text = document.querySelector(
+                        `[data-reasoning-turn-text="${CSS.escape(pendingSetId)}:${pendingTurnNumber}"]`
+                    );
+                    if (!pendingSet || !turn || !text) return;
+                    text.textContent = turn.text || '正在形成这一轮的判断…';
+                    text.classList.toggle('is-streaming', turn.status === 'running');
+                    const log = text.closest('.image-reasoning-log');
+                    if (log && !pendingSet.reasoningContentExpanded) {
+                        log.scrollTo({ top: log.scrollHeight, behavior: 'smooth' });
+                    }
                 });
-                pendingReasoningSummaryRenders.clear();
+                pendingReasoningTurnRenders.clear();
             });
+        }
+
+        function updateReasoningTimers() {
+            document.querySelectorAll('[data-reasoning-elapsed]').forEach(element => {
+                const set = imageGenerationSetById(element.dataset.reasoningElapsed);
+                if (!set) return;
+                element.textContent = `（${totalReasoningElapsed(set)}）`;
+            });
+        }
+
+        function reasoningToolLabel(tool) {
+            const query = String(tool.arguments?.query || '').trim();
+            if (tool.name === 'search_web') return query ? `搜索关键词“${query}”` : '搜索网页';
+            if (tool.name === 'search_visual_references') return query ? `搜索图片“${query}”` : '搜索图片';
+            if (tool.name === 'select_visual_references') return '筛选可用参考图';
+            return '调用工具';
+        }
+
+        function renderReasoningPanel(set) {
+            const panel = document.createElement('div');
+            panel.className = `image-reasoning-panel is-${set.reasoningStatus} mode-${set.reasoningMode}${set.reasoningExpanded ? ' is-expanded' : ''}`;
+            panel.dataset.reasoningSet = set.setId;
+            const activeTurn = activeReasoningTurn(set);
+            const activeTool = [...(activeTurn?.tools || [])].reverse().find(tool => tool.status === 'running');
+
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = 'image-reasoning-toggle';
+            toggle.setAttribute('aria-expanded', String(set.reasoningExpanded));
+            toggle.addEventListener('click', () => toggleReasoningPanel(set.setId));
+            const statusIcon = set.reasoningStatus === 'running'
+                ? 'clock-3'
+                : set.reasoningStatus === 'failed' ? 'triangle-alert' : 'circle-check';
+            const title = activeTool
+                ? reasoningToolLabel(activeTool)
+                : activeTurn?.title || (set.reasoningStatus === 'completed' ? '方案已确定' : '正在分析问题');
+            toggle.innerHTML = `${iconMarkup(statusIcon, 'icon-12')}<strong>${escapeHtml(title)}</strong><span data-reasoning-elapsed="${escapeHtml(set.setId)}">（${totalReasoningElapsed(set)}）</span>${iconMarkup(set.reasoningExpanded ? 'chevron-up' : 'chevron-right', 'icon-12')}`;
+            panel.append(toggle);
+
+            if (!set.reasoningExpanded) return panel;
+
+            const body = document.createElement('div');
+            body.className = 'image-reasoning-body';
+            const log = document.createElement('div');
+            log.className = `image-reasoning-log${set.reasoningContentExpanded ? ' is-fully-expanded' : ''}`;
+            const turns = set.reasoningTurns.length ? set.reasoningTurns : [{
+                turn: 1,
+                title,
+                text: set.reasoningSummary,
+                status: set.reasoningStatus,
+                startedAt: set.reasoningStartedAt,
+                completedAt: set.reasoningCompletedAt,
+                tools: []
+            }];
+            turns.forEach(turn => {
+                const turnBlock = document.createElement('section');
+                turnBlock.className = `image-reasoning-turn is-${turn.status}`;
+                const turnTitle = document.createElement('div');
+                turnTitle.className = 'image-reasoning-turn-title';
+                turnTitle.innerHTML = `<strong>${escapeHtml(turn.title || '正在完善方案')}</strong><span>${reasoningElapsed(set, turn)}</span>`;
+                const turnText = document.createElement('p');
+                turnText.dataset.reasoningTurnText = `${set.setId}:${turn.turn}`;
+                turnText.textContent = turn.text || '正在形成这一轮的判断…';
+                if (turn.status === 'running') turnText.classList.add('is-streaming');
+                turnBlock.append(turnTitle, turnText);
+                (turn.tools || []).forEach(tool => {
+                    const toolRow = document.createElement('div');
+                    toolRow.className = `image-reasoning-tool is-${tool.status}`;
+                    const resultSuffix = tool.status === 'completed' && Number(tool.resultCount) > 0
+                        ? ` · ${Number(tool.resultCount)} 项结果`
+                        : tool.status === 'failed' ? ' · 已跳过' : '';
+                    toolRow.innerHTML = `${iconMarkup(tool.status === 'running' ? 'loader-circle' : tool.status === 'failed' ? 'triangle-alert' : 'search-check', `icon-11${tool.status === 'running' ? ' is-spinning' : ''}`)}<span>${escapeHtml(reasoningToolLabel(tool) + resultSuffix)}</span>`;
+                    turnBlock.append(toolRow);
+                });
+                log.append(turnBlock);
+            });
+            const logShell = document.createElement('div');
+            logShell.className = 'image-reasoning-log-shell';
+            logShell.append(log);
+
+            const expandContent = document.createElement('button');
+            expandContent.type = 'button';
+            expandContent.className = 'image-reasoning-content-toggle';
+            expandContent.title = set.reasoningContentExpanded ? '收起思考内容' : '展开全部思考内容';
+            expandContent.setAttribute('aria-label', expandContent.title);
+            expandContent.innerHTML = iconMarkup(set.reasoningContentExpanded ? 'minimize-2' : 'maximize-2', 'icon-11');
+            expandContent.addEventListener('click', () => toggleReasoningContent(set.setId));
+            logShell.append(expandContent);
+            body.append(logShell);
+
+            if ((set.webReferenceCount > 0 && set.webReferences.length > 0) || set.effectivePrompt) {
+                const supplementTabs = document.createElement('div');
+                supplementTabs.className = 'image-reasoning-supplement-tabs';
+                if (set.webReferenceCount > 0 && set.webReferences.length > 0) {
+                const referenceToggle = document.createElement('button');
+                referenceToggle.type = 'button';
+                    referenceToggle.className = `image-reasoning-supplement-toggle${set.webReferencesExpanded ? ' is-active' : ''}`;
+                referenceToggle.title = set.webReferencesExpanded ? '收起网络参考图' : '查看采用的网络参考图';
+                referenceToggle.setAttribute('aria-expanded', String(set.webReferencesExpanded));
+                    referenceToggle.innerHTML = `${iconMarkup('images', 'icon-10')}<span>网络参考 ${set.webReferenceCount}</span>`;
+                referenceToggle.addEventListener('click', () => void toggleWebReferences(set.setId));
+                    supplementTabs.append(referenceToggle);
+                }
+                if (set.effectivePrompt) {
+                    const promptToggle = document.createElement('button');
+                    promptToggle.type = 'button';
+                    promptToggle.className = `image-reasoning-supplement-toggle${set.finalPromptExpanded ? ' is-active' : ''}`;
+                    promptToggle.title = set.finalPromptExpanded ? '收起最终提示词' : '查看最终提示词';
+                    promptToggle.setAttribute('aria-expanded', String(set.finalPromptExpanded));
+                    promptToggle.innerHTML = `${iconMarkup('file-text', 'icon-10')}<span>最终提示词</span>`;
+                    promptToggle.addEventListener('click', () => toggleFinalPrompt(set.setId));
+                    supplementTabs.append(promptToggle);
+                }
+                body.append(supplementTabs);
+            }
+
+            if (set.webReferencesExpanded && set.webReferences.length) {
+                const references = document.createElement('div');
+                references.className = 'image-reasoning-web-references';
+                if (set.webReferencesLoading) {
+                    references.innerHTML = `${iconMarkup('loader-circle', 'icon-13 is-spinning')}<span>正在加载网络参考图</span>`;
+                } else {
+                    set.webReferences.forEach((reference, referenceIndex) => {
+                        const referenceButton = document.createElement('button');
+                        referenceButton.type = 'button';
+                        referenceButton.className = 'image-reasoning-web-reference';
+                        referenceButton.title = reference.title || `网络参考图 ${referenceIndex + 1}`;
+                        const image = document.createElement('img');
+                        image.src = reference.previewUri || reference.uri || '';
+                        image.alt = reference.title || `网络参考图 ${referenceIndex + 1}`;
+                        const label = document.createElement('span');
+                        label.textContent = reference.title || reference.provider || `参考图 ${referenceIndex + 1}`;
+                        referenceButton.append(image, label);
+                        referenceButton.addEventListener('click', () => openImageResultModal({
+                            ...reference,
+                            uri: reference.previewUri || reference.uri || '',
+                            actualSize: reference.provider || '网络参考',
+                            format: 'jpg',
+                            status: 'reference'
+                        }));
+                        references.append(referenceButton);
+                    });
+                }
+                body.append(references);
+            }
+
+            if (set.finalPromptExpanded && set.effectivePrompt) {
+                const finalPromptContent = document.createElement('div');
+                finalPromptContent.className = 'image-reasoning-final-prompt';
+                const finalPromptText = document.createElement('p');
+                finalPromptText.textContent = set.effectivePrompt;
+                const copyEffectiveButton = document.createElement('button');
+                copyEffectiveButton.type = 'button';
+                copyEffectiveButton.className = 'image-prompt-copy';
+                copyEffectiveButton.title = '复制思维优化提示词';
+                copyEffectiveButton.setAttribute('aria-label', copyEffectiveButton.title);
+                copyEffectiveButton.innerHTML = iconMarkup('copy', 'icon-11');
+                copyEffectiveButton.addEventListener('click', () => void copyImagePrompt(set.effectivePrompt, '思维优化提示词'));
+                finalPromptContent.append(finalPromptText, copyEffectiveButton);
+                body.append(finalPromptContent);
+            }
+            panel.append(body);
+            return panel;
         }
 
         function renderImageGenerationSets() {
@@ -2857,93 +3360,9 @@
                     return;
                 }
 
-                let reasoningPanel = null;
-                if (set.reasoningStatus !== 'idle' || set.reasoningSummary) {
-                    reasoningPanel = document.createElement('div');
-                    reasoningPanel.className = `image-reasoning-panel is-${set.reasoningStatus}`;
-                    const reasoningHeader = document.createElement('div');
-                    reasoningHeader.innerHTML = `${iconMarkup(set.reasoningStatus === 'running' ? 'loader-circle' : 'brain-circuit', `icon-13${set.reasoningStatus === 'running' ? ' is-spinning' : ''}`)}<strong>${IMAGE_REASONING_LABELS[set.reasoningMode] || 'ReAct'} · ${set.reasoningStatus === 'running' ? '正在思考' : set.reasoningStatus === 'failed' ? '思考失败' : '方案已确定'}</strong>`;
-                    if (set.webSearchEnabled && set.webSearchStatus !== 'idle') {
-                        const hasWebReferences = set.webReferenceCount > 0 && set.webReferences.length > 0;
-                        const webStatus = document.createElement(hasWebReferences ? 'button' : 'span');
-                        if (hasWebReferences) {
-                            webStatus.type = 'button';
-                            webStatus.title = set.webReferencesExpanded ? '收起网络参考图' : '查看采用的网络参考图';
-                            webStatus.setAttribute('aria-expanded', String(set.webReferencesExpanded));
-                            webStatus.addEventListener('click', () => void toggleWebReferences(set.setId));
-                        }
-                        webStatus.className = `image-reasoning-web-status is-${set.webSearchStatus}`;
-                        const webStatusText = set.webSearchStatus === 'running'
-                            ? '联网检索中'
-                            : set.webSearchStatus === 'failed'
-                                ? '联网检索失败，已继续'
-                                : set.webSearchStatus === 'skipped'
-                                    ? '本轮未调用网络搜索'
-                            : set.webReferenceCount > 0
-                                ? `已采用 ${set.webReferenceCount} 张网络参考`
-                                : set.webSearchResultCount > 0
-                                    ? `已检索 ${set.webSearchResultCount} 个候选`
-                                    : '已检索网络';
-                        const webStatusIcon = set.webSearchStatus === 'running'
-                            ? 'loader-circle'
-                            : set.webSearchStatus === 'failed' ? 'triangle-alert' : 'globe-2';
-                        webStatus.innerHTML = `${iconMarkup(webStatusIcon, `icon-10${set.webSearchStatus === 'running' ? ' is-spinning' : ''}`)}<span>${webStatusText}</span>`;
-                        reasoningHeader.append(webStatus);
-                    }
-                    const summary = document.createElement('p');
-                    summary.dataset.reasoningSummary = set.setId;
-                    summary.textContent = set.reasoningSummary || '正在理解创作环境与目标…';
-                    if (set.reasoningStatus === 'running') summary.classList.add('is-streaming');
-                    reasoningPanel.append(reasoningHeader, summary);
-                    if (set.webReferencesExpanded && set.webReferences.length) {
-                        const references = document.createElement('div');
-                        references.className = 'image-reasoning-web-references';
-                        if (set.webReferencesLoading) {
-                            references.innerHTML = `${iconMarkup('loader-circle', 'icon-13 is-spinning')}<span>正在加载网络参考图</span>`;
-                        } else {
-                            set.webReferences.forEach((reference, referenceIndex) => {
-                                const referenceButton = document.createElement('button');
-                                referenceButton.type = 'button';
-                                referenceButton.className = 'image-reasoning-web-reference';
-                                referenceButton.title = reference.title || `网络参考图 ${referenceIndex + 1}`;
-                                const image = document.createElement('img');
-                                image.src = reference.previewUri || reference.uri || '';
-                                image.alt = reference.title || `网络参考图 ${referenceIndex + 1}`;
-                                const label = document.createElement('span');
-                                label.textContent = reference.title || reference.provider || `参考图 ${referenceIndex + 1}`;
-                                referenceButton.append(image, label);
-                                referenceButton.addEventListener('click', () => openImageResultModal({
-                                    ...reference,
-                                    uri: reference.previewUri || reference.uri || '',
-                                    actualSize: reference.provider || '网络参考',
-                                    format: 'jpg',
-                                    status: 'reference'
-                                }));
-                                references.append(referenceButton);
-                            });
-                        }
-                        reasoningPanel.append(references);
-                    }
-                    if (set.effectivePrompt) {
-                        const finalPrompt = document.createElement('details');
-                        const finalPromptSummary = document.createElement('summary');
-                        finalPromptSummary.textContent = '查看最终提示词';
-                        const finalPromptContent = document.createElement('div');
-                        finalPromptContent.className = 'image-reasoning-final-prompt';
-                        const finalPromptText = document.createElement('p');
-                        finalPromptText.textContent = set.effectivePrompt;
-                        const copyEffectiveButton = document.createElement('button');
-                        copyEffectiveButton.type = 'button';
-                        copyEffectiveButton.className = 'image-prompt-copy';
-                        copyEffectiveButton.title = '复制思维优化提示词';
-                        copyEffectiveButton.setAttribute('aria-label', copyEffectiveButton.title);
-                        copyEffectiveButton.innerHTML = iconMarkup('copy', 'icon-11');
-                        copyEffectiveButton.addEventListener('click', () => void copyImagePrompt(set.effectivePrompt, '思维优化提示词'));
-                        finalPromptContent.append(finalPromptText, copyEffectiveButton);
-                        finalPrompt.append(finalPromptSummary, finalPromptContent);
-                        reasoningPanel.append(finalPrompt);
-                    }
-                }
+                const reasoningPanel = set.reasoningStatus !== 'idle' || set.reasoningSummary
+                    ? renderReasoningPanel(set)
+                    : null;
 
                 const grid = document.createElement('div');
                 grid.className = 'image-generation-set-grid';
@@ -3019,6 +3438,8 @@
                 if (reasoningPanel) section.append(reasoningPanel);
                 section.append(grid);
                 container.append(section);
+                const reasoningLog = section.querySelector('.image-reasoning-log:not(.is-fully-expanded)');
+                if (reasoningLog) reasoningLog.scrollTop = reasoningLog.scrollHeight;
             });
             renderLucideIcons();
         }
@@ -3052,7 +3473,7 @@
                 set.sessionId = event.sessionId || set.sessionId;
                 set.parentSetId = event.parentSetId || set.parentSetId;
                 set.roundNumber = Number(event.roundNumber) || set.roundNumber;
-                set.reasoningMode = event.reasoningMode || set.reasoningMode;
+                set.reasoningMode = normalizeImageReasoningMode(event.reasoningMode || set.reasoningMode);
                 set.reasoningModel = event.reasoningModel || set.reasoningModel;
                 set.reasoningEffort = event.reasoningEffort || set.reasoningEffort;
                 set.reasoningSummary = event.reasoningSummary || set.reasoningSummary;
@@ -3073,16 +3494,56 @@
                 }
             } else if (event.type === 'react_started') {
                 set.reasoningStatus = 'running';
-                set.reasoningMode = event.mode || set.reasoningMode;
+                set.reasoningMode = normalizeImageReasoningMode(event.mode || set.reasoningMode);
                 set.reasoningModel = event.model || '';
                 set.reasoningEffort = event.reasoningEffort || '';
                 set.webSearchEnabled = event.webSearchEnabled === true;
-            } else if (event.type === 'react_tool_started' && ['search_web', 'search_visual_references'].includes(event.tool)) {
-                set.webSearchStatus = 'running';
-            } else if (event.type === 'react_tool_completed' && ['search_web', 'search_visual_references'].includes(event.tool)) {
-                set.webSearchStatus = 'completed';
-            } else if (event.type === 'react_tool_failed' && ['search_web', 'search_visual_references'].includes(event.tool)) {
-                set.webSearchStatus = 'failed';
+                set.reasoningStartedAt ||= Date.now();
+                set.reasoningCompletedAt = 0;
+            } else if (event.type === 'react_turn_started') {
+                const turn = reasoningTurnByNumber(set, event.turn);
+                turn.title = event.title || turn.title;
+                turn.status = 'running';
+                turn.startedAt ||= Date.now();
+                turn.completedAt = 0;
+                set.reasoningStatus = 'running';
+            } else if (event.type === 'react_turn_delta') {
+                const turn = reasoningTurnByNumber(set, event.turn);
+                turn.text += event.delta || '';
+                set.reasoningSummary += event.delta || '';
+                set.reasoningStatus = 'running';
+                queueReasoningTurnRender(set.setId, turn.turn);
+                return;
+            } else if (event.type === 'react_turn_completed') {
+                const turn = reasoningTurnByNumber(set, event.turn);
+                turn.title = event.title || turn.title;
+                turn.text = event.text || turn.text;
+                turn.status = 'completed';
+                turn.completedAt ||= Date.now();
+            } else if (event.type === 'react_tool_started') {
+                const turn = reasoningTurnByNumber(set, event.turn);
+                turn.tools.push({
+                    callId: event.callId || `${event.tool}-${Date.now()}`,
+                    name: event.tool || '',
+                    arguments: event.arguments || {},
+                    status: 'running',
+                    resultCount: 0
+                });
+                if (['search_web', 'search_visual_references'].includes(event.tool)) {
+                    set.webSearchStatus = 'running';
+                }
+            } else if (event.type === 'react_tool_completed' || event.type === 'react_tool_failed') {
+                const turn = reasoningTurnByNumber(set, event.turn);
+                const tool = turn.tools.find(item => item.callId === event.callId)
+                    || [...turn.tools].reverse().find(item => item.name === event.tool && item.status === 'running');
+                if (tool) {
+                    tool.status = event.type === 'react_tool_failed' ? 'failed' : 'completed';
+                    tool.resultCount = Number(event.resultCount) || 0;
+                    tool.error = event.error || '';
+                }
+                if (['search_web', 'search_visual_references'].includes(event.tool)) {
+                    set.webSearchStatus = event.type === 'react_tool_failed' ? 'failed' : 'completed';
+                }
             } else if (event.type === 'react_visual_results') {
                 set.webSearchStatus = 'running';
                 set.webSearchResultCount = Number(event.webSearchResultCount) || set.webSearchResultCount;
@@ -3090,16 +3551,18 @@
                 set.webSearchStatus = 'completed';
                 set.webReferenceCount = Number(event.selectedCount) || 0;
             } else if (event.type === 'react_summary_delta') {
-                set.reasoningStatus = 'running';
-                set.reasoningSummary += event.delta || '';
-                const summary = document.querySelector(`[data-reasoning-summary="${CSS.escape(set.setId)}"]`);
-                if (summary) {
-                    queueReasoningSummaryRender(set.setId);
-                    return;
-                }
+                if (!set.reasoningTurns.length) set.reasoningSummary += event.delta || '';
+                return;
             } else if (event.type === 'react_completed') {
                 set.reasoningStatus = 'completed';
                 set.reasoningSummary = event.summary || set.reasoningSummary;
+                set.reasoningCompletedAt ||= Date.now();
+                set.reasoningTurns.forEach(turn => {
+                    if (turn.status === 'running') {
+                        turn.status = 'completed';
+                        turn.completedAt ||= set.reasoningCompletedAt;
+                    }
+                });
                 set.effectivePrompt = event.prompt || '';
                 set.reasoningModel = event.model || set.reasoningModel;
                 set.reasoningEffort = event.reasoningEffort || set.reasoningEffort;
@@ -3109,9 +3572,24 @@
                 else if (set.webSearchEnabled) set.webSearchStatus = 'skipped';
                 set.webSearchResultCount = Number(event.webSearchResultCount) || set.webSearchResultCount;
                 set.webReferenceCount = Number(event.webReferenceCount) || set.webReferenceCount;
+                requestAnimationFrame(() => {
+                    const panel = document.querySelector(`[data-reasoning-set="${CSS.escape(set.setId)}"]`);
+                    if (!panel) return;
+                    panel.classList.add('is-completion-pulsing');
+                    const finishPulse = animationEvent => {
+                        if (animationEvent.animationName !== 'reasoningPanelComplete') return;
+                        panel.classList.remove('is-completion-pulsing');
+                        panel.removeEventListener('animationend', finishPulse);
+                    };
+                    panel.addEventListener('animationend', finishPulse);
+                });
             } else if (event.type === 'react_failed') {
                 set.reasoningStatus = 'failed';
                 set.reasoningSummary = event.error || '思维处理失败';
+                set.reasoningCompletedAt ||= Date.now();
+                const turn = activeReasoningTurn(set);
+                turn.status = 'failed';
+                turn.completedAt ||= Date.now();
             } else if (Number.isInteger(event.itemIndex) && set.items[event.itemIndex]) {
                 const item = set.items[event.itemIndex];
                 imageRevealItemContext.set(item, {
@@ -3599,11 +4077,24 @@
                 parentSetId: session?.setId || '',
                 roundNumber: session ? session.roundNumber + 1 : 1,
                 reasoningMode: window.imageEditState.reasoningMode,
-                reasoningStatus: window.imageEditState.reasoningMode === 'instant' ? 'idle' : 'running'
+                reasoningStatus: window.imageEditState.reasoningMode === 'instant' ? 'idle' : 'running',
+                reasoningStartedAt: Date.now(),
+                reasoningTurns: window.imageEditState.reasoningMode === 'instant' ? [] : [{
+                    turn: 1,
+                    title: '正在分析问题',
+                    text: '',
+                    status: 'running',
+                    startedAt: Date.now(),
+                    completedAt: 0,
+                    tools: []
+                }],
+                webSearchEnabled: window.imageEditState.reasoningMode !== 'instant' && window.imageEditState.webSearchEnabled
             });
             window.imageEditState.busy = true;
             button.disabled = true;
             document.getElementById('imageReasoningMenuButton').disabled = true;
+            document.getElementById('reasoningSliderTrack').setAttribute('aria-disabled', 'true');
+            document.getElementById('imageWebSearchEnabled').disabled = true;
             document.getElementById('polishImagePromptButton').disabled = true;
             closeImageGenerationControls();
             closeImageReasoningMenu();
@@ -3633,7 +4124,8 @@
                         requestId,
                         sessionId: session?.sessionId || requestId,
                         parentSetId: session?.setId || '',
-                        reasoningMode: window.imageEditState.reasoningMode
+                        reasoningMode: window.imageEditState.reasoningMode,
+                        webSearchEnabled: window.imageEditState.webSearchEnabled
                     }
                 );
                 if (!result.ok) throw new Error(result.error || '图片生成失败');
@@ -3659,6 +4151,8 @@
                 window.imageEditState.busy = false;
                 button.disabled = false;
                 document.getElementById('imageReasoningMenuButton').disabled = false;
+                document.getElementById('reasoningSliderTrack').setAttribute('aria-disabled', 'false');
+                document.getElementById('imageWebSearchEnabled').disabled = window.imageEditState.reasoningMode === 'instant';
                 document.getElementById('polishImagePromptButton').disabled = false;
                 setIconLabel(button, 'sparkles', `生成 ${window.imageEditState.imageCount} 张`);
             }
@@ -3843,7 +4337,9 @@
             void loadImageGenerationHistory();
             initializeImageViewerInteractions();
             initializeEditImageScrollbar();
-            updateImageGenerationControlSummary();
+            initializeImageReasoningSlider();
+            restoreImageGenerationPreferences();
+            window.setInterval(updateReasoningTimers, 1000);
 
             window.addEventListener('pywebviewready', () => {
                 if (window.__pendingNativeTheme) {

@@ -49,7 +49,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.18"
+APP_VERSION = "1.0.19"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -73,7 +73,7 @@ STATIC_UI_VERSION = "43"
 IMAGE_STREAM_DEBUG_LOG_MAX_BYTES = 20 * 1024 * 1024
 WEB_SEARCH_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 WEB_REFERENCE_IMAGE_MAX_BYTES = 16 * 1024 * 1024
-WEB_REFERENCE_MAX_COUNT = 3
+WEB_REFERENCE_MAX_COUNT = 6
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -128,12 +128,36 @@ PROMPT_POLISH_MODEL = "gpt-5.6-terra"
 PROMPT_POLISH_REASONING_EFFORT = "medium"
 PROMPT_RESULT_MARKER = "<<<FINAL_PROMPT>>>"
 IMAGE_REASONING_MODES = {
-    "low": {"model": "gpt-5.6-luna", "effort": "low", "depth": "快速理解需求并做一次轻量可用性检查，避免冗长反思"},
-    "medium": {"model": "gpt-5.6-terra", "effort": "medium", "depth": "进行均衡的需求拆解、方案设计和可用性评估"},
-    "high": {"model": "gpt-5.6-sol", "effort": "medium", "depth": "深入比较可行方案并反思关键风险后再选择方案"},
-    "max": {"model": "gpt-5.6-sol", "effort": "xhigh", "depth": "充分探索与比较方案，进行多角度反思和严格可用性评估"},
+    "flash": {
+        "model": "gpt-5.6-luna",
+        "effort": "low",
+        "max_turns": 4,
+        "max_references": 1,
+        "depth": "Flash 模式：仍须先判断自己要完成什么、哪些要求已明确、是否存在自己不理解或会影响结果的信息缺口；在此基础上迅速选择一个可执行方案。若开启搜索且缺口重要，立即做必要检索并根据结果快速复核，然后形成生图提示词进入迭代。Flash 压缩的是比较和反思轮次，不是省略任务理解与信息缺口判断。",
+    },
+    "medium": {
+        "model": "gpt-5.6-terra",
+        "effort": "medium",
+        "max_turns": 6,
+        "max_references": 3,
+        "depth": "Medium 模式：进行均衡的需求拆解、方案设计和适度信息获取，检查关键可用性后形成生图方案。",
+    },
+    "high": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "max_turns": 9,
+        "max_references": 4,
+        "depth": "High 模式：详细拆解需求和视觉方案，主动获取有价值的信息，比较主要候选方案，并对构图、事实准确性和生成风险做一轮明确反思后再定稿。",
+    },
+    "max": {
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "max_turns": 12,
+        "max_references": 6,
+        "depth": "Max 模式：先拟定多个足够详细的候选方案，主动且可多轮搜索网页与图片，交叉核对信息并阅读视觉候选；频繁反思遗漏、冲突、构图、材质和事实风险，只有确认信息与方案均充分周全后才形成最终生图提示词。",
+    },
 }
-IMAGE_WEB_SEARCH_MODES = {"high", "max"}
+IMAGE_WEB_SEARCH_MODES = set(IMAGE_REASONING_MODES)
 IMAGE_AGENT_WEB_TOOLS = (
     {
         "type": "function",
@@ -975,6 +999,17 @@ class StaticAssetCache:
                 errors.append(f"{name}: {exc}")
         raise RuntimeError("；".join(errors))
 
+    @staticmethod
+    def _replace_release_path(source: Path, destination: Path) -> None:
+        for attempt in range(5):
+            try:
+                os.replace(source, destination)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.08 * (2 ** attempt))
+
     def install(self) -> None:
         trace_startup("static_assets_started", release=self.release_id)
         self.releases_root.mkdir(parents=True, exist_ok=True)
@@ -1020,18 +1055,18 @@ class StaticAssetCache:
                 try:
                     if self.release_dir.exists():
                         quarantine = self.releases_root / f".{self.release_id}.{uuid.uuid4().hex}.old"
-                        os.replace(self.release_dir, quarantine)
+                        self._replace_release_path(self.release_dir, quarantine)
                         old_moved = True
-                    os.replace(staging, self.release_dir)
+                    self._replace_release_path(staging, self.release_dir)
                     new_moved = True
                     if not self._validate_release(self.release_dir):
                         raise RuntimeError("静态资源缓存启用失败")
                 except Exception:
                     if new_moved and self.release_dir.exists():
                         failed_release = self.releases_root / f".{self.release_id}.{uuid.uuid4().hex}.failed"
-                        os.replace(self.release_dir, failed_release)
+                        self._replace_release_path(self.release_dir, failed_release)
                     if old_moved and quarantine and quarantine.exists() and not self.release_dir.exists():
-                        os.replace(quarantine, self.release_dir)
+                        self._replace_release_path(quarantine, self.release_dir)
                         quarantine = None
                     raise
                 finally:
@@ -4111,14 +4146,18 @@ class AppController:
         prompt: str,
         image_paths: tuple[Path, ...],
         reasoning_mode: str,
+        web_search_enabled: bool,
         emit: Any,
     ) -> dict[str, Any]:
         config = IMAGE_REASONING_MODES[reasoning_mode]
         model = str(config["model"])
         reasoning_effort = str(config["effort"])
-        web_search_enabled = reasoning_mode in IMAGE_WEB_SEARCH_MODES
+        max_agent_turns = int(config["max_turns"])
+        max_reference_count = int(config["max_references"])
         complete_text = ""
         published_length = 0
+        current_turn = 0
+        current_turn_start = 0
         candidate_by_id: dict[str, dict[str, Any]] = {}
         selected_ids: list[str] = []
         selected_rationale = ""
@@ -4134,8 +4173,21 @@ class AppController:
                 0, len(complete_text) - len(PROMPT_RESULT_MARKER) + 1
             )
             if safe_length > published_length:
-                emit("react_summary_delta", delta=complete_text[published_length:safe_length])
+                visible_delta = complete_text[published_length:safe_length]
+                emit("react_turn_delta", turn=current_turn, delta=visible_delta)
+                emit("react_summary_delta", delta=visible_delta)
                 published_length = safe_length
+
+        def flush_turn_tail() -> None:
+            nonlocal published_length
+            marker_index = complete_text.find(PROMPT_RESULT_MARKER)
+            safe_length = marker_index if marker_index >= 0 else len(complete_text)
+            if safe_length <= published_length:
+                return
+            visible_delta = complete_text[published_length:safe_length]
+            emit("react_turn_delta", turn=current_turn, delta=visible_delta)
+            emit("react_summary_delta", delta=visible_delta)
+            published_length = safe_length
 
         emit(
             "react_started",
@@ -4148,6 +4200,11 @@ class AppController:
             "你是一个用于图片创作的轻量 ReAct 智能体。根据用户文字和可选参考图，从需求理解"
             "出发，自主选择必要的分析、方案设计、工具化检查与反思步骤；不要机械套用固定步骤数。"
             f"当前深度建议：{config['depth']}。"
+            "无论当前深度如何，第一步都必须先判断：用户真正要你完成什么；哪些约束和视觉目标已经"
+            "明确；哪些对象、概念、事实、外观或时效信息是你不确定、不理解或仅凭现有输入无法可靠"
+            "判断的；这些信息缺口是否会实质影响生成结果。不得因为处于 Flash 模式就跳过这项"
+            "判断。若缺口不影响结果，可以直接采用合理假设；若缺口会影响事实、主体外观、构图或用户"
+            "意图，则在工具可用时先做针对性检索，再依据结果定稿。"
             "如果用户明确指定现有 IP、作品、品牌、世界观、人物或角色，必须保留其名称、身份、"
             "所属设定和标志性视觉特征，按用户要求直接构思；不要仅因对象属于知名 IP 就改写为"
             "原创角色、致敬款、同类替代或主动规避相似性。只有用户明确要求原创、重新设计或避开"
@@ -4163,6 +4220,7 @@ class AppController:
                 "的候选才通过 select_visual_references 选择；不合适时选择空列表。不要仅凭标题纳入图片。"
                 "你可以在同一轮并行发起多个不同检索，也可以根据首轮结果在后续轮次继续搜索；在完成"
                 "必要检索并比较全部候选后，再统一调用 select_visual_references 提交最终采用列表。"
+                f"当前模式最多采用 {max_reference_count} 张真正有帮助的视觉参考；宁缺毋滥。"
             )
         instructions += (
             f"摘要结束后单独输出标记 {PROMPT_RESULT_MARKER}，标记后只写可直接提交给图片模型的最终提示词。"
@@ -4173,8 +4231,14 @@ class AppController:
         else:
             current_input = [{"role": "user", "content": initial_input}]
         output = ""
-        max_agent_turns = 8
         for turn_index in range(max_agent_turns):
+            current_turn = turn_index + 1
+            current_turn_start = published_length
+            emit(
+                "react_turn_started",
+                turn=current_turn,
+                title="正在分析问题" if current_turn == 1 else "正在完善方案",
+            )
             completed_payloads: list[dict[str, Any]] = []
             tools = (
                 list(IMAGE_AGENT_WEB_TOOLS)
@@ -4202,6 +4266,20 @@ class AppController:
             function_calls = [
                 item for item in response_output if item.get("type") == "function_call"
             ]
+            flush_turn_tail()
+            turn_text = complete_text[current_turn_start:published_length].strip()
+            emit(
+                "react_turn_completed",
+                turn=current_turn,
+                title=(
+                    "正在拆解方案"
+                    if function_calls and current_turn == 1
+                    else "正在核对参考信息"
+                    if function_calls
+                    else "方案已确定"
+                ),
+                text=turn_text,
+            )
             if not function_calls:
                 break
             current_input.extend(response_output)
@@ -4219,7 +4297,13 @@ class AppController:
                     if not isinstance(arguments, dict):
                         raise ValueError("工具参数必须是对象")
                     parsed_call["arguments"] = arguments
-                    emit("react_tool_started", tool=parsed_call["name"])
+                    emit(
+                        "react_tool_started",
+                        turn=current_turn,
+                        callId=parsed_call["callId"],
+                        tool=parsed_call["name"],
+                        arguments=arguments,
+                    )
                 except (ValueError, json.JSONDecodeError) as exc:
                     parsed_call["error"] = exc
                 parsed_calls.append(parsed_call)
@@ -4260,6 +4344,7 @@ class AppController:
                     web_search_succeeded = True
                     if call["name"] == "search_web":
                         call["output"] = json.dumps(tool_result, ensure_ascii=False)
+                        call["resultCount"] = len(tool_result.get("results") or [])
                         continue
                     public_results: list[dict[str, Any]] = []
                     visual_output: list[dict[str, str]] = []
@@ -4317,12 +4402,28 @@ class AppController:
                     tool_output: Any = json.dumps(
                         {"ok": False, "error": str(error)[:500]}, ensure_ascii=False
                     )
-                    emit("react_tool_failed", tool=name, error=str(error))
+                    emit(
+                        "react_tool_failed",
+                        turn=current_turn,
+                        callId=call_id,
+                        tool=name,
+                        error=str(error),
+                    )
                 elif name in {"search_web", "search_visual_references"}:
                     tool_output = call["output"]
                     if call.get("visualEvent"):
                         emit("react_visual_results", **call["visualEvent"])
-                    emit("react_tool_completed", tool=name)
+                    emit(
+                        "react_tool_completed",
+                        turn=current_turn,
+                        callId=call_id,
+                        tool=name,
+                        resultCount=(
+                            call.get("visualEvent", {}).get("resultCount")
+                            if call.get("visualEvent")
+                            else call.get("resultCount", 0)
+                        ),
+                    )
                 elif name == "select_visual_references":
                     arguments = call["arguments"]
                     try:
@@ -4331,7 +4432,7 @@ class AppController:
                         if not isinstance(requested_ids, list):
                             raise ValueError("reference_ids 必须是数组")
                         selected_ids = []
-                        for candidate_id in requested_ids[:WEB_REFERENCE_MAX_COUNT]:
+                        for candidate_id in requested_ids[:max_reference_count]:
                             clean_id = str(candidate_id)
                             if clean_id in candidate_by_id and clean_id not in selected_ids:
                                 selected_ids.append(clean_id)
@@ -4346,17 +4447,35 @@ class AppController:
                             selectedCount=len(selected_ids),
                             rationale=selected_rationale,
                         )
-                        emit("react_tool_completed", tool=name)
+                        emit(
+                            "react_tool_completed",
+                            turn=current_turn,
+                            callId=call_id,
+                            tool=name,
+                            resultCount=len(selected_ids),
+                        )
                     except (ValueError, json.JSONDecodeError) as exc:
                         tool_output = json.dumps(
                             {"ok": False, "error": str(exc)[:500]}, ensure_ascii=False
                         )
-                        emit("react_tool_failed", tool=name, error=str(exc))
+                        emit(
+                            "react_tool_failed",
+                            turn=current_turn,
+                            callId=call_id,
+                            tool=name,
+                            error=str(exc),
+                        )
                 else:
                     tool_output = json.dumps(
                         {"ok": False, "error": "未知工具"}, ensure_ascii=False
                     )
-                    emit("react_tool_failed", tool=name, error="未知工具")
+                    emit(
+                        "react_tool_failed",
+                        turn=current_turn,
+                        callId=call_id,
+                        tool=name,
+                        error="未知工具",
+                    )
                 current_input.append(
                     {
                         "type": "function_call_output",
@@ -4420,6 +4539,11 @@ class AppController:
         reasoning_mode = str(clean_options.get("reasoningMode") or "instant").lower()
         if reasoning_mode not in {"instant", *IMAGE_REASONING_MODES}:
             return {"ok": False, "error": "无效的思维模式"}
+        requested_web_search = clean_options.get("webSearchEnabled")
+        web_search_enabled = (
+            reasoning_mode != "instant"
+            and requested_web_search is not False
+        )
         clean_options.update(
             {
                 "background": "auto",
@@ -4460,7 +4584,6 @@ class AppController:
         reasoning_summary = ""
         reasoning_model = ""
         reasoning_effort = ""
-        web_search_enabled = False
         web_search_used = False
         web_search_failed = False
         web_search_result_count = 0
@@ -4477,6 +4600,7 @@ class AppController:
                     original_prompt,
                     request.image_paths,
                     reasoning_mode,
+                    web_search_enabled,
                     emit,
                 )
                 final_prompt = str(agent_result["prompt"])
@@ -4492,7 +4616,7 @@ class AppController:
                     staged_web_references = self.web_search.stage_reference_records(
                         web_candidates,
                         web_reference_dir,
-                        min(WEB_REFERENCE_MAX_COUNT, available_slots),
+                        min(int(IMAGE_REASONING_MODES[reasoning_mode]["max_references"]), available_slots),
                     )
                     web_reference_paths = tuple(
                         Path(reference["path"]) for reference in staged_web_references
