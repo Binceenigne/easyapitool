@@ -917,7 +917,7 @@
 
         <div id="appMain">
             <section id="imageEditWorkspace" aria-labelledby="imageEditHeading">
-                <form id="imageEditForm" onsubmit="submitImageEdit(event)">
+                <form id="imageEditForm" novalidate onsubmit="submitImageEdit(event)">
                     <div class="image-edit-header">
                         <div>
                             <button type="button" id="exitImageEditSessionButton" hidden onclick="exitImageEditSession()" title="返回普通生图" aria-label="返回普通生图">
@@ -951,7 +951,7 @@
                     <label class="image-edit-prompt">
                         <span>提示词</span>
                         <div class="image-edit-prompt-shell">
-                            <textarea id="imageEditPrompt" rows="7" maxlength="32000" required placeholder="描述要生成的图片；也可以粘贴或拖入参考图片"></textarea>
+                            <textarea id="imageEditPrompt" rows="7" maxlength="32000" placeholder="描述要生成的图片；也可以粘贴或拖入参考图片"></textarea>
                             <button type="button" id="polishImagePromptButton" onclick="polishImagePrompt()" title="一键润色提示词" aria-label="一键润色提示词">
                                 <i data-lucide="sparkles" aria-hidden="true"></i>
                             </button>
@@ -2277,6 +2277,7 @@
             const control = document.getElementById('imageReasoningControl');
             if (!menu || menu.hidden || !control) return;
             const controlRect = control.getBoundingClientRect();
+            const footerRect = control.closest('.image-generation-footer')?.getBoundingClientRect();
             const menuWidth = Math.min(220, Math.max(0, window.innerWidth - 16));
             const menuLeft = Math.min(
                 window.innerWidth - menuWidth - 8,
@@ -2284,7 +2285,8 @@
             );
             menu.style.setProperty('--reasoning-menu-left', `${menuLeft}px`);
             menu.style.setProperty('--reasoning-menu-width', `${menuWidth}px`);
-            menu.style.setProperty('--reasoning-menu-bottom', `${Math.max(12, window.innerHeight - controlRect.top + 8)}px`);
+            const anchorTop = footerRect?.top ?? controlRect.top;
+            menu.style.setProperty('--reasoning-menu-bottom', `${Math.max(12, window.innerHeight - anchorTop + 8)}px`);
         }
 
         function closeImageReasoningMenu() {
@@ -2303,6 +2305,8 @@
             const opening = menu.hidden;
             if (opening) {
                 closeImageGenerationControls();
+                const appMain = document.getElementById('appMain');
+                if (appMain && menu.parentElement !== appMain) appMain.append(menu);
                 menu.hidden = false;
                 positionImageReasoningMenu();
                 requestAnimationFrame(() => menu.classList.add('is-open'));
@@ -2537,9 +2541,15 @@
             return window.imageEditState.resultSets.find(item => item.setId === setId);
         }
 
+        function reasoningTurnsForSet(set) {
+            if (!Array.isArray(set.reasoningTurns)) set.reasoningTurns = [];
+            return set.reasoningTurns;
+        }
+
         function reasoningTurnByNumber(set, turnNumber) {
             const cleanTurn = Math.max(1, Number(turnNumber) || 1);
-            let turn = set.reasoningTurns.find(item => item.turn === cleanTurn);
+            const turns = reasoningTurnsForSet(set);
+            let turn = turns.find(item => item.turn === cleanTurn);
             if (!turn) {
                 turn = {
                     turn: cleanTurn,
@@ -2550,15 +2560,16 @@
                     completedAt: 0,
                     tools: []
                 };
-                set.reasoningTurns.push(turn);
+                turns.push(turn);
             }
             return turn;
         }
 
         function activeReasoningTurn(set) {
-            return [...set.reasoningTurns].reverse().find(turn => turn.status === 'running')
-                || set.reasoningTurns.at(-1)
-                || reasoningTurnByNumber(set, 1);
+            const turns = reasoningTurnsForSet(set);
+            return [...turns].reverse().find(turn => turn.status === 'running')
+                || turns.at(-1)
+                || null;
         }
 
         function formatReasoningDuration(milliseconds) {
@@ -2575,7 +2586,7 @@
         }
 
         function totalReasoningElapsed(set) {
-            const startedAt = Number(set.reasoningStartedAt) || Number(set.reasoningTurns[0]?.startedAt) || Date.now();
+            const startedAt = Number(set.reasoningStartedAt) || Number(reasoningTurnsForSet(set)[0]?.startedAt) || Date.now();
             const completedAt = Number(set.reasoningCompletedAt) || Date.now();
             return formatReasoningDuration(completedAt - startedAt);
         }
@@ -3102,7 +3113,9 @@
                 pendingReasoningTurnRenders.forEach(renderKey => {
                     const [pendingSetId, pendingTurnNumber] = renderKey.split('\n');
                     const pendingSet = imageGenerationSetById(pendingSetId);
-                    const turn = pendingSet?.reasoningTurns.find(item => item.turn === Number(pendingTurnNumber));
+                    const turn = pendingSet
+                        ? reasoningTurnsForSet(pendingSet).find(item => item.turn === Number(pendingTurnNumber))
+                        : null;
                     const text = document.querySelector(
                         `[data-reasoning-turn-text="${CSS.escape(pendingSetId)}:${pendingTurnNumber}"]`
                     );
@@ -3161,7 +3174,8 @@
             body.className = 'image-reasoning-body';
             const log = document.createElement('div');
             log.className = `image-reasoning-log${set.reasoningContentExpanded ? ' is-fully-expanded' : ''}`;
-            const turns = set.reasoningTurns.length ? set.reasoningTurns : [{
+            const reasoningTurns = reasoningTurnsForSet(set);
+            const turns = reasoningTurns.length ? reasoningTurns : [{
                 turn: 1,
                 title,
                 text: set.reasoningSummary,
@@ -3551,13 +3565,13 @@
                 set.webSearchStatus = 'completed';
                 set.webReferenceCount = Number(event.selectedCount) || 0;
             } else if (event.type === 'react_summary_delta') {
-                if (!set.reasoningTurns.length) set.reasoningSummary += event.delta || '';
+                if (!reasoningTurnsForSet(set).length) set.reasoningSummary += event.delta || '';
                 return;
             } else if (event.type === 'react_completed') {
                 set.reasoningStatus = 'completed';
                 set.reasoningSummary = event.summary || set.reasoningSummary;
                 set.reasoningCompletedAt ||= Date.now();
-                set.reasoningTurns.forEach(turn => {
+                reasoningTurnsForSet(set).forEach(turn => {
                     if (turn.status === 'running') {
                         turn.status = 'completed';
                         turn.completedAt ||= set.reasoningCompletedAt;
@@ -3587,7 +3601,7 @@
                 set.reasoningStatus = 'failed';
                 set.reasoningSummary = event.error || '思维处理失败';
                 set.reasoningCompletedAt ||= Date.now();
-                const turn = activeReasoningTurn(set);
+                const turn = activeReasoningTurn(set) || reasoningTurnByNumber(set, 1);
                 turn.status = 'failed';
                 turn.completedAt ||= Date.now();
             } else if (Number.isInteger(event.itemIndex) && set.items[event.itemIndex]) {
@@ -3876,6 +3890,13 @@
                     if (!existing.has(set.setId)) {
                         existing.set(set.setId, {
                             ...set,
+                            reasoningTurns: Array.isArray(set.reasoningTurns) ? set.reasoningTurns : [],
+                            reasoningExpanded: set.reasoningExpanded === true,
+                            reasoningContentExpanded: set.reasoningContentExpanded === true,
+                            webReferences: Array.isArray(set.webReferences) ? set.webReferences : [],
+                            webReferencesExpanded: false,
+                            finalPromptExpanded: false,
+                            webReferencesLoading: false,
                             expanded: false,
                             history: true,
                             previewsLoaded: false,
@@ -4063,9 +4084,13 @@
             const session = window.imageEditState.editSession;
             const files = session ? session.references : window.imageEditState.files;
             const activeKey = getActiveKey();
-            const prompt = document.getElementById('imageEditPrompt').value.trim();
+            const promptInput = document.getElementById('imageEditPrompt');
+            const prompt = promptInput.value.trim();
             if (!activeKey) return showToast('请先添加并选择一个有效的 API Key', 'error');
-            if (!prompt) return showToast('请输入生图提示词', 'error');
+            if (!prompt) {
+                promptInput.focus();
+                return showToast('请输入生图提示词', 'error');
+            }
             if (session && !files?.length) return showToast('上一轮参考图不可用，请重新选择续作图片集', 'error');
 
             const button = document.getElementById('generateEditedImageButton');
