@@ -2722,8 +2722,7 @@
         }
 
         const IMAGE_STREAM_INITIAL_BLUR = 32;
-        const IMAGE_STREAM_PARTIAL_FLOOR_BLUR = 3;
-        const IMAGE_STREAM_PARTIAL_BLUR_STEP = 0.22;
+        const IMAGE_STREAM_CLARITY_STEP = 0.25;
         const IMAGE_STREAM_PARTIAL_DURATION = 10000;
         const IMAGE_STREAM_FINAL_DURATION = 3000;
         const IMAGE_STREAM_INITIAL_FADE_DURATION = 5000;
@@ -2860,10 +2859,7 @@
                 const frames = Array.isArray(item.revealFrames) ? item.revealFrames : [];
                 const latestEnd = frames.reduce((endAt, frame) => {
                     if (!frame.startedAt) return Math.max(endAt, Date.now() + 1000);
-                    return Math.max(endAt, frame.startedAt + Math.max(
-                        Number(frame.duration) || 0,
-                        frame.kind === 'final' ? IMAGE_STREAM_CROSSFADE_DURATION : 0
-                    ));
+                    return Math.max(endAt, frame.startedAt + (Number(frame.duration) || 0));
                 }, 0);
                 if (Date.now() <= Math.max(state.activeUntil, latestEnd) + 250) {
                     state.frameRequest = requestAnimationFrame(tick);
@@ -2888,12 +2884,10 @@
 
         function imageRevealTargetBlur(partialIndex) {
             const index = Math.max(1, Math.floor(Number(partialIndex) || 1));
-            const regularSteps = Math.min(index, 3);
-            const extraSteps = Math.max(0, index - 3);
-            const regularReduction = regularSteps * IMAGE_STREAM_PARTIAL_BLUR_STEP;
-            const extraReduction = IMAGE_STREAM_PARTIAL_BLUR_STEP * (1 - 1 / (2 ** extraSteps));
-            const remaining = Math.max(0, 1 - regularReduction - extraReduction);
-            return Math.max(IMAGE_STREAM_PARTIAL_FLOOR_BLUR, IMAGE_STREAM_INITIAL_BLUR * remaining);
+            const remainingBlurRatio = index <= 3
+                ? 1 - index * IMAGE_STREAM_CLARITY_STEP
+                : IMAGE_STREAM_CLARITY_STEP / (2 ** (index - 3));
+            return IMAGE_STREAM_INITIAL_BLUR * remainingBlurRatio;
         }
 
         function imageRevealBlurAt(frame, timestamp = Date.now()) {
@@ -2953,7 +2947,7 @@
                 kind,
                 duration: kind === 'final' ? IMAGE_STREAM_FINAL_DURATION : IMAGE_STREAM_PARTIAL_DURATION,
                 startedAt: 0,
-                fromBlur: null,
+                fromBlur: previousTarget,
                 toBlur: Math.min(previousTarget, requestedTarget)
             };
             item.revealFrames.push(frame);
@@ -2974,7 +2968,7 @@
             const initialPartial = frameIndex === 0 && frame.kind === 'partial';
             const crossfadeDuration = initialPartial
                 ? IMAGE_STREAM_INITIAL_FADE_DURATION
-                : IMAGE_STREAM_CROSSFADE_DURATION;
+                : frame.kind === 'final' ? frame.duration : IMAGE_STREAM_CROSSFADE_DURATION;
             image.classList.remove('is-reveal-pending');
             image.classList.add('is-image-reveal', `is-${frame.kind}-reveal`);
             image.style.removeProperty('animation');
@@ -3000,7 +2994,7 @@
             if (frame.kind !== 'final' || frame.cleanupScheduled) return;
             frame.cleanupScheduled = true;
             const elapsed = Math.max(0, Date.now() - Number(frame.startedAt || 0));
-            const cleanupDuration = Math.max(frame.duration, IMAGE_STREAM_CROSSFADE_DURATION);
+            const cleanupDuration = frame.duration;
             window.setTimeout(() => {
                 if (!item.revealFrames?.includes(frame) || item.revealFrames.at(-1) !== frame) return;
                 freezeImageRevealFrame(frame, imageRevealElementCache.get(frame), 0, 1);
@@ -3034,7 +3028,6 @@
                         Number(getComputedStyle(previousImages[previousIndex]).opacity)
                     );
                 });
-                frame.fromBlur = Math.max(Number(frame.toBlur) || 0, visibleBlur);
                 frame.startedAt = timestamp;
                 imageStreamDebugLog('frame-started', {
                     ...imageStreamDebugContext(item, frame, frameIndex),

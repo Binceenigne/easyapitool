@@ -1701,16 +1701,9 @@ html.dark #keySwitcherMenu {
   border-radius: 0 8px 8px 0;
 }
 
-#imageReasoningMenuButton [data-lucide],
 #imageReasoningMenuButton svg {
   width: 12px;
   height: 12px;
-  transition: transform 160ms ease;
-}
-
-#imageReasoningMenuButton[aria-expanded=true] [data-lucide],
-#imageReasoningMenuButton[aria-expanded=true] svg {
-  transform: rotate(180deg);
 }
 
 #generateEditedImageButton:hover:not(:disabled),
