@@ -1,11 +1,12 @@
 import json
+import re
 import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
@@ -348,6 +349,64 @@ class StoreTests(unittest.TestCase):
 
 
 class UtilityTests(unittest.TestCase):
+    def test_response_usage_metrics_estimates_gpt_5_6_short_and_long_context_costs(self):
+        short = app.response_usage_metrics(
+            {"usage": {"input_tokens": 1000, "output_tokens": 500}},
+            "gpt-5.6-terra",
+        )
+        long = app.response_usage_metrics(
+            {"usage": {"input_tokens": 272000, "output_tokens": 1000}},
+            "gpt-5.6-terra",
+        )
+
+        self.assertAlmostEqual(short["costUsd"], 0.008)
+        self.assertAlmostEqual(long["costUsd"], 1.106)
+        self.assertEqual(short["costSource"], "estimate")
+        self.assertEqual(short["estimatedCallCount"], 1)
+        self.assertTrue(short["hasCost"])
+        self.assertEqual(long["costSource"], "estimate")
+
+    def test_response_usage_metrics_prefers_actual_response_cost_over_estimate(self):
+        usage = app.response_usage_metrics(
+            {
+                "usage": {
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "cost": {"total": 0.123456},
+                }
+            },
+            "gpt-5.6-sol",
+        )
+
+        self.assertAlmostEqual(usage["costUsd"], 0.123456)
+        self.assertEqual(usage["costSource"], "response")
+        self.assertEqual(usage["estimatedCallCount"], 0)
+
+    def test_gpt_image_2_usage_estimates_modal_tokens_and_output_fallback(self):
+        token_priced = app.image_usage_metrics(
+            {
+                "input_tokens": 3000,
+                "output_tokens": 2000,
+                "input_tokens_details": {"text_tokens": 1000, "image_tokens": 2000},
+            },
+            "gpt-image-2",
+            "medium",
+            "1024x1024",
+        )
+        output_fallback = app.image_usage_metrics(
+            {"input_tokens": 1000, "input_tokens_details": {"text_tokens": 1000}},
+            "gpt-image-2",
+            "high",
+            "1536x1024",
+            partial_images=2,
+        )
+
+        self.assertAlmostEqual(token_priced["costUsd"], 0.081)
+        self.assertEqual(token_priced["totalTokens"], 5000)
+        self.assertEqual(token_priced["costSource"], "estimate")
+        self.assertAlmostEqual(output_fallback["costUsd"], 0.176)
+        self.assertEqual(output_fallback["outputTokens"], 5700)
+
     def test_response_usage_metrics_preserves_actual_tokens_calls_and_cost(self):
         first = app.response_usage_metrics(
             {
@@ -362,23 +421,44 @@ class UtilityTests(unittest.TestCase):
         second = app.response_usage_metrics(
             {"usage": {"input_tokens": 80, "output_tokens": 20, "total_tokens": 100}}
         )
+        costed_second = app.response_usage_metrics(
+            {
+                "usage": {
+                    "input_tokens": 80,
+                    "output_tokens": 20,
+                    "total_tokens": 100,
+                    "cost": 0.002,
+                }
+            }
+        )
 
         combined = app.merge_reasoning_usage(first, second)
+        fully_costed = app.merge_reasoning_usage(first, costed_second)
 
         self.assertEqual(combined["inputTokens"], 200)
         self.assertEqual(combined["outputTokens"], 50)
         self.assertEqual(combined["totalTokens"], 250)
         self.assertEqual(combined["callCount"], 2)
-        self.assertAlmostEqual(combined["costUsd"], 0.0042)
+        self.assertEqual(combined["costUsd"], 0)
         self.assertTrue(combined["hasTokenUsage"])
-        self.assertTrue(combined["hasCost"])
+        self.assertEqual(combined["costedCallCount"], 1)
+        self.assertEqual(combined["costSource"], "")
+        self.assertFalse(combined["hasCost"])
         self.assertFalse(second["hasCost"])
+        self.assertAlmostEqual(fully_costed["costUsd"], 0.0062)
+        self.assertEqual(fully_costed["costedCallCount"], 2)
+        self.assertEqual(fully_costed["costSource"], "response")
+        self.assertTrue(fully_costed["hasCost"])
 
-    def test_total_usage_cost_requires_valid_account_total(self):
-        self.assertEqual(app.total_usage_cost({"usage": {"total": {"cost": "12.75"}}}), 12.75)
-        self.assertIsNone(app.total_usage_cost({"usage": {"today": {"cost": 1}}}))
-        self.assertIsNone(app.total_usage_cost({"usage": {"total": {"cost": -1}}}))
-
+        estimated = app.response_usage_metrics(
+            {"usage": {"input_tokens": 1000, "output_tokens": 500}},
+            "gpt-5.6-luna",
+        )
+        mixed = app.merge_reasoning_usage(first, estimated)
+        self.assertAlmostEqual(mixed["costUsd"], 0.005)
+        self.assertEqual(mixed["costSource"], "mixed")
+        self.assertEqual(mixed["estimatedCallCount"], 1)
+        self.assertTrue(mixed["hasCost"])
 
     def test_continuation_plan_separates_operation_from_reference_selection(self):
         generated = app.parse_image_continuation_plan(
@@ -1540,7 +1620,9 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("const blockFill = Math.max(0, Math.min(dotsPerBlock, filledDots - consumed))", page)
         self.assertIn("active: busy", page)
         self.assertIn(".update-progress.is-active", scss_source)
-        self.assertIn(".update-progress-track { display: flex !important; align-items: center; width: 100%; height: 17px", scss_source)
+        self.assertIn("@keyframes updateProgressScan", scss_source)
+        self.assertIn("status: 'downloading', percent: 0, message: '正在连接下载源'", page)
+        self.assertIn(".update-progress-track { position: relative; display: flex !important; align-items: center; width: 100%; height: 17px", scss_source)
         self.assertIn("opacity: 0", scss_source)
         self.assertIn("renderSimpleMarkdown", page)
         self.assertIn('value="50"', page)
@@ -1565,8 +1647,9 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("--fixed-titlebar-height: 33px", stylesheet)
         self.assertIn('id="pageZoomLayer"', page)
         self.assertIn("--page-zoom: 1", stylesheet)
-        self.assertIn("width: calc(100% / var(--page-zoom))", stylesheet)
-        self.assertIn("transform: scale(var(--page-zoom))", stylesheet)
+        self.assertIn("width: calc(100% * var(--page-zoom))", stylesheet)
+        self.assertIn("height: calc((100% - var(--fixed-titlebar-height) / var(--page-zoom)) * var(--page-zoom))", stylesheet)
+        self.assertIn("zoom: var(--page-zoom)", stylesheet)
         self.assertIn("const PAGE_ZOOM_STORAGE_KEY = 'api-tools-page-zoom'", page)
         self.assertIn("const DEFAULT_PAGE_ZOOM = 1", page)
         self.assertIn("const PAGE_ZOOM_STORAGE_VERSION = '2'", page)
@@ -1653,6 +1736,10 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("function formatReasoningUsage(set)", page)
         self.assertIn("function reasoningUsageTitle(set)", page)
         self.assertIn("${tokens} token · ${calls} 次调用 · ${cost}", page)
+        self.assertIn("['response', 'estimate', 'mixed'].includes(costSource)", page)
+        self.assertIn("costedCallCount === callCount", page)
+        self.assertIn("官方价目估算", page)
+        self.assertIn("未使用账户总额差值", page)
         self.assertIn("set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage)", page)
         self.assertIn("class=\"image-reasoning-usage\"", page)
         self.assertIn("persistedDuration && set.reasoningStatus !== 'running'", page)
@@ -1668,7 +1755,12 @@ class StaticAssetCacheTests(unittest.TestCase):
         for mode_label in ("Instant", "Flash", "Medium", "High", "Extra", "Max"):
             self.assertNotIn(f"{mode_label} 模式：", page)
         self.assertIn("high: ['#5865f2', '#6478f5', '#7185f7', '#8170f5']", page)
-        self.assertIn(".image-reasoning-control[data-mode=high] {\n  background: #5865f2;", stylesheet)
+        self.assertIn("#b7c4ff 27%", stylesheet)
+        self.assertIn("#c9c7ff 67%", stylesheet)
+        self.assertRegex(
+            stylesheet,
+            r"\.image-reasoning-control\[data-mode=high\]\s*\{[^}]*background: #5865f2;",
+        )
         self.assertRegex(stylesheet, r"\.slider-desc\s*\{[^}]*white-space: nowrap;")
         self.assertIn(".image-reasoning-control[data-mode=flash]", stylesheet)
         self.assertIn(".image-reasoning-control[data-mode=extra]", stylesheet)
@@ -1679,13 +1771,16 @@ class StaticAssetCacheTests(unittest.TestCase):
         )
         self.assertRegex(
             stylesheet,
-            r"\.image-reasoning-control\s*\{[^}]*overflow: hidden;[^}]*isolation: isolate;",
+            r"\.image-reasoning-control\s*\{[^}]*overflow: visible;[^}]*isolation: isolate;",
         )
         self.assertRegex(
             stylesheet,
             r"\.reasoning-bg-layer\s*\{[^}]*transition: opacity 0\.5s cubic-bezier\(0\.4, 0, 0\.2, 1\)",
         )
-        self.assertRegex(stylesheet, r"\.reasoning-bg-layer\s*\{[^}]*inset: -1px;")
+        self.assertRegex(
+            stylesheet,
+            r"\.reasoning-bg-layer\s*\{[^}]*inset: 0;[^}]*clip-path: inset\(0 round 8px\);",
+        )
         self.assertRegex(
             stylesheet,
             r"\.image-reasoning-control\[data-mode=flash\]\s*\{[^}]*background: #8fd3ff;[^}]*box-shadow: none;",
@@ -1713,13 +1808,34 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("@keyframes maxSliderAmbientGlow", stylesheet)
         self.assertNotIn("@keyframes maxSliderInternalPulse", stylesheet)
         self.assertNotIn(".slider-track-bg::after", stylesheet)
+        self.assertIn("--reasoning-hover-shadow", stylesheet)
+        self.assertNotIn("--reasoning-hover-edge", stylesheet)
+        hover_block = re.search(
+            r"\.image-reasoning-control:has\(#generateEditedImageButton:hover:not\(:disabled\)\)::after\s*\{([^}]*)\}",
+            stylesheet,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(hover_block)
+        self.assertNotIn("outline:", hover_block.group(1))
+        self.assertNotIn("0 0 0 2px", hover_block.group(1))
+        self.assertNotIn("animation-play-state: paused", hover_block.group(1))
+        self.assertIn(".image-reasoning-control::after", stylesheet)
+        self.assertIn("box-shadow: var(--reasoning-hover-shadow)", stylesheet)
+        self.assertIn("transition: opacity 0.7s cubic-bezier(0.4, 0, 0.2, 1)", stylesheet)
+        self.assertIn(".image-reasoning-control:has(#generateEditedImageButton:hover:not(:disabled))::after", stylesheet)
         self.assertIn("sliderTrack.classList.add('is-max-entering')", page)
         self.assertIn("sliderTrack.classList.add('is-max-settled')", page)
         self.assertIn("animation: maxSliderBorderPulse 460ms cubic-bezier(0.18, 0.72, 0.24, 1) 60ms both", stylesheet)
         self.assertIn("}, 540);", page)
+        button_block = re.search(
+            r"#generateEditedImageButton,\s*#imageReasoningMenuButton\s*\{([^}]*)\}",
+            stylesheet,
+        ).group(1)
+        self.assertNotIn("translate3d", button_block)
+        self.assertNotIn("will-change", button_block)
         self.assertRegex(
             stylesheet,
-            r"#generateEditedImageButton,\s*#imageReasoningMenuButton\s*\{[^}]*backface-visibility: hidden;[^}]*transform: translate3d\(0, 0, 0\);[^}]*will-change: filter, background-color, transform;",
+            r"\.reasoning-bg-layer\s*\{[^}]*inset: 0;[^}]*clip-path: inset\(0 round 8px\);",
         )
         self.assertRegex(
             stylesheet,
@@ -1735,7 +1851,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         )
         self.assertIn("0 0 24px rgba(167, 139, 250, 0.16)", stylesheet)
         self.assertIn("0 0 29px rgba(168, 85, 247, 0.24)", stylesheet)
-        self.assertIn("mix-blend-mode: screen", stylesheet)
+        self.assertIn("mix-blend-mode: normal", stylesheet)
+        self.assertNotIn("mix-blend-mode: screen", stylesheet)
         self.assertIn(".toggle-switch input:checked + .toggle-slider", stylesheet)
         self.assertIn(".horizontal-slider-container", stylesheet)
         self.assertIn(".slider-gradient-next.is-blending", stylesheet)
@@ -1839,8 +1956,14 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("复制思维优化提示词", page)
         self.assertIn("image-generation-set-title-row", page)
         self.assertIn("image-reasoning-final-prompt", page)
-        self.assertIn("item.previewUri || item.uri", page)
-        self.assertIn("item.result?.previewUri || item.previewUri || item.result?.uri || item.uri", page)
+        self.assertIn("function browserImageSource(...candidates)", page)
+        self.assertIn("!candidate.toLowerCase().startsWith('file:')", page)
+        self.assertIn("browserImageSource(item.previewUri, item.uri)", page)
+        self.assertIn("browserImageSource(item.result?.previewUri, item.previewUri, item.result?.uri, item.uri)", page)
+        self.assertIn("image.src = browserImageSource(result.previewUri, result.uri)", page)
+        self.assertIn("preview.src = browserImageSource(file.previewUri, file.uri)", page)
+        self.assertIn("image.src = browserImageSource(reference.previewUri, reference.uri)", page)
+        self.assertNotIn("image.src = result.uri || result.previewUri", page)
         self.assertIn("window.pywebview.api.load_generated_image(item.result.path)", page)
         self.assertIn("--image-reveal-from-blur", page)
         self.assertIn("--image-reveal-to-blur", page)
@@ -2178,6 +2301,126 @@ class ControllerTests(unittest.TestCase):
             "紫色披风、银色肩甲的角色正面图",
         )
 
+    def test_continuation_planner_and_image_request_exclude_sibling_branch_assets(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pictures_root = root / "Pictures"
+            session_store = image_editor.ImageSessionStore(pictures_root)
+            sources = {}
+            for name, color in (
+                ("root", "red"),
+                ("branch-a", "green"),
+                ("branch-b", "blue"),
+                ("result", "white"),
+            ):
+                source_path = root / f"{name}.png"
+                Image.new("RGB", (8, 8), color).save(source_path)
+                sources[name] = source_path
+
+            session_store.begin_round("branch-world", "set-root", "根", 1, 0, {})
+            root_result = session_store.persist_result(
+                "branch-world", "set-root", 0, sources["root"],
+                {"width": 8, "height": 8, "format": "png"},
+            )
+            session_store.complete_round("branch-world", "set-root")
+            session_store.begin_round(
+                "branch-world", "set-a", "A", 1, 0, {}, parent_set_id="set-root"
+            )
+            branch_a_result = session_store.persist_result(
+                "branch-world", "set-a", 0, sources["branch-a"],
+                {"width": 8, "height": 8, "format": "png"},
+            )
+            session_store.complete_round("branch-world", "set-a")
+            session_store.begin_round(
+                "branch-world", "set-b", "B", 1, 0, {}, parent_set_id="set-root"
+            )
+            branch_b_result = session_store.persist_result(
+                "branch-world", "set-b", 0, sources["branch-b"],
+                {"width": 8, "height": 8, "format": "png"},
+            )
+            session_store.complete_round("branch-world", "set-b")
+            session_store.update_asset_descriptions(
+                "branch-world",
+                {
+                    root_result["assetId"]: "红色根场景",
+                    branch_a_result["assetId"]: "绿色 A 分支场景",
+                    branch_b_result["assetId"]: "蓝色 B 分支场景",
+                },
+            )
+            branch_b_asset_path = next(
+                asset["path"]
+                for asset in session_store.continuation_context(
+                    "branch-world", "set-b"
+                )["assets"]
+                if asset["assetId"] == branch_b_result["assetId"]
+            )
+            service = SimpleNamespace(
+                generate=__import__("unittest.mock").mock.Mock(
+                    return_value={
+                        "ok": True,
+                        "path": str(sources["result"]),
+                        "uri": sources["result"].as_uri(),
+                        "width": 8,
+                        "height": 8,
+                        "format": "png",
+                        "actualSize": "8x8",
+                    }
+                )
+            )
+            controller = app.AppController.__new__(app.AppController)
+            controller.active_image_sets = set()
+            controller.image_generator = service
+            controller.store = SimpleNamespace(
+                get_key_record=lambda key_id: {
+                    "id": key_id,
+                    "base_url": "https://example.test/v1",
+                },
+                get_secret=lambda _key_id: "secret",
+            )
+            planner_inputs = []
+
+            def stream_response(*args, **_kwargs):
+                planner_inputs.append(__import__("copy").deepcopy(args[4]))
+                return json.dumps(
+                    {
+                        "operation": "generate",
+                        "selected_asset_ids": [branch_a_result["assetId"]],
+                        "descriptions": [],
+                        "rationale": "仅延续 A 分支。",
+                    },
+                    ensure_ascii=False,
+                )
+
+            controller.client = SimpleNamespace(stream_response=stream_response)
+            with patch("app.app_data_dir", return_value=root / "data"), patch(
+                "app.generated_pictures_dir", return_value=pictures_root
+            ):
+                result = controller.generate_image(
+                    "key-1",
+                    "继续 A 分支",
+                    [],
+                    {
+                        "requestId": "set-a-child",
+                        "sessionId": "branch-world",
+                        "parentSetId": "set-a",
+                        "continuation": True,
+                        "reasoningMode": "instant",
+                    },
+                )
+
+            planner_payload = json.dumps(planner_inputs, ensure_ascii=False)
+            generated_request = service.generate.call_args.args[2]
+            generated_paths = {str(path) for path in generated_request.image_paths}
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["roundNumber"], 3)
+        self.assertIn(branch_a_result["assetId"], planner_payload)
+        self.assertNotIn(branch_b_result["assetId"], planner_payload)
+        self.assertNotIn(branch_b_asset_path, planner_payload)
+        self.assertEqual(len(generated_paths), 1)
+        self.assertNotIn(branch_b_asset_path, generated_paths)
+        self.assertNotIn(str(sources["branch-b"]), generated_paths)
+
     def test_continuation_describes_more_than_sixteen_old_assets_in_batches_before_planning(self):
         controller = app.AppController.__new__(app.AppController)
         old_assets = [
@@ -2202,7 +2445,7 @@ class ControllerTests(unittest.TestCase):
             update_asset_descriptions=lambda _session_id, descriptions: saved_descriptions.update(
                 descriptions
             ),
-            continuation_context=lambda _session_id, _parent_set_id: {
+            continuation_context=lambda _session_id, _parent_set_id, _additional_asset_ids=None: {
                 **context,
                 "assets": [
                     {
@@ -2451,6 +2694,9 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["reasoningUsage"]["totalTokens"], 225)
         self.assertEqual(result["reasoningUsage"]["callCount"], 1)
         self.assertAlmostEqual(result["reasoningUsage"]["costUsd"], 0.0036)
+        self.assertEqual(result["reasoningUsage"]["costedCallCount"], 1)
+        self.assertEqual(result["reasoningUsage"]["costSource"], "response")
+        self.assertTrue(result["reasoningUsage"]["hasCost"])
         completed_turn = next(event for event in events if event["type"] == "react_turn_completed")
         self.assertEqual(completed_turn["usage"]["totalTokens"], 225)
         completed = next(event for event in events if event["type"] == "react_completed")
@@ -2461,14 +2707,8 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(result["prompt"], "Fast final prompt")
 
-    def test_image_agent_uses_actual_account_cost_delta_when_response_omits_cost(self):
+    def test_image_agent_does_not_attribute_account_cost_delta_to_response(self):
         controller = app.AppController.__new__(app.AppController)
-        usage_payloads = iter(
-            [
-                {"usage": {"total": {"cost": 10.0}}},
-                {"usage": {"total": {"cost": 10.0065}}},
-            ]
-        )
 
         def stream_response(*_args, **kwargs):
             text = "已完成分析。\n<<<FINAL_PROMPT>>>Final prompt"
@@ -2480,7 +2720,7 @@ class ControllerTests(unittest.TestCase):
 
         controller.client = SimpleNamespace(
             stream_response=stream_response,
-            get_json=lambda *_args, **_kwargs: next(usage_payloads),
+            get_json=Mock(return_value={"usage": {"total": {"cost": 999.0}}}),
         )
 
         result = controller._run_image_prompt_agent(
@@ -2495,8 +2735,12 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(result["reasoningUsage"]["totalTokens"], 250)
         self.assertEqual(result["reasoningUsage"]["callCount"], 1)
+        self.assertEqual(result["reasoningUsage"]["costedCallCount"], 1)
+        self.assertEqual(result["reasoningUsage"]["estimatedCallCount"], 1)
+        self.assertEqual(result["reasoningUsage"]["costSource"], "estimate")
         self.assertTrue(result["reasoningUsage"]["hasCost"])
-        self.assertAlmostEqual(result["reasoningUsage"]["costUsd"], 0.0065)
+        self.assertAlmostEqual(result["reasoningUsage"]["costUsd"], 0.0001)
+        controller.client.get_json.assert_not_called()
 
     def test_extra_agent_uses_terra_xhigh_with_max_depth_logic(self):
         controller = app.AppController.__new__(app.AppController)

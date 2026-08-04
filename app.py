@@ -50,7 +50,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.23"
+APP_VERSION = "1.0.24"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -1599,7 +1599,51 @@ def safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def response_usage_metrics(payload: Any) -> dict[str, Any]:
+GPT_5_6_PRICING = {
+    "gpt-5.6-luna": ((0.20, 0.02, 1.20), (0.40, 0.04, 1.80)),
+    "gpt-5.6-terra": ((2.00, 0.20, 12.00), (4.00, 0.40, 18.00)),
+    "gpt-5.6-sol": ((5.00, 0.50, 30.00), (10.00, 1.00, 45.00)),
+}
+GPT_5_6_LONG_CONTEXT_TOKENS = 272_000
+GPT_IMAGE_2_PRICING = {
+    "textInput": 5.00,
+    "imageInput": 8.00,
+    "imageOutput": 30.00,
+}
+GPT_IMAGE_2_OUTPUT_COSTS = {
+    "low": {"square": 0.006, "portrait": 0.005, "landscape": 0.005},
+    "medium": {"square": 0.053, "portrait": 0.041, "landscape": 0.041},
+    "high": {"square": 0.211, "portrait": 0.165, "landscape": 0.165},
+}
+
+
+def _usage_cost_value(value: Any) -> float | None:
+    if isinstance(value, dict):
+        for name in ("total", "cost", "amount", "value", "usd"):
+            if name in value:
+                parsed = _usage_cost_value(value[name])
+                if parsed is not None:
+                    return parsed
+        return None
+    try:
+        parsed = float(str(value).strip().lstrip("$"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) and parsed >= 0 else None
+
+
+def _usage_token_value(usage: dict[str, Any], *names: str) -> int:
+    for name in names:
+        if name not in usage:
+            continue
+        try:
+            return max(0, int(usage[name]))
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def response_usage_metrics(payload: Any, model: str = "") -> dict[str, Any]:
     source = payload if isinstance(payload, dict) else {}
     usage = source.get("usage")
     if not isinstance(usage, dict):
@@ -1608,35 +1652,14 @@ def response_usage_metrics(payload: Any) -> dict[str, Any]:
     if not isinstance(usage, dict):
         usage = {}
 
-    def token_value(*names: str) -> int:
-        for name in names:
-            if name not in usage:
-                continue
-            try:
-                return max(0, int(usage[name]))
-            except (TypeError, ValueError):
-                continue
-        return 0
-
-    def cost_value(value: Any) -> float | None:
-        if isinstance(value, dict):
-            for name in ("total", "cost", "amount", "value", "usd"):
-                if name in value:
-                    parsed = cost_value(value[name])
-                    if parsed is not None:
-                        return parsed
-            return None
-        try:
-            parsed = float(str(value).strip().lstrip("$"))
-        except (TypeError, ValueError):
-            return None
-        return parsed if math.isfinite(parsed) and parsed >= 0 else None
-
-    input_tokens = token_value("input_tokens", "inputTokens", "prompt_tokens", "promptTokens")
-    output_tokens = token_value(
+    input_tokens = _usage_token_value(
+        usage, "input_tokens", "inputTokens", "prompt_tokens", "promptTokens"
+    )
+    output_tokens = _usage_token_value(
+        usage,
         "output_tokens", "outputTokens", "completion_tokens", "completionTokens"
     )
-    total_tokens = token_value("total_tokens", "totalTokens")
+    total_tokens = _usage_token_value(usage, "total_tokens", "totalTokens")
     if not total_tokens and (input_tokens or output_tokens):
         total_tokens = input_tokens + output_tokens
     has_token_usage = any(
@@ -1652,37 +1675,120 @@ def response_usage_metrics(payload: Any) -> dict[str, Any]:
         for name in ("cost", "total_cost", "totalCost", "cost_usd", "costUsd"):
             if name not in container:
                 continue
-            cost = cost_value(container[name])
+            cost = _usage_cost_value(container[name])
             if cost is not None:
                 break
         if cost is not None:
             break
+    cost_source = "response" if cost is not None else ""
+    estimated_call_count = 0
+    pricing = GPT_5_6_PRICING.get(str(model or "").lower())
+    if cost is None and pricing is not None and has_token_usage:
+        details = usage.get("input_tokens_details") or usage.get("inputTokensDetails") or {}
+        cached_tokens = _usage_token_value(
+            details if isinstance(details, dict) else {}, "cached_tokens", "cachedTokens"
+        )
+        uncached_tokens = max(0, input_tokens - cached_tokens)
+        input_rate, cached_rate, output_rate = pricing[
+            1 if input_tokens >= GPT_5_6_LONG_CONTEXT_TOKENS else 0
+        ]
+        cost = (
+            uncached_tokens * input_rate
+            + cached_tokens * cached_rate
+            + output_tokens * output_rate
+        ) / 1_000_000
+        cost_source = "estimate"
+        estimated_call_count = 1
     return {
         "inputTokens": input_tokens,
         "outputTokens": output_tokens,
         "totalTokens": total_tokens,
         "callCount": 1,
         "costUsd": cost or 0.0,
+        "costedCallCount": 1 if cost is not None else 0,
+        "estimatedCallCount": estimated_call_count,
+        "costSource": cost_source,
         "hasTokenUsage": has_token_usage,
         "hasCost": cost is not None,
     }
 
 
-def total_usage_cost(payload: Any) -> float | None:
-    source = payload if isinstance(payload, dict) else {}
-    usage = source.get("usage")
-    total = usage.get("total") if isinstance(usage, dict) else None
-    value = total.get("cost") if isinstance(total, dict) else None
-    try:
-        cost = float(value)
-    except (TypeError, ValueError):
-        return None
-    return cost if math.isfinite(cost) and cost >= 0 else None
+def image_usage_metrics(
+    usage_value: Any,
+    model: str,
+    quality: str,
+    size: str,
+    partial_images: int = 0,
+) -> dict[str, Any]:
+    usage = usage_value if isinstance(usage_value, dict) else {}
+    actual = response_usage_metrics({"usage": usage})
+    if actual["hasCost"]:
+        return actual
+    input_tokens = _usage_token_value(usage, "input_tokens", "inputTokens")
+    output_tokens = _usage_token_value(usage, "output_tokens", "outputTokens")
+    has_reported_output_tokens = output_tokens > 0
+    details = usage.get("input_tokens_details") or usage.get("inputTokensDetails") or {}
+    if not isinstance(details, dict):
+        details = {}
+    text_tokens = _usage_token_value(details, "text_tokens", "textTokens")
+    image_tokens = _usage_token_value(details, "image_tokens", "imageTokens")
+    if not text_tokens and not image_tokens:
+        text_tokens = input_tokens
+    elif input_tokens > text_tokens + image_tokens:
+        text_tokens += input_tokens - text_tokens - image_tokens
+
+    clean_model = str(model or "").lower()
+    clean_quality = str(quality or "auto").lower()
+    size_match = __import__("re").fullmatch(r"(\d+)x(\d+)", str(size or ""))
+    if clean_model == "gpt-image-2" and not output_tokens and clean_quality in GPT_IMAGE_2_OUTPUT_COSTS:
+        width, height = (
+            (int(value) for value in size_match.groups())
+            if size_match
+            else (1024, 1024)
+        )
+        orientation = "square" if width == height else "landscape" if width > height else "portrait"
+        output_cost = GPT_IMAGE_2_OUTPUT_COSTS[clean_quality][orientation]
+        output_tokens = round(output_cost / GPT_IMAGE_2_PRICING["imageOutput"] * 1_000_000)
+    if not has_reported_output_tokens:
+        output_tokens += max(0, int(partial_images)) * 100
+    has_estimate = clean_model == "gpt-image-2" and bool(
+        text_tokens or image_tokens or output_tokens
+    )
+    cost = (
+        text_tokens * GPT_IMAGE_2_PRICING["textInput"]
+        + image_tokens * GPT_IMAGE_2_PRICING["imageInput"]
+        + output_tokens * GPT_IMAGE_2_PRICING["imageOutput"]
+    ) / 1_000_000 if has_estimate else 0.0
+    return {
+        "inputTokens": input_tokens or text_tokens + image_tokens,
+        "outputTokens": output_tokens,
+        "totalTokens": (input_tokens or text_tokens + image_tokens) + output_tokens,
+        "callCount": 1,
+        "costUsd": cost,
+        "costedCallCount": 1 if has_estimate else 0,
+        "estimatedCallCount": 1 if has_estimate else 0,
+        "costSource": "estimate" if has_estimate else "",
+        "hasTokenUsage": bool(usage) or bool(output_tokens),
+        "hasCost": has_estimate,
+    }
 
 
 def merge_reasoning_usage(current: Any, update: Any) -> dict[str, Any]:
     left = current if isinstance(current, dict) else {}
     right = update if isinstance(update, dict) else {}
+    call_count = max(0, int(left.get("callCount") or 0)) + max(
+        0, int(right.get("callCount") or 0)
+    )
+    costed_call_count = max(0, int(left.get("costedCallCount") or 0)) + max(
+        0, int(right.get("costedCallCount") or 0)
+    )
+    estimated_call_count = max(0, int(left.get("estimatedCallCount") or 0)) + max(
+        0, int(right.get("estimatedCallCount") or 0)
+    )
+    has_complete_cost = call_count > 0 and costed_call_count == call_count
+    response_cost = max(0.0, safe_float(left.get("costUsd"))) + max(
+        0.0, safe_float(right.get("costUsd"))
+    )
     return {
         "inputTokens": max(0, int(left.get("inputTokens") or 0))
         + max(0, int(right.get("inputTokens") or 0)),
@@ -1690,12 +1796,18 @@ def merge_reasoning_usage(current: Any, update: Any) -> dict[str, Any]:
         + max(0, int(right.get("outputTokens") or 0)),
         "totalTokens": max(0, int(left.get("totalTokens") or 0))
         + max(0, int(right.get("totalTokens") or 0)),
-        "callCount": max(0, int(left.get("callCount") or 0))
-        + max(0, int(right.get("callCount") or 0)),
-        "costUsd": max(0.0, safe_float(left.get("costUsd")))
-        + max(0.0, safe_float(right.get("costUsd"))),
+        "callCount": call_count,
+        "costUsd": response_cost if has_complete_cost else 0.0,
+        "costedCallCount": costed_call_count,
+        "estimatedCallCount": estimated_call_count,
+        "costSource": (
+            "estimate" if has_complete_cost and estimated_call_count == call_count
+            else "mixed" if has_complete_cost and estimated_call_count
+            else "response" if has_complete_cost
+            else ""
+        ),
         "hasTokenUsage": bool(left.get("hasTokenUsage") or right.get("hasTokenUsage")),
-        "hasCost": bool(left.get("hasCost") or right.get("hasCost")),
+        "hasCost": has_complete_cost,
     }
 
 
@@ -4659,6 +4771,7 @@ class AppController:
         parent_set_id: str,
         context: dict[str, Any],
         visible_asset_ids: list[str],
+        additional_asset_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         undescribed_assets = [
             asset
@@ -4676,7 +4789,11 @@ class AppController:
             session_store.update_asset_descriptions(session_id, descriptions)
         if not undescribed_assets:
             return context
-        return session_store.continuation_context(session_id, parent_set_id)
+        return session_store.continuation_context(
+            session_id,
+            parent_set_id,
+            additional_asset_ids,
+        )
 
     def _run_image_prompt_agent(
         self,
@@ -4691,15 +4808,6 @@ class AppController:
         visible_assets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         reasoning_started_at = time.perf_counter()
-        billing_started_at: float | None = None
-        get_json = getattr(self.client, "get_json", None)
-        if callable(get_json):
-            try:
-                billing_started_at = total_usage_cost(
-                    get_json(record["base_url"], secret, "/usage?days=30", timeout=8)
-                )
-            except (RuntimeError, OSError, ValueError):
-                pass
         config = IMAGE_REASONING_MODES[reasoning_mode]
         model = str(config["model"])
         reasoning_effort = str(config["effort"])
@@ -4855,7 +4963,7 @@ class AppController:
                 allow_empty_text=bool(tools),
             )
             response = completed_payloads[-1] if completed_payloads else {}
-            turn_usage = response_usage_metrics(response)
+            turn_usage = response_usage_metrics(response, model)
             reasoning_usage = merge_reasoning_usage(reasoning_usage, turn_usage)
             response_output = [
                 item for item in response.get("output") or [] if isinstance(item, dict)
@@ -5175,25 +5283,6 @@ class AppController:
             1,
             round((time.perf_counter() - reasoning_started_at) * 1000),
         )
-        if not reasoning_usage.get("hasCost") and billing_started_at is not None and callable(get_json):
-            for attempt in range(2):
-                try:
-                    billing_completed_at = total_usage_cost(
-                        get_json(record["base_url"], secret, "/usage?days=30", timeout=8)
-                    )
-                except (RuntimeError, OSError, ValueError):
-                    break
-                cost_delta = (
-                    billing_completed_at - billing_started_at
-                    if billing_completed_at is not None
-                    else 0.0
-                )
-                if cost_delta > 1e-12:
-                    reasoning_usage["costUsd"] = cost_delta
-                    reasoning_usage["hasCost"] = True
-                    break
-                if attempt == 0:
-                    time.sleep(0.35)
         emit(
             "react_completed",
             mode=reasoning_mode,
@@ -5357,20 +5446,22 @@ class AppController:
                     "input",
                 )
                 pending_asset_source = bool(request.image_paths)
+                registered_input_asset_ids = [
+                    str(asset.get("assetId") or "")
+                    for asset in registered_inputs
+                    if asset.get("assetId")
+                ]
                 if registered_inputs:
                     continuation_context = session_store.continuation_context(
                         session_id,
                         parent_set_id,
+                        registered_input_asset_ids,
                     )
                 visible_asset_ids = list(
                     dict.fromkeys(
                         [
                             *list(continuation_context.get("parentOutputAssetIds") or []),
-                            *[
-                                str(asset.get("assetId") or "")
-                                for asset in registered_inputs
-                                if asset.get("assetId")
-                            ],
+                            *registered_input_asset_ids,
                         ]
                     )
                 )
@@ -5384,6 +5475,7 @@ class AppController:
                     parent_set_id,
                     continuation_context,
                     visible_asset_ids,
+                    registered_input_asset_ids,
                 )
                 asset_by_id = {
                     str(asset.get("assetId") or ""): asset
@@ -5544,7 +5636,7 @@ class AppController:
                 clean_options,
                 parent_set_id=parent_set_id,
             )
-        except OSError as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             discard_pending_assets()
             release_session_activity()
             shutil.rmtree(web_reference_dir, ignore_errors=True)

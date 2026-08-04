@@ -13,6 +13,203 @@ import image_editor
 
 
 class ImageEditorTests(unittest.TestCase):
+    def test_session_branches_use_parent_depth_and_isolate_sibling_assets(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = image_editor.ImageSessionStore(root / "pictures")
+            source_paths = {}
+            for name, color in (
+                ("root-input", "white"),
+                ("root-output", "red"),
+                ("branch-a-output", "green"),
+                ("branch-b-output", "blue"),
+            ):
+                path = root / f"{name}.png"
+                Image.new("RGB", (16, 16), color).save(path)
+                source_paths[name] = path
+
+            root_round = store.begin_round(
+                "branch-session",
+                "set-root",
+                "创建基础场景",
+                1,
+                1,
+                {"inputReferencePaths": [str(source_paths["root-input"])]},
+            )
+            root_inputs = store.register_assets(
+                "branch-session",
+                [source_paths["root-input"]],
+                "set-root",
+                "input",
+            )
+            root_result = store.persist_result(
+                "branch-session",
+                "set-root",
+                0,
+                source_paths["root-output"],
+                {"width": 16, "height": 16, "format": "png"},
+            )
+            store.complete_round("branch-session", "set-root")
+
+            branch_a = store.begin_round(
+                "branch-session", "set-a", "分支 A", 1, 1, {}, parent_set_id="set-root"
+            )
+            branch_a_result = store.persist_result(
+                "branch-session",
+                "set-a",
+                0,
+                source_paths["branch-a-output"],
+                {"width": 16, "height": 16, "format": "png"},
+            )
+            store.complete_round("branch-session", "set-a")
+
+            branch_b = store.begin_round(
+                "branch-session", "set-b", "分支 B", 1, 1, {}, parent_set_id="set-root"
+            )
+            branch_b_result = store.persist_result(
+                "branch-session",
+                "set-b",
+                0,
+                source_paths["branch-b-output"],
+                {"width": 16, "height": 16, "format": "png"},
+            )
+            store.complete_round("branch-session", "set-b")
+            branch_a_child = store.begin_round(
+                "branch-session", "set-a-child", "继续分支 A", 1, 1, {}, parent_set_id="set-a"
+            )
+
+            self.assertEqual(
+                [
+                    root_round["roundNumber"],
+                    branch_a["roundNumber"],
+                    branch_b["roundNumber"],
+                    branch_a_child["roundNumber"],
+                ],
+                [1, 2, 2, 3],
+            )
+
+            context_a = store.continuation_context("branch-session", "set-a")
+            context_b = store.continuation_context("branch-session", "set-b")
+            assets_a = {asset["assetId"] for asset in context_a["assets"]}
+            assets_b = {asset["assetId"] for asset in context_b["assets"]}
+            shared_assets = {root_inputs[0]["assetId"], root_result["assetId"]}
+
+            self.assertEqual([item["setId"] for item in context_a["history"]], ["set-root", "set-a"])
+            self.assertEqual([item["setId"] for item in context_b["history"]], ["set-root", "set-b"])
+            self.assertTrue(shared_assets <= assets_a)
+            self.assertTrue(shared_assets <= assets_b)
+            self.assertIn(branch_a_result["assetId"], assets_a)
+            self.assertNotIn(branch_a_result["assetId"], assets_b)
+            self.assertIn(branch_b_result["assetId"], assets_b)
+            self.assertNotIn(branch_b_result["assetId"], assets_a)
+
+            branch_b_asset_path = Path(
+                next(
+                    asset["path"]
+                    for asset in context_b["assets"]
+                    if asset["assetId"] == branch_b_result["assetId"]
+                )
+            )
+            self.assertTrue(store.delete_set("branch-session", "set-b"))
+            context_a_after_delete = store.continuation_context("branch-session", "set-a")
+            self.assertEqual(
+                {asset["assetId"] for asset in context_a_after_delete["assets"]},
+                {*shared_assets, branch_a_result["assetId"]},
+            )
+            self.assertFalse(branch_b_asset_path.exists())
+
+    def test_legacy_sequential_round_numbers_are_restored_as_tree_depths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = image_editor.ImageSessionStore(Path(temp) / "pictures")
+            store.begin_round("legacy-tree", "set-root", "根", 1, 0, {})
+            store.begin_round(
+                "legacy-tree", "set-a", "A", 1, 0, {}, parent_set_id="set-root"
+            )
+            store.begin_round(
+                "legacy-tree", "set-b", "B", 1, 0, {}, parent_set_id="set-root"
+            )
+            store.begin_round(
+                "legacy-tree", "set-a-child", "A3", 1, 0, {}, parent_set_id="set-a"
+            )
+            manifest_path = store.root / "legacy-tree" / "manifest.json"
+            legacy_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            legacy_manifest["schemaVersion"] = 2
+            for sequential_number, round_data in enumerate(legacy_manifest["rounds"], 1):
+                round_data["roundNumber"] = sequential_number
+            manifest_path.write_text(json.dumps(legacy_manifest), encoding="utf-8")
+
+            restored = {
+                item["setId"]: item["roundNumber"]
+                for item in store.list_sets()
+            }
+            branch_history = store.continuation_context(
+                "legacy-tree", "set-a-child"
+            )["history"]
+            branch_b_child = store.begin_round(
+                "legacy-tree",
+                "set-b-child",
+                "B3",
+                1,
+                0,
+                {},
+                parent_set_id="set-b",
+            )
+            migrated_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(
+                restored,
+                {"set-root": 1, "set-a": 2, "set-b": 2, "set-a-child": 3},
+            )
+            self.assertEqual(
+                [item["roundNumber"] for item in branch_history],
+                [1, 2, 3],
+            )
+            self.assertEqual(branch_b_child["roundNumber"], 3)
+            self.assertEqual(migrated_manifest["schemaVersion"], 3)
+            self.assertEqual(
+                [item["roundNumber"] for item in migrated_manifest["rounds"]],
+                [1, 2, 2, 3, 3],
+            )
+
+    def test_begin_round_rejects_missing_parent_without_changing_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = image_editor.ImageSessionStore(Path(temp) / "pictures")
+            store.begin_round("parent-check", "set-root", "根", 1, 0, {})
+            manifest_path = store.root / "parent-check" / "manifest.json"
+            manifest_before = manifest_path.read_bytes()
+
+            with self.assertRaisesRegex(ValueError, "来源轮次不存在"):
+                store.begin_round(
+                    "parent-check",
+                    "set-child",
+                    "无效续作",
+                    1,
+                    0,
+                    {},
+                    parent_set_id="set-missing",
+                )
+
+            self.assertEqual(manifest_path.read_bytes(), manifest_before)
+            self.assertFalse(any(store._session_dir("parent-check").glob("*set-child*")))
+
+    def test_reasoning_usage_rejects_legacy_unattributed_cost(self):
+        legacy_usage = image_editor.ImageSessionStore._reasoning_usage(
+            {
+                "inputTokens": 6000,
+                "outputTokens": 1828,
+                "totalTokens": 7828,
+                "callCount": 2,
+                "costUsd": 1.487722,
+                "hasTokenUsage": True,
+                "hasCost": True,
+            }
+        )
+
+        self.assertEqual(legacy_usage["costUsd"], 0)
+        self.assertEqual(legacy_usage["costedCallCount"], 0)
+        self.assertEqual(legacy_usage["costSource"], "")
+        self.assertFalse(legacy_usage["hasCost"])
+
     def test_output_presets_use_fixed_png_api_requests(self):
         self.assertEqual(
             image_editor.OUTPUT_PRESETS,
@@ -124,6 +321,10 @@ class ImageEditorTests(unittest.TestCase):
                         "quality": "auto",
                         "size": "1254x1254",
                         "background": "opaque",
+                        "usage": {
+                            "input_tokens": 120,
+                            "output_tokens": 240,
+                        },
                     }
                 ),
                 edit_images=Mock(),
@@ -157,6 +358,10 @@ class ImageEditorTests(unittest.TestCase):
             self.assertEqual(result["referenceCount"], 0)
             self.assertEqual(result["operation"], "generate")
             self.assertEqual(result["transportOperation"], "generate")
+            self.assertEqual(
+                result["usage"],
+                {"input_tokens": 120, "output_tokens": 240},
+            )
             self.assertEqual(request.fields["output_format"], "png")
             self.assertNotIn("output_compression", request.fields)
             self.assertEqual(request.fields["background"], "opaque")
@@ -506,6 +711,8 @@ class ImageEditorTests(unittest.TestCase):
                         "totalTokens": 1200,
                         "callCount": 2,
                         "costUsd": 0.01875,
+                        "costedCallCount": 2,
+                        "costSource": "response",
                         "hasTokenUsage": True,
                         "hasCost": True,
                     },
@@ -555,6 +762,7 @@ class ImageEditorTests(unittest.TestCase):
             self.assertEqual(manifest["rounds"][1]["options"]["reasoningUsage"]["totalTokens"], 1200)
             self.assertEqual(manifest["rounds"][1]["options"]["reasoningUsage"]["callCount"], 2)
             self.assertAlmostEqual(manifest["rounds"][1]["options"]["reasoningUsage"]["costUsd"], 0.01875)
+            self.assertEqual(manifest["rounds"][1]["options"]["reasoningUsage"]["costSource"], "response")
             self.assertEqual(manifest["rounds"][1]["webReferences"][0]["title"], "Neon reference")
             self.assertTrue(manifest["rounds"][1]["webReferences"][0]["assetId"].startswith("asset-"))
             self.assertIn(
@@ -581,6 +789,7 @@ class ImageEditorTests(unittest.TestCase):
             self.assertEqual(restored[0]["reasoningUsage"]["totalTokens"], 1200)
             self.assertEqual(restored[0]["reasoningUsage"]["callCount"], 2)
             self.assertAlmostEqual(restored[0]["reasoningUsage"]["costUsd"], 0.01875)
+            self.assertEqual(restored[0]["reasoningUsage"]["costSource"], "response")
             self.assertEqual(restored[0]["webReferenceCount"], 1)
             self.assertEqual(restored[0]["webReferences"][0]["provider"], "Bing Images")
             self.assertTrue(restored[0]["webReferences"][0]["assetId"].startswith("asset-"))

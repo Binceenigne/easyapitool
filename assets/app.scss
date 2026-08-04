@@ -139,14 +139,13 @@ img, svg { display: block; }
     z-index: 1;
     display: flex;
     flex-direction: column;
-    width: calc(100% / var(--page-zoom));
-    height: calc((100% - var(--fixed-titlebar-height)) / var(--page-zoom));
+    width: calc(100% * var(--page-zoom));
+    height: calc((100% - (var(--fixed-titlebar-height) / var(--page-zoom))) * var(--page-zoom));
     min-width: 0;
     min-height: 0;
     overflow: hidden;
     background: var(--bg);
-    transform: scale(var(--page-zoom));
-    transform-origin: top left;
+    zoom: var(--page-zoom);
 }
 
 /* Native frame */
@@ -1125,28 +1124,41 @@ html.dark #keySwitcherMenu {
 .image-aspect-options span { font-size: 9px; }
 .image-count-control { margin-top: 0; }
 .image-reasoning-control {
+    --reasoning-hover-shadow: 0 0 12px rgba(148, 163, 184, 0.3), 0 0 22px rgba(148, 163, 184, 0.16);
     position: relative;
     display: inline-flex;
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
     min-height: 34px;
-    overflow: hidden;
+    overflow: visible;
     border-radius: 8px;
     isolation: isolate;
     background: #27303d;
     box-shadow: none;
     backface-visibility: hidden;
     contain: style;
-    transition: box-shadow 0.5s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.5s cubic-bezier(0.4, 0, 0.2, 1), transform 180ms ease;
+    transition: transform 180ms ease;
     will-change: box-shadow;
+}
+.image-reasoning-control::after {
+    position: absolute;
+    z-index: 4;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: var(--reasoning-hover-shadow);
+    content: "";
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.7s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .reasoning-bg-layer {
     position: absolute;
     z-index: 0;
-    inset: -1px;
+    inset: 0;
     overflow: hidden;
     border-radius: inherit;
+    clip-path: inset(0 round 8px);
     opacity: 0;
     pointer-events: none;
     backface-visibility: hidden;
@@ -1173,7 +1185,7 @@ html.dark #keySwitcherMenu {
     z-index: 2;
     border-radius: 50%;
     pointer-events: none;
-    mix-blend-mode: screen;
+    mix-blend-mode: normal;
     filter: blur(var(--pulse-blur, 10px));
     opacity: 0;
     will-change: transform, opacity;
@@ -1191,10 +1203,13 @@ html.dark #keySwitcherMenu {
     color: #fff;
     font-weight: 700;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-    backface-visibility: hidden;
-    transform: translate3d(0, 0, 0);
-    transition: filter 180ms ease, background-color 180ms ease;
-    will-change: filter, background-color, transform;
+    transition: background-color 180ms ease, text-shadow 180ms ease;
+}
+#generateEditedImageButton > span {
+    position: relative;
+    z-index: 1;
+    text-rendering: geometricPrecision;
+    -webkit-font-smoothing: antialiased;
 }
 #generateEditedImageButton { min-width: 102px; padding: 5px 10px; border-radius: 8px 0 0 8px; }
 #imageReasoningMenuButton { width: 28px; padding: 0; border-left: 1px solid rgba(255, 255, 255, 0.2); border-radius: 0 8px 8px 0; }
@@ -1203,9 +1218,12 @@ html.dark #keySwitcherMenu {
 #imageReasoningMenuButton[aria-expanded="true"] [data-lucide],
 #imageReasoningMenuButton[aria-expanded="true"] svg { transform: rotate(180deg); }
 #generateEditedImageButton:hover:not(:disabled),
-#imageReasoningMenuButton:hover:not(:disabled) { filter: brightness(1.12); }
+#imageReasoningMenuButton:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.13);
+    text-shadow: 0 1px 3px rgba(15, 23, 42, 0.72), 0 0 7px rgba(255, 255, 255, 0.42);
+}
 .image-reasoning-control:has(#generateEditedImageButton:hover:not(:disabled)) {
-    box-shadow: 0 0 0 1px rgba(219, 234, 254, 0.72), 0 0 14px rgba(96, 165, 250, 0.62), 0 0 28px rgba(129, 140, 248, 0.38);
+    &::after { opacity: 1; }
 }
 #generateEditedImageButton:disabled { cursor: wait; opacity: 0.65; }
 #imageReasoningMenuButton:disabled { cursor: wait; opacity: 0.65; }
@@ -1242,7 +1260,7 @@ html.dark #keySwitcherMenu {
 .reasoning-bg-layer[data-layer-mode="high"] { background: #5865f2; }
 .reasoning-bg-layer[data-layer-mode="high"] .reasoning-gradient {
     --reasoning-animation-duration: 28s;
-    background: linear-gradient(135deg, #5865f2 0%, #6478f5 25%, #7185f7 50%, #8170f5 75%, #5865f2 100%);
+    background: linear-gradient(135deg, #5865f2 0%, #6478f5 18%, #b7c4ff 27%, #7185f7 39%, #8170f5 57%, #c9c7ff 67%, #706ff4 78%, #5865f2 100%);
     background-size: 300% 300%;
     animation: highSeamlessFlow var(--reasoning-animation-duration) linear infinite;
 }
@@ -1281,12 +1299,12 @@ html.dark #keySwitcherMenu {
     animation: maxLiquidOrbit var(--reasoning-animation-duration) linear infinite;
 }
 .reasoning-bg-layer[data-layer-mode="max"] .reasoning-effect-b { display: none; }
-.image-reasoning-control[data-mode="instant"] { background: #27303d; box-shadow: none; }
-.image-reasoning-control[data-mode="flash"] { background: #8fd3ff; box-shadow: none; }
-.image-reasoning-control[data-mode="medium"] { background: #4f7df3; box-shadow: none; }
-.image-reasoning-control[data-mode="high"] { background: #5865f2; }
-.image-reasoning-control[data-mode="extra"] { background: #6d5dfc; }
-.image-reasoning-control[data-mode="max"] { background: #536dfe; }
+.image-reasoning-control[data-mode="instant"] { --reasoning-hover-shadow: 0 0 12px rgba(100, 116, 139, 0.34), 0 0 22px rgba(100, 116, 139, 0.18); background: #27303d; box-shadow: none; }
+.image-reasoning-control[data-mode="flash"] { --reasoning-hover-shadow: 0 0 13px rgba(56, 189, 248, 0.36), 0 0 24px rgba(56, 189, 248, 0.2); background: #8fd3ff; box-shadow: none; }
+.image-reasoning-control[data-mode="medium"] { --reasoning-hover-shadow: 0 0 14px rgba(37, 99, 235, 0.38), 0 0 26px rgba(79, 125, 243, 0.21); background: #4f7df3; box-shadow: none; }
+.image-reasoning-control[data-mode="high"] { --reasoning-hover-shadow: 0 0 16px rgba(88, 101, 242, 0.44), 0 0 28px rgba(129, 112, 245, 0.26); background: #5865f2; }
+.image-reasoning-control[data-mode="extra"] { --reasoning-hover-shadow: 0 0 16px rgba(124, 58, 237, 0.38), 0 0 28px rgba(167, 139, 250, 0.2); background: #6d5dfc; }
+.image-reasoning-control[data-mode="max"] { --reasoning-hover-shadow: 0 0 19px rgba(99, 102, 241, 0.44), 0 0 32px rgba(168, 85, 247, 0.28); background: #536dfe; }
 .image-reasoning-control[data-mode="high"] {
     animation: highGlowPulse 4s ease-in-out infinite alternate;
 }
@@ -2463,7 +2481,19 @@ html.dark #avgMinVal { color: #818cf8; }
 .settings-toggle { display: flex !important; align-items: center; gap: 7px; color: var(--text-soft) !important; font-size: var(--fs-9, 9px) !important; text-transform: none !important; }
 .settings-toggle input { width: 14px !important; height: 14px !important; padding: 0 !important; accent-color: var(--brand); }
 .settings-update > button { width: 100%; }
-.update-progress-track { display: flex !important; align-items: center; width: 100%; height: 17px; overflow: hidden; border: 1px solid var(--border-soft); background: var(--surface-soft); }
+.update-progress-track { position: relative; display: flex !important; align-items: center; width: 100%; height: 17px; overflow: hidden; border: 1px solid var(--border-soft); background: var(--surface-soft); }
+.update-progress-track:has(> .update-progress.is-active)::after {
+    position: absolute;
+    z-index: 2;
+    top: 1px;
+    bottom: 1px;
+    left: 0;
+    width: 22%;
+    background: linear-gradient(90deg, transparent, rgba(var(--progress-rgb), 0.32), transparent);
+    content: "";
+    pointer-events: none;
+    animation: updateProgressScan 1.1s ease-in-out infinite;
+}
 .update-progress-track:has(> .matrix-progress) {
     border-color: transparent;
     background-color: transparent;
@@ -2473,6 +2503,10 @@ html.dark #avgMinVal { color: #818cf8; }
     transition: opacity 0.2s ease !important;
 }
 .update-progress.is-active { opacity: 1; }
+@keyframes updateProgressScan {
+    from { transform: translateX(-110%); }
+    to { transform: translateX(510%); }
+}
 #settingsFooter { display: flex; flex: 0 0 auto; align-items: center; padding: 12px; gap: 5px; border-top: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: var(--fs-8, 8px); }
 
 /* Model modal */

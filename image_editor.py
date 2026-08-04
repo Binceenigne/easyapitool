@@ -69,7 +69,7 @@ def image_preview_data_url(
 
 
 class ImageSessionStore:
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
     _manifest_lock = threading.RLock()
 
     def __init__(self, pictures_root: Path) -> None:
@@ -104,14 +104,27 @@ class ImageSessionStore:
             cost_usd = 0.0
         if not math.isfinite(cost_usd) or cost_usd < 0:
             cost_usd = 0.0
+        call_count = nonnegative_int("callCount")
+        costed_call_count = nonnegative_int("costedCallCount")
+        estimated_call_count = min(costed_call_count, nonnegative_int("estimatedCallCount"))
+        cost_source = str(source.get("costSource") or "")
+        has_cost = (
+            bool(source.get("hasCost"))
+            and cost_source in {"response", "estimate", "mixed"}
+            and call_count > 0
+            and costed_call_count == call_count
+        )
         return {
             "inputTokens": nonnegative_int("inputTokens"),
             "outputTokens": nonnegative_int("outputTokens"),
             "totalTokens": nonnegative_int("totalTokens"),
-            "callCount": nonnegative_int("callCount"),
-            "costUsd": cost_usd,
+            "callCount": call_count,
+            "costUsd": cost_usd if has_cost else 0.0,
+            "costedCallCount": costed_call_count,
+            "estimatedCallCount": estimated_call_count,
+            "costSource": cost_source if has_cost else "",
             "hasTokenUsage": bool(source.get("hasTokenUsage")),
-            "hasCost": bool(source.get("hasCost")),
+            "hasCost": has_cost,
         }
 
     def _session_dir(self, session_id: str) -> Path:
@@ -119,6 +132,48 @@ class ImageSessionStore:
 
     def _manifest_path(self, session_id: str) -> Path:
         return self._session_dir(session_id) / "manifest.json"
+
+    @staticmethod
+    def _normalize_round_depths(manifest: dict[str, Any]) -> None:
+        rounds = manifest.get("rounds")
+        if not isinstance(rounds, list):
+            raise RuntimeError("图片会话清单格式无效")
+        round_by_id = {
+            str(round_data.get("setId") or ""): round_data
+            for round_data in rounds
+            if isinstance(round_data, dict) and round_data.get("setId")
+        }
+        depths: dict[str, int] = {}
+        for round_data in rounds:
+            set_id = str(round_data.get("setId") or "")
+            if not set_id or set_id in depths:
+                continue
+            trail: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            pending = round_data
+            while pending is not None:
+                pending_id = str(pending.get("setId") or "")
+                if pending_id in depths:
+                    depth = depths[pending_id]
+                    break
+                if not pending_id or pending_id in seen:
+                    raise RuntimeError("图片会话清单分支关系无效")
+                seen.add(pending_id)
+                trail.append(pending)
+                parent_set_id = str(pending.get("parentSetId") or "")
+                if not parent_set_id:
+                    pending = None
+                    continue
+                pending = round_by_id.get(parent_set_id)
+                if pending is None:
+                    raise RuntimeError("图片会话清单续作来源不存在")
+            else:
+                depth = 0
+            for trail_round in reversed(trail):
+                depth += 1
+                trail_id = str(trail_round.get("setId") or "")
+                depths[trail_id] = depth
+                trail_round["roundNumber"] = depth
 
     def _read_manifest(self, session_id: str) -> dict[str, Any] | None:
         manifest_path = self._manifest_path(session_id)
@@ -132,6 +187,7 @@ class ImageSessionStore:
             raise RuntimeError("图片会话清单已损坏") from exc
         if not isinstance(payload, dict):
             raise RuntimeError("图片会话清单格式无效")
+        self._normalize_round_depths(payload)
         return payload
 
     def _write_manifest(self, manifest: dict[str, Any]) -> None:
@@ -191,16 +247,28 @@ class ImageSessionStore:
             )
             if existing is not None:
                 return dict(existing)
-            round_number = max(
-                (int(round_data.get("roundNumber") or 0) for round_data in manifest["rounds"]),
-                default=0,
-            ) + 1
+            clean_parent_set_id = self._safe_id(parent_set_id, "") if parent_set_id else ""
+            parent_round = next(
+                (
+                    round_data
+                    for round_data in manifest["rounds"]
+                    if round_data.get("setId") == clean_parent_set_id
+                ),
+                None,
+            )
+            if clean_parent_set_id and parent_round is None:
+                raise ValueError("续作来源轮次不存在")
+            round_number = (
+                int(parent_round.get("roundNumber") or 0) + 1
+                if parent_round is not None
+                else 1
+            )
             directory_name = f"round-{round_number:03d}-{clean_set_id[:12]}"
             round_data = {
                 "roundNumber": round_number,
                 "setId": clean_set_id,
                 "requestId": clean_set_id,
-                "parentSetId": self._safe_id(parent_set_id, "") if parent_set_id else "",
+                "parentSetId": clean_parent_set_id,
                 "prompt": str(prompt),
                 "requestedCount": int(requested_count),
                 "referenceCount": int(reference_count),
@@ -374,7 +442,12 @@ class ImageSessionStore:
             if changed:
                 self._write_manifest(manifest)
 
-    def continuation_context(self, session_id: str, set_id: str) -> dict[str, Any]:
+    def continuation_context(
+        self,
+        session_id: str,
+        set_id: str,
+        additional_asset_ids: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
         clean_session_id = self._safe_id(session_id)
         clean_set_id = self._safe_id(set_id)
         with self._manifest_lock:
@@ -390,9 +463,20 @@ class ImageSessionStore:
             round_data = round_by_id.get(clean_set_id)
             if round_data is None:
                 return {}
+            branch_rounds: list[dict[str, Any]] = []
+            pending = round_data
+            seen: set[str] = set()
+            while pending is not None:
+                pending_id = str(pending.get("setId") or "")
+                if not pending_id or pending_id in seen:
+                    raise RuntimeError("图片会话清单分支关系无效")
+                seen.add(pending_id)
+                branch_rounds.append(pending)
+                pending = round_by_id.get(str(pending.get("parentSetId") or ""))
+            branch_rounds.reverse()
             session_dir = self._session_dir(clean_session_id)
             dirty = False
-            for existing_round in rounds:
+            for existing_round in branch_rounds:
                 options = existing_round.get("options")
                 if not isinstance(options, dict):
                     options = {}
@@ -443,22 +527,17 @@ class ImageSessionStore:
                 self._write_manifest(manifest)
 
             history: list[dict[str, Any]] = []
-            pending = round_data
-            seen: set[str] = set()
-            while pending is not None:
-                pending_id = str(pending.get("setId") or "")
-                if not pending_id or pending_id in seen:
-                    break
-                seen.add(pending_id)
-                options = pending.get("options")
+            for branch_round in branch_rounds:
+                branch_id = str(branch_round.get("setId") or "")
+                options = branch_round.get("options")
                 if not isinstance(options, dict):
                     options = {}
                 history.append(
                     {
-                        "setId": pending_id,
-                        "roundNumber": int(pending.get("roundNumber") or 0),
+                        "setId": branch_id,
+                        "roundNumber": int(branch_round.get("roundNumber") or 0),
                         "userPrompt": str(
-                            options.get("originalPrompt") or pending.get("prompt") or ""
+                            options.get("originalPrompt") or branch_round.get("prompt") or ""
                         ),
                         "reasoningSummary": str(
                             options.get("reasoningSummary")
@@ -467,31 +546,73 @@ class ImageSessionStore:
                         ),
                         "operation": str(
                             options.get("operation")
-                            or ("edit" if pending.get("referenceCount") else "generate")
+                            or ("edit" if branch_round.get("referenceCount") else "generate")
                         ),
                         "inputAssetIds": list(options.get("inputAssetIds") or []),
                         "outputAssetIds": [
                             str(item.get("assetId") or "")
-                            for item in pending.get("items") or []
+                            for item in branch_round.get("items") or []
                             if item.get("status") == "completed" and item.get("assetId")
                         ],
                     }
                 )
-                pending = round_by_id.get(str(pending.get("parentSetId") or ""))
-            history.reverse()
+
+            accessible_asset_ids = {
+                str(asset_id)
+                for asset_id in additional_asset_ids or ()
+                if asset_id
+            }
+            for branch_round in branch_rounds:
+                branch_options = branch_round.get("options")
+                if not isinstance(branch_options, dict):
+                    branch_options = {}
+                for field in ("inputAssetIds", "selectedAssetIds"):
+                    accessible_asset_ids.update(
+                        str(asset_id)
+                        for asset_id in branch_options.get(field) or []
+                        if asset_id
+                    )
+                accessible_asset_ids.update(
+                    str(item.get("assetId") or "")
+                    for item in branch_round.get("items") or []
+                    if item.get("assetId")
+                )
+                accessible_asset_ids.update(
+                    str(reference.get("assetId") or "")
+                    for reference in branch_round.get("webReferences") or []
+                    if reference.get("assetId")
+                )
+            accessible_asset_ids.discard("")
+            branch_set_ids = {
+                str(branch_round.get("setId") or "")
+                for branch_round in branch_rounds
+            }
+            for asset in manifest.get("assets") or []:
+                if branch_set_ids.intersection(
+                    str(source_set_id)
+                    for source_set_id in asset.get("sourceSetIds") or []
+                ):
+                    accessible_asset_ids.add(str(asset.get("assetId") or ""))
 
             assets: list[dict[str, Any]] = []
             for asset in manifest.get("assets") or []:
+                asset_id = str(asset.get("assetId") or "")
+                if asset_id not in accessible_asset_ids:
+                    continue
                 original_path = session_dir / str(asset.get("original") or "")
                 preview_path = session_dir / str(asset.get("preview") or "")
                 if not original_path.is_file():
                     continue
                 assets.append(
                     {
-                        "assetId": str(asset.get("assetId") or ""),
+                        "assetId": asset_id,
                         "description": str(asset.get("description") or ""),
                         "describedAt": str(asset.get("describedAt") or ""),
-                        "sourceSetIds": list(asset.get("sourceSetIds") or []),
+                        "sourceSetIds": [
+                            str(source_set_id)
+                            for source_set_id in asset.get("sourceSetIds") or []
+                            if str(source_set_id) in branch_set_ids
+                        ],
                         "sourceRoles": list(asset.get("sourceRoles") or []),
                         "path": str(original_path),
                         "previewPath": str(preview_path) if preview_path.is_file() else "",
@@ -1412,6 +1533,7 @@ class ImageGenerationService:
             "stream": request.stream,
             "partialImagesRequested": request.partial_images if request.stream else 0,
             "partialImagesReceived": int(response.get("partial_images_received") or 0),
+            "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
             "referenceCount": len(request.image_paths),
             "operation": request.operation,
             "transportOperation": "edit" if request.image_paths else "generate",

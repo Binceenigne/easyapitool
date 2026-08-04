@@ -1970,7 +1970,7 @@
                 item.className = 'image-edit-file';
                 item.title = `${file.name} · ${formatImageFileSize(file.sizeBytes)}`;
                 const preview = document.createElement('img');
-                preview.src = file.previewUri || file.uri;
+                preview.src = browserImageSource(file.previewUri, file.uri);
                 preview.alt = `参考图 ${index + 1}`;
                 preview.draggable = false;
                 const name = document.createElement('span');
@@ -2697,14 +2697,25 @@
 
         function normalizeReasoningUsage(value) {
             const source = value && typeof value === 'object' ? value : {};
+            const callCount = Math.max(0, Number(source.callCount) || 0);
+            const costedCallCount = Math.max(0, Number(source.costedCallCount) || 0);
+            const estimatedCallCount = Math.min(costedCallCount, Math.max(0, Number(source.estimatedCallCount) || 0));
+            const costSource = String(source.costSource || '');
+            const hasCost = source.hasCost === true
+                && ['response', 'estimate', 'mixed'].includes(costSource)
+                && callCount > 0
+                && costedCallCount === callCount;
             return {
                 inputTokens: Math.max(0, Number(source.inputTokens) || 0),
                 outputTokens: Math.max(0, Number(source.outputTokens) || 0),
                 totalTokens: Math.max(0, Number(source.totalTokens) || 0),
-                callCount: Math.max(0, Number(source.callCount) || 0),
-                costUsd: Math.max(0, Number(source.costUsd) || 0),
+                callCount,
+                costUsd: hasCost ? Math.max(0, Number(source.costUsd) || 0) : 0,
+                costedCallCount,
+                estimatedCallCount,
+                costSource: hasCost ? costSource : '',
                 hasTokenUsage: source.hasTokenUsage === true,
-                hasCost: source.hasCost === true
+                hasCost
             };
         }
 
@@ -2712,7 +2723,9 @@
             const usage = normalizeReasoningUsage(set.reasoningUsage);
             const tokens = usage.hasTokenUsage ? Math.round(usage.totalTokens).toLocaleString() : '--';
             const calls = usage.callCount ? Math.round(usage.callCount) : '--';
-            const cost = usage.hasCost ? `$${usage.costUsd.toFixed(6)}` : '$--';
+            const cost = usage.hasCost
+                ? `${usage.costSource === 'response' ? '' : '≈'}$${usage.costUsd.toFixed(6)}`
+                : '$--';
             return `${tokens} token · ${calls} 次调用 · ${cost}`;
         }
 
@@ -2720,7 +2733,12 @@
             const usage = normalizeReasoningUsage(set.reasoningUsage);
             const input = usage.hasTokenUsage ? Math.round(usage.inputTokens).toLocaleString() : '--';
             const output = usage.hasTokenUsage ? Math.round(usage.outputTokens).toLocaleString() : '--';
-            return `输入 ${input} token · 输出 ${output} token · Responses 调用 ${usage.callCount || '--'} 次 · 实际费用 ${usage.hasCost ? `$${usage.costUsd.toFixed(6)}` : '$--'}`;
+            const cost = usage.hasCost
+                ? usage.costSource === 'response'
+                    ? `$${usage.costUsd.toFixed(6)}（接口返回的逐请求费用）`
+                    : `≈$${usage.costUsd.toFixed(6)}（OpenAI 官方价目估算，${usage.estimatedCallCount} 次调用采用估算）`
+                : '$--（缺少可计价用量，未使用账户总额差值）';
+            return `输入 ${input} token · 输出 ${output} token · API 调用 ${usage.callCount || '--'} 次 · 本轮费用 ${cost}`;
         }
 
         function reasoningElapsed(set, turn = activeReasoningTurn(set)) {
@@ -2826,6 +2844,12 @@
             set.previewsLoaded = true;
             set.loadingPreviews = false;
             renderImageGenerationSets();
+        }
+
+        function browserImageSource(...candidates) {
+            return candidates
+                .map(candidate => String(candidate || '').trim())
+                .find(candidate => candidate && !candidate.toLowerCase().startsWith('file:')) || '';
         }
 
         async function toggleWebReferences(setId) {
@@ -3235,7 +3259,8 @@
                         }
                     }
                     recoveredUri ||= failedFrame.fallbackUri;
-                    if (recoveredUri && recoveredUri !== failedFrame.uri) image.src = recoveredUri;
+                    const safeRecoveredUri = browserImageSource(recoveredUri);
+                    if (safeRecoveredUri && safeRecoveredUri !== failedFrame.uri) image.src = safeRecoveredUri;
                 });
                 imageRevealElementCache.set(frame, image);
             }
@@ -3245,7 +3270,8 @@
                 itemIndex: Number(item.itemIndex) || 0
             });
             image.alt = frame.kind === 'final' ? '生成图片' : '过程预览';
-            if (!image.getAttribute('src')) image.src = frame.uri;
+            const frameSource = browserImageSource(frame.uri, frame.fallbackUri);
+            if (!image.getAttribute('src') && frameSource) image.src = frameSource;
             if (Number.isFinite(Number(frame.frozenBlur))) {
                 freezeImageRevealFrame(frame, image, frame.frozenBlur, frame.frozenOpacity);
             } else if (frame.startedAt) {
@@ -3420,7 +3446,7 @@
                         referenceButton.className = 'image-reasoning-web-reference';
                         referenceButton.title = reference.title || `网络参考图 ${referenceIndex + 1}`;
                         const image = document.createElement('img');
-                        image.src = reference.previewUri || reference.uri || '';
+                        image.src = browserImageSource(reference.previewUri, reference.uri);
                         image.alt = reference.title || `网络参考图 ${referenceIndex + 1}`;
                         const label = document.createElement('span');
                         label.textContent = reference.title || reference.provider || `参考图 ${referenceIndex + 1}`;
@@ -3575,8 +3601,8 @@
                     const historyAspectRatio = set.history ? imageGenerationItemAspectRatio(item) : '';
                     if (historyAspectRatio) card.style.aspectRatio = historyAspectRatio;
                     const displayUri = completed
-                        ? item.result?.previewUri || item.previewUri || item.result?.uri || item.uri
-                        : item.previewUri || item.uri;
+                        ? browserImageSource(item.result?.previewUri, item.previewUri, item.result?.uri, item.uri)
+                        : browserImageSource(item.previewUri, item.uri);
                     const revealFrames = Array.isArray(item.revealFrames) ? item.revealFrames : [];
                     if (revealFrames.length) {
                         revealFrames.forEach((frame, frameIndex) => {
@@ -3602,7 +3628,8 @@
                                         console.warn('缩略图原图加载失败:', error);
                                     }
                                 }
-                                if (image.src !== fallbackUri) image.src = fallbackUri;
+                                const safeFallbackUri = browserImageSource(fallbackUri);
+                                if (safeFallbackUri && image.src !== safeFallbackUri) image.src = safeFallbackUri;
                             }, { once: true });
                         }
                         card.append(image);
@@ -3833,7 +3860,7 @@
                     item.uri = event.result?.uri || item.uri;
                     item.previewUri = event.result?.previewUri || item.previewUri;
                     item.path = event.result?.path || item.path;
-                    appendImageRevealFrame(item, item.uri || item.previewUri, 'final', {
+                        appendImageRevealFrame(item, item.previewUri || item.uri, 'final', {
                         fallbackUri: item.previewUri,
                         path: item.path
                     });
@@ -3845,6 +3872,7 @@
             }
             if (event.type === 'set_completed') {
                 set.status = 'completed';
+                set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage);
                 if (Array.isArray(event.items)) {
                     event.items.forEach((result, itemIndex) => {
                         if (!set.items[itemIndex]) return;
@@ -3858,7 +3886,7 @@
                             if (!wasCompleted) {
                                 appendImageRevealFrame(
                                     set.items[itemIndex],
-                                    set.items[itemIndex].uri || set.items[itemIndex].previewUri,
+                                    set.items[itemIndex].previewUri || set.items[itemIndex].uri,
                                     'final',
                                     {
                                         fallbackUri: set.items[itemIndex].previewUri,
@@ -3898,6 +3926,7 @@
             set.roundNumber = Number(result.roundNumber) || set.roundNumber;
             set.originalPrompt = result.originalPrompt || set.originalPrompt || result.prompt || '';
             set.reasoningDurationMs = Math.max(0, Number(result.reasoningDurationMs) || set.reasoningDurationMs);
+            set.reasoningUsage = normalizeReasoningUsage(result.reasoningUsage || set.reasoningUsage);
             set.operation = result.operation || set.operation;
             set.continuation = result.continuation === true || set.continuation;
             set.continuationRationale = result.continuationRationale || set.continuationRationale;
@@ -4134,7 +4163,7 @@
             if (!result) return;
             window.imageEditState.viewerResult = result;
             const image = document.getElementById('imageResultModalImage');
-            image.src = result.uri || result.previewUri || '';
+            image.src = browserImageSource(result.previewUri, result.uri);
             document.getElementById('imageResultModalMeta').textContent = result.status === 'partial'
                 ? '过程预览 · 生成仍在继续'
                 : result.status === 'reference'
@@ -5201,8 +5230,9 @@
             const progress = document.getElementById('updateProgress');
             renderProgressBar(progress, busy || ready ? Number(current.percent) || 0 : 0, 100, {
                 update: true,
-                active: busy || ready
+                active: busy
             });
+            progress.classList.toggle('is-complete', ready);
             progress.classList.remove('bar-good', 'bar-warn', 'bar-danger', 'bar-critical');
             progress.classList.add(current.status === 'failed' ? 'bar-critical' : 'bar-good');
             if (current.showPrompt) openUpdateModal();
@@ -5228,10 +5258,16 @@
         }
 
         async function downloadUpdate() {
+            window.applyUpdateState({
+                status: 'downloading', percent: 0, message: '正在连接下载源', showPrompt: true
+            });
             try {
                 const result = await window.pywebview.api.download_update();
                 if (!result?.ok) throw new Error(result?.error || '无法下载更新');
             } catch (error) {
+                window.applyUpdateState({
+                    status: 'failed', percent: 0, message: `更新失败: ${error.message || String(error)}`
+                });
                 showToast(error.message || String(error), 'error');
             }
         }
