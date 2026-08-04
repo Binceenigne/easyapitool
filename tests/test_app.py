@@ -349,6 +349,185 @@ class StoreTests(unittest.TestCase):
 
 class UtilityTests(unittest.TestCase):
 
+    def test_continuation_plan_separates_operation_from_reference_selection(self):
+        generated = app.parse_image_continuation_plan(
+            {
+                "operation": "generate",
+                "selected_reference_indexes": [1, 0, 1],
+                "rationale": "Keep the character identity while creating a new battle scene.",
+            },
+            2,
+        )
+        without_references = app.parse_image_continuation_plan(
+            {
+                "operation": "generate",
+                "selected_reference_indexes": [],
+                "rationale": "No prior visual is relevant.",
+            },
+            2,
+        )
+
+        self.assertEqual(generated["operation"], "generate")
+        self.assertEqual(generated["selectedReferenceIndexes"], [1, 0])
+        self.assertEqual(without_references["selectedReferenceIndexes"], [])
+        with self.assertRaisesRegex(ValueError, "至少需要一张参考图"):
+            app.parse_image_continuation_plan(
+                {"operation": "edit", "selected_reference_indexes": []},
+                2,
+            )
+        with self.assertRaisesRegex(ValueError, "超出范围"):
+            app.parse_image_continuation_plan(
+                {"operation": "generate", "selected_reference_indexes": [2]},
+                2,
+            )
+
+    def test_continuation_plan_selects_stable_assets_and_describes_only_visible_images(self):
+        plan = app.parse_image_continuation_plan(
+            {
+                "operation": "generate",
+                "selected_asset_ids": ["asset-older", "asset-parent", "asset-older"],
+                "descriptions": [
+                    {
+                        "asset_id": "asset-parent",
+                        "description": "紫色披风角色站在城门前，保持银色肩甲。",
+                    }
+                ],
+                "rationale": "沿用角色设定，延续到新的场景。",
+            },
+            ["asset-parent", "asset-older"],
+            ["asset-parent"],
+        )
+
+        self.assertEqual(plan["operation"], "generate")
+        self.assertEqual(plan["selectedAssetIds"], ["asset-older", "asset-parent"])
+        self.assertEqual(
+            plan["descriptions"],
+            {"asset-parent": "紫色披风角色站在城门前，保持银色肩甲。"},
+        )
+        with self.assertRaisesRegex(ValueError, "实际读取"):
+            app.parse_image_continuation_plan(
+                {
+                    "operation": "generate",
+                    "selected_asset_ids": [],
+                    "descriptions": [
+                        {"asset_id": "asset-older", "description": "并未读取的旧图"}
+                    ],
+                },
+                ["asset-parent", "asset-older"],
+                ["asset-parent"],
+            )
+
+    def test_continuation_prompt_contains_full_auditable_history_without_local_paths(self):
+        prompt = app.image_continuation_prompt(
+            "让角色走进雨夜车站",
+            {
+                "history": [
+                    {
+                        "setId": "set-1",
+                        "roundNumber": 1,
+                        "userPrompt": "设计主角",
+                        "reasoningSummary": "采用紫色披风和银色肩甲。",
+                        "operation": "generate",
+                        "inputAssetIds": [],
+                        "outputAssetIds": ["asset-character"],
+                    }
+                ],
+                "assets": [
+                    {
+                        "assetId": "asset-character",
+                        "description": "紫色披风角色正面设定图",
+                        "sourceSetIds": ["set-1"],
+                        "sourceRoles": ["output"],
+                        "path": "D:/private/session/character.png",
+                    }
+                ],
+            },
+            [
+                {
+                    "assetId": "asset-character",
+                    "description": "紫色披风角色正面设定图",
+                    "path": "D:/private/session/character.png",
+                }
+            ],
+        )
+        payload = json.loads(prompt)
+
+        self.assertEqual(payload["currentRequest"], "让角色走进雨夜车站")
+        self.assertEqual(payload["history"][0]["userPrompt"], "设计主角")
+        self.assertEqual(payload["history"][0]["reasoningSummary"], "采用紫色披风和银色肩甲。")
+        self.assertEqual(payload["visibleAssetIds"], ["asset-character"])
+        self.assertEqual(payload["descriptionRequiredAssetIds"], [])
+        self.assertNotIn("D:/private", prompt)
+
+    def test_asset_description_parser_requires_every_read_image_once(self):
+        parsed = app.parse_image_asset_descriptions(
+            {
+                "descriptions": [
+                    {"asset_id": "asset-a", "description": "紫色披风角色"},
+                    {"asset_id": "asset-b", "description": "银色城堡大厅"},
+                ]
+            },
+            ["asset-a", "asset-b"],
+        )
+
+        self.assertEqual(parsed["asset-a"], "紫色披风角色")
+        with self.assertRaisesRegex(ValueError, "覆盖本批全部图片"):
+            app.parse_image_asset_descriptions(
+                {"descriptions": [{"asset_id": "asset-a", "description": "角色"}]},
+                ["asset-a", "asset-b"],
+            )
+
+    def test_instant_continuation_planner_is_hidden_minimal_and_does_not_rewrite_prompt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent_image = Path(temp) / "parent.png"
+            Image.new("RGB", (8, 8), "purple").save(parent_image)
+            asset = app.image_asset_record(parent_image)
+            context = {
+                "history": [{"setId": "set-1", "userPrompt": "设计角色"}],
+                "assets": [asset],
+            }
+            controller = app.AppController.__new__(app.AppController)
+            captured = {}
+
+            def stream_response(*args, **kwargs):
+                captured["model"] = args[2]
+                captured["instructions"] = args[3]
+                captured["input"] = args[4]
+                captured["kwargs"] = kwargs
+                return json.dumps(
+                    {
+                        "operation": "generate",
+                        "selected_asset_ids": [asset["assetId"]],
+                        "descriptions": [
+                            {
+                                "asset_id": asset["assetId"],
+                                "description": "紫色披风角色正面图",
+                            }
+                        ],
+                        "rationale": "延续角色并创建新场景。",
+                    },
+                    ensure_ascii=False,
+                )
+
+            controller.client = SimpleNamespace(stream_response=stream_response)
+            plan = controller._run_instant_image_continuation_planner(
+                {"base_url": "https://example.test/v1"},
+                "secret",
+                "让她走进雨夜车站",
+                context,
+                [asset],
+            )
+
+        self.assertEqual(captured["model"], app.IMAGE_CONTINUATION_PLANNER_MODEL)
+        self.assertEqual(captured["kwargs"]["reasoning_effort"], "minimal")
+        self.assertNotIn("tools", captured["kwargs"])
+        self.assertNotIn("on_delta", captured["kwargs"])
+        self.assertIn("不润色", captured["instructions"])
+        self.assertIn("让她走进雨夜车站", captured["input"][0]["content"][0]["text"])
+        self.assertEqual(captured["input"][0]["content"][1]["type"], "input_image")
+        self.assertEqual(plan["selectedAssetIds"], [asset["assetId"]])
+        self.assertEqual(plan["descriptions"][asset["assetId"]], "紫色披风角色正面图")
+
     def test_window_frame_options_use_native_frame_only_for_original_mode(self):
         self.assertEqual(
             app.window_frame_options("default"),
@@ -1002,9 +1181,16 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("card.addEventListener('contextmenu'", page)
         self.assertIn("canvas.addEventListener('contextmenu'", page)
         self.assertIn("document.getElementById('editImageSelection').hidden = active", page)
-        self.assertIn("? '请输入要调整的内容'", page)
-        self.assertIn("const files = session ? session.references : window.imageEditState.files", page)
-        self.assertIn("references: generatedResultReferences(results)", page)
+        self.assertIn("? '描述本轮要修改或继续创作的内容'", page)
+        self.assertIn("const files = session ? [] : window.imageEditState.files", page)
+        self.assertIn("continuation: Boolean(session)", page)
+        self.assertNotIn("function generatedResultReference", page)
+        self.assertNotIn("session.references", page)
+        self.assertNotIn("references: generatedResultReferences(results)", page)
+        self.assertNotIn("上一轮参考图不可用", page)
+        self.assertIn("operation: metadata.operation || 'generate'", page)
+        self.assertIn("event.type === 'react_continuation_planned'", page)
+        self.assertIn("set.selectedAssetIds = [...event.selectedAssetIds]", page)
         self.assertIn("#appMain > #imagePromptModal", scss_source)
         self.assertIn("document.addEventListener('paste'", page)
         self.assertIn("import_reference_image", page)
@@ -1156,8 +1342,9 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("restartApp", page)
         self.assertIn("#widget-root.titlebar-minimal #windowTitleBar", stylesheet)
         self.assertIn("height: 24px", stylesheet)
+        self.assertIn("--fixed-titlebar-height: 24px", stylesheet)
         self.assertIn("#widget-root.titlebar-minimal #settingsPanel", stylesheet)
-        self.assertIn("top: 24px", stylesheet)
+        self.assertIn("top: 0", stylesheet)
         self.assertIn("#widget-root.titlebar-original #windowTitleBar", stylesheet)
         self.assertIn("#widget-root.titlebar-original .native-resize-handle", stylesheet)
         self.assertIn("inset: 0", stylesheet)
@@ -1248,7 +1435,18 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="win5hCountdown"', page)
         self.assertIn("['5h', '1d', '7d'].forEach", page)
         self.assertIn("重置时间未知", page)
-        self.assertIn("top: 33px", stylesheet)
+        self.assertIn("--fixed-titlebar-height: 33px", stylesheet)
+        self.assertIn('id="pageZoomLayer"', page)
+        self.assertIn("--page-zoom: 1", stylesheet)
+        self.assertIn("width: calc(100% / var(--page-zoom))", stylesheet)
+        self.assertIn("transform: scale(var(--page-zoom))", stylesheet)
+        self.assertIn("const PAGE_ZOOM_STORAGE_KEY = 'api-tools-page-zoom'", page)
+        self.assertIn("const DEFAULT_PAGE_ZOOM = 1", page)
+        self.assertIn("const PAGE_ZOOM_STORAGE_VERSION = '2'", page)
+        self.assertIn("handlePageZoomShortcut(event)", page)
+        self.assertIn("localStorage.setItem(PAGE_ZOOM_STORAGE_KEY", page)
+        self.assertIn("restorePageZoom()", page)
+        self.assertIn("#windowTitleBar {\n  z-index: auto", stylesheet)
         self.assertIn("document.getElementById('settingsHeader')?.addEventListener('mousedown', beginWindowDrag)", page)
         self.assertNotIn("fa-solid", page)
         self.assertNotIn("fa-regular", page)
@@ -1270,11 +1468,14 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="imageReasoningControl"', page)
         self.assertIn('id="imageReasoningMenu"', page)
         self.assertIn('id="reasoningSliderTrack"', page)
+        self.assertIn('#imageReasoningMenuButton[aria-expanded=true] [data-lucide]', stylesheet)
+        self.assertIn('#imageReasoningMenuButton[aria-expanded=true] svg', stylesheet)
+        self.assertIn('transform: rotate(180deg)', stylesheet)
         self.assertIn('role="slider"', page)
-        self.assertIn('aria-valuemax="4"', page)
-        for mode in ("instant", "flash", "medium", "high", "max"):
+        self.assertIn('aria-valuemax="5"', page)
+        for mode in ("instant", "flash", "medium", "high", "extra", "max"):
             self.assertIn(f'data-layer-mode="{mode}"', page)
-        self.assertIn("const IMAGE_REASONING_MODES = ['instant', 'flash', 'medium', 'high', 'max']", page)
+        self.assertIn("const IMAGE_REASONING_MODES = ['instant', 'flash', 'medium', 'high', 'extra', 'max']", page)
         self.assertIn("function setImageReasoningModeFromPointer(event)", page)
         self.assertIn("function initializeImageReasoningSlider()", page)
         self.assertIn("sliderTrack.addEventListener('keydown'", page)
@@ -1314,11 +1515,16 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("function toggleReasoningContent(setId)", page)
         self.assertIn("function updateReasoningTimers()", page)
         self.assertIn("totalReasoningElapsed(set)", page)
+        self.assertIn("reasoningDurationMs", page)
+        self.assertIn("persistedDuration && set.reasoningStatus !== 'running'", page)
         self.assertIn("reasoningToolLabel(activeTool)", page)
         self.assertIn("flash: 'Flash'", page)
         self.assertIn("flash: 'Flash 模式：快速高效思考优化结果质量'", page)
+        self.assertIn("extra: 'Extra'", page)
+        self.assertIn("extra: 'Extra 模式：延长思维链和思考时间预算获得更强推理能力'", page)
         self.assertIn("max: 'Max 模式：使用最强大的模型深度推导反思'", page)
         self.assertIn(".image-reasoning-control[data-mode=flash]", stylesheet)
+        self.assertIn(".image-reasoning-control[data-mode=extra]", stylesheet)
         self.assertIn(".image-reasoning-control[data-mode=max]", stylesheet)
         self.assertRegex(
             stylesheet,
@@ -1340,7 +1546,18 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('.reasoning-bg-layer[data-layer-mode=flash] .reasoning-gradient', stylesheet)
         self.assertIn('.reasoning-bg-layer[data-layer-mode=medium] .reasoning-gradient', stylesheet)
         self.assertIn('.reasoning-bg-layer[data-layer-mode=high] .reasoning-gradient', stylesheet)
+        self.assertIn('.reasoning-bg-layer[data-layer-mode=extra] .reasoning-gradient', stylesheet)
         self.assertIn('.reasoning-bg-layer[data-layer-mode=max] .reasoning-gradient', stylesheet)
+        self.assertRegex(
+            stylesheet,
+            r"\.image-reasoning-control\[data-mode=high\]\s*\{[^}]*background: #668ee8;",
+        )
+        self.assertRegex(
+            stylesheet,
+            r"\.image-reasoning-control\[data-mode=extra\]\s*\{[^}]*background: #6d5dfc;",
+        )
+        self.assertIn("Math.round(fraction * (IMAGE_REASONING_MODES.length - 1))", page)
+        self.assertIn("Math.min(IMAGE_REASONING_MODES.length - 1, nextIndex)", page)
         self.assertIn("@keyframes flashFluidGradient", stylesheet)
         self.assertIn("@keyframes mediumSeamlessFlow", stylesheet)
         self.assertIn("@keyframes highGlowPulse", stylesheet)
@@ -1388,7 +1605,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("sliderFill.style.transform = `translate3d(0, 0, 0) scaleX(${percentage / 100})`", page)
         self.assertIn("transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1)", stylesheet)
         self.assertIn("transform-origin: left center", stylesheet)
-        self.assertIn("controlRect.right - menuWidth", page)
+        self.assertIn("controlRight - menuWidth", page)
         self.assertIn(".image-reasoning-menu.is-open", stylesheet)
         self.assertIn(".image-reasoning-panel", stylesheet)
         self.assertIn(".image-reasoning-toggle", stylesheet)
@@ -1408,6 +1625,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn(".image-reasoning-panel.mode-flash", stylesheet)
         self.assertIn(".image-reasoning-panel.mode-medium", stylesheet)
         self.assertIn(".image-reasoning-panel.mode-high", stylesheet)
+        self.assertIn(".image-reasoning-panel.mode-extra", stylesheet)
         self.assertIn(".image-reasoning-panel.mode-max", stylesheet)
         self.assertNotIn("@keyframes reasoningPanelBreath", stylesheet)
         self.assertIn("@keyframes reasoningBorderSweep", stylesheet)
@@ -1420,7 +1638,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn(".image-reasoning-web-reference", stylesheet)
         self.assertIn("@keyframes reasoningCursor", stylesheet)
         self.assertIn("const IMAGE_STREAM_PARTIAL_DURATION = 10000", page)
-        self.assertIn("const IMAGE_STREAM_CLARITY_STEP = 0.25", page)
+        self.assertIn("const IMAGE_STREAM_PARTIAL_BLUR_STEP = 0.22", page)
         self.assertIn("const IMAGE_STREAM_FINAL_DURATION = 3000", page)
         self.assertIn("const IMAGE_STREAM_INITIAL_FADE_DURATION = 5000", page)
         self.assertIn("const IMAGE_STREAM_CROSSFADE_DURATION = 10000", page)
@@ -1434,19 +1652,15 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("function currentImageRevealBlur(item, beforeFrameIndex", page)
         self.assertIn("function freezeImageRevealFrame(frame, image, blur, opacity", page)
         self.assertIn("frame.frozenOpacity", page)
-        self.assertIn("fromBlur: previousTarget", page)
-        self.assertNotIn("frame.fromBlur = Math.max(Number(frame.toBlur) || 0, visibleBlur)", page)
-        self.assertIn("1 - index * IMAGE_STREAM_CLARITY_STEP", page)
-        self.assertIn("IMAGE_STREAM_CLARITY_STEP / (2 ** (index - 3))", page)
-        self.assertNotIn("IMAGE_STREAM_PARTIAL_FLOOR_BLUR", page)
+        self.assertIn("frame.fromBlur = Math.max(Number(frame.toBlur) || 0, visibleBlur)", page)
+        self.assertIn("const extraReduction = IMAGE_STREAM_PARTIAL_BLUR_STEP * (1 - 1 / (2 ** extraSteps))", page)
         self.assertIn("if (incomingPartialIndex <= previousPartialIndex)", page)
         self.assertIn("imageStreamDebugLog('partial-ignored'", page)
         self.assertIn("item.revealFrames.push(frame)", page)
         self.assertIn("const imageRevealElementCache = new WeakMap()", page)
         self.assertIn("createImageRevealElement(item, frame, frameIndex)", page)
         self.assertIn("function scheduleFinalImageFrameCleanup(item, frame)", page)
-        self.assertIn("frame.kind === 'final' ? frame.duration : IMAGE_STREAM_CROSSFADE_DURATION", page)
-        self.assertIn("const cleanupDuration = frame.duration", page)
+        self.assertIn("Math.max(frame.duration, IMAGE_STREAM_CROSSFADE_DURATION)", page)
         self.assertIn("item.revealFrames = [frame]", page)
         self.assertIn("function toggleImageGenerationSet(setId)", page)
         self.assertIn("if (!set || set.status === 'running') return", page)
@@ -1458,6 +1672,11 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("if (!expanded)", page)
         self.assertIn("function loadImageGenerationSetPreviews(set)", page)
         self.assertIn("previewPath = item.previewPath || item.result?.previewPath", page)
+        self.assertIn("setImageReasoningMode(normalizeImageReasoningMode(set.reasoningMode), false)", page)
+        self.assertIn("setImageWebSearchEnabled(set.webSearchEnabled === true, false)", page)
+        self.assertIn("previousPrompt: set.originalPrompt || set.prompt || ''", page)
+        self.assertIn("reasoningMode: window.imageEditState.reasoningMode", page)
+        self.assertIn("setImageReasoningMode(normalizeImageReasoningMode(draft.reasoningMode), false)", page)
         self.assertIn("function reasoningTurnsForSet(set)", page)
         self.assertIn("if (!Array.isArray(set.reasoningTurns)) set.reasoningTurns = []", page)
         self.assertIn("reasoningTurns: Array.isArray(set.reasoningTurns) ? set.reasoningTurns : []", page)
@@ -1465,8 +1684,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("if (!reasoningTurnsForSet(set).length) set.reasoningSummary += event.delta || ''", page)
         self.assertIn("reasoningTurnsForSet(set).forEach(turn =>", page)
         self.assertNotIn("pendingSet?.reasoningTurns.find", page)
-        self.assertIn("control.closest('.image-generation-footer')?.getBoundingClientRect()", page)
-        self.assertIn("const anchorTop = footerRect?.top ?? controlRect.top", page)
+        self.assertNotIn("control.closest('.image-generation-footer')?.getBoundingClientRect()", page)
+        self.assertIn("const anchorTop = (controlRect.top - layerRect.top) / scale", page)
         self.assertIn("if (appMain && menu.parentElement !== appMain) appMain.append(menu)", page)
         self.assertIn("function copyImagePrompt(text, label)", page)
         self.assertIn("复制原始提示词", page)
@@ -1481,6 +1700,13 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("--image-reveal-delay", page)
         self.assertIn("--image-reveal-crossfade-delay", page)
         self.assertIn(".image-generation-item img.is-image-reveal", stylesheet)
+        self.assertRegex(
+            stylesheet,
+            r"\.image-generation-item img\s*\{[^}]*object-fit: contain;",
+        )
+        self.assertIn("function imageGenerationItemAspectRatio(item)", page)
+        self.assertIn("set.history ? ' is-history' : ''", page)
+        self.assertIn("card.style.aspectRatio = historyAspectRatio", page)
         self.assertIn("animation-name: imageBlurReveal, imageLayerReveal", stylesheet)
         self.assertIn("will-change: filter, opacity, transform", stylesheet)
         self.assertIn("transform: translate3d(0, 0, 0)", stylesheet)
@@ -1643,7 +1869,20 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(args[2].fields["background"], "auto")
         self.assertEqual(args[2].fields["moderation"], "low")
         self.assertNotIn("imageCount", args[2].fields)
-        self.assertEqual(args[3], root / "data" / "image-generations")
+        self.assertEqual(
+            {call.args[3] for call in service.generate.call_args_list},
+            {
+                root
+                / "Pictures"
+                / app.APP_NAME
+                / "sessions"
+                / result["sessionId"]
+                / "round-001-request-1"
+                / "process-images"
+                / f"item-{item_index:03d}"
+                for item_index in (1, 2)
+            },
+        )
         self.assertTrue(saved_paths_exist)
         self.assertEqual(events[0]["type"], "set_started")
         self.assertEqual(events[-1]["type"], "set_completed")
@@ -1679,6 +1918,169 @@ class ControllerTests(unittest.TestCase):
                 result = controller.generate_image("key-1", "Generate image", [], {})
 
         self.assertTrue(result["ok"])
+
+    def test_instant_continuation_uses_parent_asset_for_semantic_generate_without_frontend_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pictures_root = root / "Pictures"
+            session_store = image_editor.ImageSessionStore(pictures_root)
+            parent_source = root / "parent.png"
+            output_source = root / "output.png"
+            Image.new("RGB", (8, 8), "purple").save(parent_source)
+            Image.new("RGB", (8, 8), "blue").save(output_source)
+            session_store.begin_round(
+                "world-session",
+                "set-1",
+                "设计紫色披风角色",
+                1,
+                0,
+                {"originalPrompt": "设计紫色披风角色", "operation": "generate"},
+            )
+            parent_result = session_store.persist_result(
+                "world-session",
+                "set-1",
+                0,
+                parent_source,
+                {"width": 8, "height": 8, "format": "png"},
+            )
+            session_store.complete_round("world-session", "set-1")
+            service = SimpleNamespace(
+                generate=__import__("unittest.mock").mock.Mock(
+                    return_value={
+                        "ok": True,
+                        "path": str(output_source),
+                        "uri": output_source.as_uri(),
+                        "width": 8,
+                        "height": 8,
+                        "format": "png",
+                        "actualSize": "8x8",
+                    }
+                )
+            )
+            controller = app.AppController.__new__(app.AppController)
+            controller.active_image_sets = set()
+            controller.image_generator = service
+            controller.store = SimpleNamespace(
+                get_key_record=lambda key_id: {
+                    "id": key_id,
+                    "base_url": "https://example.test/v1",
+                },
+                get_secret=lambda _key_id: "secret",
+            )
+
+            def stream_response(*_args, **_kwargs):
+                return json.dumps(
+                    {
+                        "operation": "generate",
+                        "selected_asset_ids": [parent_result["assetId"]],
+                        "descriptions": [
+                            {
+                                "asset_id": parent_result["assetId"],
+                                "description": "紫色披风、银色肩甲的角色正面图",
+                            }
+                        ],
+                        "rationale": "延续角色身份并创作新的车站场景。",
+                    },
+                    ensure_ascii=False,
+                )
+
+            controller.client = SimpleNamespace(stream_response=stream_response)
+            events = []
+            with patch("app.app_data_dir", return_value=root / "data"), patch(
+                "app.generated_pictures_dir", return_value=pictures_root
+            ):
+                result = controller.generate_image(
+                    "key-1",
+                    "让她走进雨夜车站",
+                    [],
+                    {
+                        "requestId": "set-2",
+                        "sessionId": "world-session",
+                        "parentSetId": "set-1",
+                        "continuation": True,
+                        "reasoningMode": "instant",
+                    },
+                    events.append,
+                )
+
+            generated_request = service.generate.call_args.args[2]
+            manifest = json.loads(
+                (pictures_root / "sessions" / "world-session" / "manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["prompt"], "让她走进雨夜车站")
+        self.assertEqual(result["operation"], "generate")
+        self.assertEqual(result["transportOperation"], "edit")
+        self.assertEqual(result["selectedAssetIds"], [parent_result["assetId"]])
+        self.assertEqual(generated_request.operation, "generate")
+        self.assertEqual(len(generated_request.image_paths), 1)
+        self.assertIn("sessions", str(generated_request.image_paths[0]))
+        set_started = next(event for event in events if event["type"] == "set_started")
+        self.assertEqual(set_started["operation"], "generate")
+        self.assertEqual(set_started["selectedAssetIds"], [parent_result["assetId"]])
+        self.assertEqual(manifest["rounds"][1]["options"]["operation"], "generate")
+        self.assertEqual(
+            manifest["rounds"][1]["options"]["selectedAssetIds"],
+            [parent_result["assetId"]],
+        )
+        self.assertEqual(
+            manifest["assets"][0]["description"],
+            "紫色披风、银色肩甲的角色正面图",
+        )
+
+    def test_continuation_describes_more_than_sixteen_old_assets_in_batches_before_planning(self):
+        controller = app.AppController.__new__(app.AppController)
+        old_assets = [
+            {"assetId": f"asset-{index:02d}", "path": f"old-{index:02d}.png", "description": ""}
+            for index in range(17)
+        ]
+        parent_asset = {"assetId": "asset-parent", "path": "parent.png", "description": ""}
+        context = {
+            "history": [{"setId": "set-parent", "outputAssetIds": ["asset-parent"]}],
+            "parentOutputAssetIds": ["asset-parent"],
+            "assets": [*old_assets, parent_asset],
+        }
+        batch_sizes = []
+        saved_descriptions = {}
+        controller._describe_image_asset_batch = __import__("unittest.mock").mock.Mock(
+            side_effect=lambda _record, _secret, assets: (
+                batch_sizes.append(len(assets))
+                or {asset["assetId"]: f"描述 {asset['assetId']}" for asset in assets}
+            )
+        )
+        session_store = SimpleNamespace(
+            update_asset_descriptions=lambda _session_id, descriptions: saved_descriptions.update(
+                descriptions
+            ),
+            continuation_context=lambda _session_id, _parent_set_id: {
+                **context,
+                "assets": [
+                    {
+                        **asset,
+                        "description": saved_descriptions.get(asset["assetId"], asset["description"]),
+                    }
+                    for asset in context["assets"]
+                ],
+            },
+        )
+
+        refreshed = controller._cache_undescribed_image_assets(
+            {"base_url": "https://example.test/v1"},
+            "secret",
+            session_store,
+            "session-world",
+            "set-parent",
+            context,
+            ["asset-parent"],
+        )
+
+        self.assertEqual(batch_sizes, [16, 1])
+        self.assertEqual(len(saved_descriptions), 17)
+        self.assertTrue(all(asset["description"] for asset in refreshed["assets"][:-1]))
+        self.assertEqual(refreshed["assets"][-1]["description"], "")
 
     def test_polish_prompt_uses_terra_and_streams_events(self):
         controller = app.AppController.__new__(app.AppController)
@@ -1725,31 +2127,40 @@ class ControllerTests(unittest.TestCase):
                 for mode, config in app.IMAGE_REASONING_MODES.items()
             },
             {
-                "flash": ("gpt-5.6-luna", "low"),
+                "flash": ("gpt-5.6-luna", "medium"),
                 "medium": ("gpt-5.6-terra", "medium"),
-                "high": ("gpt-5.6-sol", "medium"),
+                "high": ("gpt-5.6-terra", "high"),
+                "extra": ("gpt-5.6-terra", "xhigh"),
                 "max": ("gpt-5.6-sol", "xhigh"),
             },
         )
         self.assertEqual(app.PROMPT_POLISH_MODEL, "gpt-5.6-terra")
         self.assertEqual(app.PROMPT_POLISH_REASONING_EFFORT, "medium")
-        self.assertEqual(app.IMAGE_WEB_SEARCH_MODES, {"flash", "medium", "high", "max"})
+        self.assertEqual(
+            app.IMAGE_WEB_SEARCH_MODES,
+            {"flash", "medium", "high", "extra", "max"},
+        )
         self.assertEqual(
             {
                 mode: (config["max_turns"], config["max_references"])
                 for mode, config in app.IMAGE_REASONING_MODES.items()
             },
             {
-                "flash": (4, 1),
-                "medium": (6, 3),
-                "high": (9, 4),
-                "max": (12, 6),
+                "flash": (3, 3),
+                "medium": (5, 4),
+                "high": (7, 6),
+                "extra": (10, 6),
+                "max": (12, 8),
             },
         )
         flash_depth = app.IMAGE_REASONING_MODES["flash"]["depth"]
         self.assertIn("自己要完成什么", flash_depth)
         self.assertIn("信息缺口", flash_depth)
         self.assertIn("若开启搜索且缺口重要", flash_depth)
+        self.assertEqual(
+            app.IMAGE_REASONING_MODES["extra"]["depth"],
+            app.IMAGE_REASONING_MODES["max"]["depth"],
+        )
 
     def test_generate_image_rejects_removed_low_reasoning_mode(self):
         controller = app.AppController.__new__(app.AppController)
@@ -1877,7 +2288,7 @@ class ControllerTests(unittest.TestCase):
             lambda *_args, **_kwargs: None,
         )
 
-        self.assertEqual(captured["reasoning_effort"], "low")
+        self.assertEqual(captured["reasoning_effort"], "medium")
         self.assertIn("第一步都必须先判断", captured["instructions"])
         self.assertIn("不得因为处于 Flash 模式就跳过", captured["instructions"])
         self.assertIn("若缺口会影响事实", captured["instructions"])
@@ -1886,6 +2297,129 @@ class ControllerTests(unittest.TestCase):
             ["search_web", "search_visual_references", "select_visual_references"],
         )
         self.assertEqual(result["prompt"], "Fast final prompt")
+
+    def test_extra_agent_uses_terra_xhigh_with_max_depth_logic(self):
+        controller = app.AppController.__new__(app.AppController)
+        captured = {}
+
+        def stream_response(*args, **kwargs):
+            captured["model"] = args[2]
+            captured["instructions"] = args[3]
+            captured["reasoning_effort"] = kwargs["reasoning_effort"]
+            text = "已完成充分核对。\n<<<FINAL_PROMPT>>>Extra final prompt"
+            kwargs["on_delta"](text)
+            kwargs["on_completed"]({"output": []})
+            return text
+
+        controller.client = SimpleNamespace(stream_response=stream_response)
+        result = controller._run_image_prompt_agent(
+            {"base_url": "https://example.test/v1"},
+            "secret",
+            "Create a thoroughly checked image",
+            (),
+            "extra",
+            False,
+            lambda *_args, **_kwargs: None,
+        )
+
+        self.assertEqual(captured["model"], "gpt-5.6-terra")
+        self.assertEqual(captured["reasoning_effort"], "xhigh")
+        self.assertIn(app.IMAGE_REASONING_MODES["max"]["depth"], captured["instructions"])
+        self.assertEqual(result["prompt"], "Extra final prompt")
+
+    def test_react_continuation_plans_assets_then_loads_only_selected_older_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent_path = Path(temp) / "parent.png"
+            older_path = Path(temp) / "older.png"
+            Image.new("RGB", (8, 8), "purple").save(parent_path)
+            Image.new("RGB", (8, 8), "silver").save(older_path)
+            parent_asset = app.image_asset_record(parent_path)
+            older_asset = {
+                **app.image_asset_record(older_path),
+                "description": "银色城堡大厅背景",
+            }
+            context = {
+                "history": [
+                    {
+                        "setId": "set-1",
+                        "userPrompt": "设计主角",
+                        "reasoningSummary": "采用紫色披风。",
+                        "outputAssetIds": [parent_asset["assetId"]],
+                    }
+                ],
+                "assets": [older_asset, parent_asset],
+            }
+            controller = app.AppController.__new__(app.AppController)
+            response_inputs = []
+            response_tools = []
+            response_index = __import__("itertools").count()
+
+            def stream_response(*args, **kwargs):
+                response_inputs.append(__import__("copy").deepcopy(args[4]))
+                response_tools.append(kwargs.get("tools"))
+                if next(response_index) == 0:
+                    kwargs["on_completed"](
+                        {
+                            "output": [
+                                {
+                                    "type": "function_call",
+                                    "name": "plan_image_continuation",
+                                    "call_id": "call-plan",
+                                    "arguments": json.dumps(
+                                        {
+                                            "operation": "generate",
+                                            "selected_asset_ids": [
+                                                older_asset["assetId"],
+                                                parent_asset["assetId"],
+                                            ],
+                                            "descriptions": [
+                                                {
+                                                    "asset_id": parent_asset["assetId"],
+                                                    "description": "紫色披风角色正面图",
+                                                }
+                                            ],
+                                            "rationale": "保留角色和既有场景语言。",
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            ]
+                        }
+                    )
+                    return ""
+                text = "已核对角色和场景。\n<<<FINAL_PROMPT>>>角色走入雨夜车站"
+                kwargs["on_delta"](text)
+                kwargs["on_completed"]({"output": []})
+                return text
+
+            controller.client = SimpleNamespace(stream_response=stream_response)
+            result = controller._run_image_prompt_agent(
+                {"base_url": "https://example.test/v1"},
+                "secret",
+                "让她走进雨夜车站",
+                (parent_path,),
+                "medium",
+                False,
+                lambda *_args, **_kwargs: None,
+                context,
+                [parent_asset],
+            )
+
+        self.assertEqual(response_tools[0][0]["name"], "plan_image_continuation")
+        self.assertIsNone(response_tools[1])
+        first_content = response_inputs[0][0]["content"]
+        self.assertEqual(sum(item["type"] == "input_image" for item in first_content), 1)
+        plan_output = next(
+            item
+            for item in response_inputs[1]
+            if item.get("type") == "function_call_output"
+        )["output"]
+        self.assertEqual(sum(item["type"] == "input_image" for item in plan_output), 1)
+        self.assertEqual(result["continuationPlan"]["operation"], "generate")
+        self.assertEqual(
+            result["continuationPlan"]["selectedAssetIds"],
+            [older_asset["assetId"], parent_asset["assetId"]],
+        )
 
     def test_generate_image_high_uses_custom_visual_search_and_selected_reference(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -2059,12 +2593,14 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(json.loads(selected_tool_output["output"])["acceptedCount"], 1)
         generation_request = service.generate.call_args.args[2]
         self.assertEqual(len(generation_request.image_paths), 1)
+        self.assertEqual(generation_request.operation, "generate")
         self.assertIn("image-search-references", str(generation_request.image_paths[0]))
         self.assertFalse((data_root / "image-search-references" / "react-high-1").exists())
         event_types = [event["type"] for event in events]
         self.assertIn("react_visual_results", event_types)
         self.assertIn("react_visual_selected", event_types)
         set_started = next(event for event in events if event["type"] == "set_started")
+        self.assertEqual(set_started["operation"], "generate")
         self.assertEqual(set_started["webReferences"][0]["title"], "Shanghai Tower exterior")
         self.assertTrue(set_started["webReferences"][0]["previewUri"].startswith("data:image/jpeg;base64,"))
         self.assertIn("Pictures", set_started["webReferences"][0]["path"])
@@ -2768,6 +3304,25 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(native_form.BackColor, "#020617")
         self.assertEqual(native_webview.DefaultBackgroundColor, (255, 2, 6, 23))
         self.assertEqual(native_form.BeginInvoke.call_count, 2)
+
+    def test_page_load_disables_native_webview_zoom_controls(self):
+        mock = __import__("unittest.mock").mock
+        settings = SimpleNamespace(IsZoomControlEnabled=True)
+        native_webview = SimpleNamespace(CoreWebView2=SimpleNamespace(Settings=settings))
+        native_form = SimpleNamespace(
+            webview=native_webview,
+            InvokeRequired=True,
+            BeginInvoke=mock.Mock(side_effect=lambda callback: callback()),
+        )
+        controller = app.AppController.__new__(app.AppController)
+        controller.window = SimpleNamespace(native=native_form)
+        controller.asset_cache = SimpleNamespace(is_ready=lambda: False)
+
+        with patch.dict(sys.modules, {"System": SimpleNamespace(Action=lambda callback: callback)}):
+            controller._on_page_loaded()
+
+        self.assertFalse(settings.IsZoomControlEnabled)
+        native_form.BeginInvoke.assert_called_once()
 
     def test_start_workers_confirms_restarted_application_is_ready(self):
         mock = __import__("unittest.mock").mock
@@ -3619,6 +4174,7 @@ class ControllerTests(unittest.TestCase):
                     "reasoningModel": "gpt-5.6-sol",
                     "reasoningEffort": "medium",
                     "reasoningSummary": "识别产品展示场景并比较构图方案。",
+                    "reasoningDurationMs": 9_876,
                     "originalPrompt": "制作产品图",
                 },
             )
@@ -3643,6 +4199,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(listed["sets"][0]["reasoningModel"], "gpt-5.6-sol")
         self.assertEqual(listed["sets"][0]["reasoningEffort"], "medium")
         self.assertEqual(listed["sets"][0]["reasoningSummary"], "识别产品展示场景并比较构图方案。")
+        self.assertEqual(listed["sets"][0]["reasoningDurationMs"], 9_876)
         self.assertEqual(listed["sets"][0]["reasoningStatus"], "completed")
         self.assertEqual(listed["sets"][0]["effectivePrompt"], "专业产品图，三分构图")
         self.assertTrue(deleted["ok"])
@@ -3656,6 +4213,17 @@ class ControllerTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertIn("生成中", result["error"])
+
+    def test_controller_rejects_deleting_any_round_from_active_session(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.active_image_sets = set()
+        controller.active_image_sessions = {"session-active"}
+        controller.image_session_activity_lock = __import__("threading").Lock()
+
+        result = controller.delete_image_set("session-active", "set-parent")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("图片会话仍在生成", result["error"])
 
     def test_controller_marks_stale_running_image_set_as_interrupted(self):
         controller = app.AppController.__new__(app.AppController)

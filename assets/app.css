@@ -25,6 +25,7 @@
   --shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
   --font-sans: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
   --font-mono: Consolas, "SFMono-Regular", monospace;
+  --page-zoom: 1;
 }
 
 html.dark {
@@ -126,6 +127,7 @@ img, svg {
 }
 
 #widget-root {
+  --fixed-titlebar-height: 33px;
   isolation: isolate;
   position: relative;
   display: flex;
@@ -141,6 +143,23 @@ img, svg {
   min-height: 0;
   overflow: hidden;
   background: var(--bg);
+}
+
+#pageZoomLayer {
+  position: absolute;
+  top: var(--fixed-titlebar-height);
+  left: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: calc(100% / var(--page-zoom));
+  height: calc((100% - var(--fixed-titlebar-height)) / var(--page-zoom));
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  transform: scale(var(--page-zoom));
+  transform-origin: top left;
 }
 
 /* Native frame */
@@ -726,6 +745,9 @@ html.dark #keySwitcherMenu {
     box-shadow: 0 0 8px color-mix(in srgb, var(--critical) 58%, transparent);
   }
 }
+#widget-root.titlebar-minimal {
+  --fixed-titlebar-height: 24px;
+}
 #widget-root.titlebar-minimal #windowTitleBar {
   flex-basis: 24px !important;
   height: 24px !important;
@@ -849,9 +871,12 @@ html.dark #keySwitcherMenu {
   max-height: 10px;
 }
 #widget-root.titlebar-minimal #settingsPanel {
-  top: 24px;
+  top: 0;
 }
 
+#widget-root.titlebar-original {
+  --fixed-titlebar-height: 0px;
+}
 #widget-root.titlebar-original #windowTitleBar,
 #widget-root.titlebar-original .native-resize-handle {
   display: none !important;
@@ -1701,14 +1726,25 @@ html.dark #keySwitcherMenu {
   border-radius: 0 8px 8px 0;
 }
 
+#imageReasoningMenuButton [data-lucide],
 #imageReasoningMenuButton svg {
   width: 12px;
   height: 12px;
+  transition: transform 160ms ease;
+}
+
+#imageReasoningMenuButton[aria-expanded=true] [data-lucide],
+#imageReasoningMenuButton[aria-expanded=true] svg {
+  transform: rotate(180deg);
 }
 
 #generateEditedImageButton:hover:not(:disabled),
 #imageReasoningMenuButton:hover:not(:disabled) {
   filter: brightness(1.12);
+}
+
+.image-reasoning-control:has(#generateEditedImageButton:hover:not(:disabled)) {
+  box-shadow: 0 0 0 1px rgba(219, 234, 254, 0.72), 0 0 14px rgba(96, 165, 250, 0.62), 0 0 28px rgba(129, 140, 248, 0.38);
 }
 
 #generateEditedImageButton:disabled {
@@ -1735,17 +1771,19 @@ html.dark #keySwitcherMenu {
 }
 
 .reasoning-bg-layer[data-layer-mode=flash] .reasoning-gradient {
+  --reasoning-animation-duration: 18s;
   background: linear-gradient(125deg, #8fd3ff 0%, #b9e6ff 18%, #79c7ff 36%, #d8f3ff 54%, #9fbfff 72%, #b9e6ff 88%, #8fd3ff 100%);
   background-size: 300% 300%;
-  animation: flashFluidGradient 18s linear infinite;
+  animation: flashFluidGradient var(--reasoning-animation-duration) linear infinite;
 }
 
 .reasoning-bg-layer[data-layer-mode=flash] .reasoning-effect-a {
+  --reasoning-animation-duration: 14s;
   inset: -20px;
   background: radial-gradient(circle at 30% 40%, rgba(191, 231, 255, 0.78) 0%, rgba(111, 196, 255, 0.46) 44%, transparent 75%), radial-gradient(circle at 70% 60%, rgba(219, 245, 255, 0.7) 0%, rgba(151, 190, 255, 0.42) 48%, transparent 80%);
   filter: blur(10px);
   opacity: 0.8;
-  animation: flashLiquidOrbit 14s linear infinite;
+  animation: flashLiquidOrbit var(--reasoning-animation-duration) linear infinite;
 }
 
 .reasoning-bg-layer[data-layer-mode=flash] .reasoning-effect-b {
@@ -1757,9 +1795,10 @@ html.dark #keySwitcherMenu {
 }
 
 .reasoning-bg-layer[data-layer-mode=medium] .reasoning-gradient {
+  --reasoning-animation-duration: 30s;
   background: linear-gradient(135deg, #4f7df3 0%, #5b8def 25%, #5cc8ff 50%, #9bdcff 75%, #4f7df3 100%);
   background-size: 260% 260%;
-  animation: mediumSeamlessFlow 30s linear infinite;
+  animation: mediumSeamlessFlow var(--reasoning-animation-duration) linear infinite;
 }
 
 .reasoning-bg-layer[data-layer-mode=medium] .reasoning-effect-a,
@@ -1768,21 +1807,42 @@ html.dark #keySwitcherMenu {
 }
 
 .reasoning-bg-layer[data-layer-mode=high] {
-  background: #6d5dfc;
+  background: #668ee8;
 }
 
 .reasoning-bg-layer[data-layer-mode=high] .reasoning-gradient {
-  background: linear-gradient(135deg, #6d5dfc 0%, #8b6cff 25%, #b99cff 50%, #d9c7ff 75%, #6d5dfc 100%);
+  --reasoning-animation-duration: 28s;
+  background: linear-gradient(135deg, #668ee8 0%, #78a7ef 25%, #91b8f3 50%, #aaaaf7 75%, #668ee8 100%);
   background-size: 300% 300%;
-  animation: highSeamlessFlow 28s linear infinite;
+  animation: highSeamlessFlow var(--reasoning-animation-duration) linear infinite;
 }
 
 .reasoning-bg-layer[data-layer-mode=high] .reasoning-effect-a {
   inset: 0;
-  background: radial-gradient(circle at 50% 0%, rgba(233, 213, 255, 0.22) 0%, transparent 75%);
+  background: radial-gradient(circle at 50% 0%, rgba(224, 231, 255, 0.28) 0%, transparent 75%);
 }
 
 .reasoning-bg-layer[data-layer-mode=high] .reasoning-effect-b {
+  display: none;
+}
+
+.reasoning-bg-layer[data-layer-mode=extra] {
+  background: #6d5dfc;
+}
+
+.reasoning-bg-layer[data-layer-mode=extra] .reasoning-gradient {
+  --reasoning-animation-duration: 28s;
+  background: linear-gradient(135deg, #6d5dfc 0%, #8b6cff 25%, #b99cff 50%, #d9c7ff 75%, #6d5dfc 100%);
+  background-size: 300% 300%;
+  animation: highSeamlessFlow var(--reasoning-animation-duration) linear infinite;
+}
+
+.reasoning-bg-layer[data-layer-mode=extra] .reasoning-effect-a {
+  inset: 0;
+  background: radial-gradient(circle at 50% 0%, rgba(233, 213, 255, 0.22) 0%, transparent 75%);
+}
+
+.reasoning-bg-layer[data-layer-mode=extra] .reasoning-effect-b {
   display: none;
 }
 
@@ -1791,17 +1851,19 @@ html.dark #keySwitcherMenu {
 }
 
 .reasoning-bg-layer[data-layer-mode=max] .reasoning-gradient {
+  --reasoning-animation-duration: 26s;
   background: linear-gradient(125deg, #536dfe 0%, #5b8def 20%, #8b6cff 40%, #e9ddff 60%, #3b82f6 80%, #536dfe 100%);
   background-size: 300% 300%;
-  animation: maxGradientFlow 26s linear infinite;
+  animation: maxGradientFlow var(--reasoning-animation-duration) linear infinite;
 }
 
 .reasoning-bg-layer[data-layer-mode=max] .reasoning-effect-a {
+  --reasoning-animation-duration: 20s;
   inset: -20px;
   background: radial-gradient(circle at 30% 40%, rgba(192, 132, 252, 0.52) 0%, rgba(59, 130, 246, 0.36) 45%, transparent 75%), radial-gradient(circle at 70% 60%, rgba(236, 72, 153, 0.34) 0%, rgba(124, 58, 237, 0.42) 50%, transparent 80%);
   filter: blur(10px);
   opacity: 0.68;
-  animation: maxLiquidOrbit 20s linear infinite;
+  animation: maxLiquidOrbit var(--reasoning-animation-duration) linear infinite;
 }
 
 .reasoning-bg-layer[data-layer-mode=max] .reasoning-effect-b {
@@ -1824,6 +1886,10 @@ html.dark #keySwitcherMenu {
 }
 
 .image-reasoning-control[data-mode=high] {
+  background: #668ee8;
+}
+
+.image-reasoning-control[data-mode=extra] {
   background: #6d5dfc;
 }
 
@@ -1833,6 +1899,10 @@ html.dark #keySwitcherMenu {
 
 .image-reasoning-control[data-mode=high] {
   animation: highGlowPulse 4s ease-in-out infinite alternate;
+}
+
+.image-reasoning-control[data-mode=extra] {
+  animation: extraGlowPulse 4s ease-in-out infinite alternate;
 }
 
 .image-reasoning-control[data-mode=max] {
@@ -2198,6 +2268,14 @@ html.dark #keySwitcherMenu {
 }
 @keyframes highGlowPulse {
   0% {
+    box-shadow: 0 0 0 1px rgba(125, 168, 235, 0.2), 0 0 9px rgba(102, 142, 232, 0.2), 0 0 16px rgba(170, 170, 247, 0.1);
+  }
+  100% {
+    box-shadow: 0 0 0 1px rgba(170, 190, 249, 0.38), 0 0 14px rgba(102, 142, 232, 0.32), 0 0 24px rgba(170, 170, 247, 0.18);
+  }
+}
+@keyframes extraGlowPulse {
+  0% {
     box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.2), 0 0 9px rgba(124, 58, 237, 0.2), 0 0 16px rgba(167, 139, 250, 0.1);
   }
   100% {
@@ -2443,6 +2521,12 @@ html.dark #keySwitcherMenu {
 }
 
 .image-reasoning-panel.mode-high {
+  --reasoning-accent: #668ee8;
+  --reasoning-glow: rgba(102, 142, 232, 0.38);
+  --reasoning-tint: color-mix(in srgb, #668ee8 8%, var(--bg));
+}
+
+.image-reasoning-panel.mode-extra {
   --reasoning-accent: #6366f1;
   --reasoning-glow: rgba(99, 102, 241, 0.38);
   --reasoning-tint: color-mix(in srgb, #6366f1 8%, var(--bg));
@@ -4137,7 +4221,7 @@ html.dark #avgMinVal {
 /* Settings */
 #settingsPanel {
   position: absolute;
-  top: 33px;
+  top: 0;
   right: 0;
   bottom: 0;
   left: 0;

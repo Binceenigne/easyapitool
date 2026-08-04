@@ -832,6 +832,7 @@
         <span class="native-resize-handle resize-bottom-left" data-resize="bottom-left"></span>
         <span class="native-resize-handle resize-bottom-right" data-resize="bottom-right"></span>
 
+        <div id="pageZoomLayer">
         <div id="keyToolbar">
             <div>
                 <span class="toolbar-label">密钥:</span>
@@ -1037,6 +1038,7 @@
                                 <span class="reasoning-bg-layer" data-layer-mode="flash" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
                                 <span class="reasoning-bg-layer" data-layer-mode="medium" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
                                 <span class="reasoning-bg-layer" data-layer-mode="high" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <span class="reasoning-bg-layer" data-layer-mode="extra" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
                                 <span class="reasoning-bg-layer" data-layer-mode="max" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
                                 <button type="submit" id="generateEditedImageButton" data-reasoning-mode="instant"><span>生成 1 张</span></button>
                                 <button type="button" id="imageReasoningMenuButton" aria-expanded="false" aria-controls="imageReasoningMenu" onclick="toggleImageReasoningMenu()" title="选择思维深度" aria-label="选择思维深度"><i data-lucide="chevron-up" aria-hidden="true"></i></button>
@@ -1059,7 +1061,7 @@
                                             </span>
                                             <span id="reasoningBadge" class="reasoning-current-badge">Instant</span>
                                         </div>
-                                        <div id="reasoningSliderTrack" class="horizontal-slider-container" role="slider" tabindex="0" aria-label="思维深度" aria-valuemin="0" aria-valuemax="4" aria-valuenow="0" aria-valuetext="Instant">
+                                        <div id="reasoningSliderTrack" class="horizontal-slider-container" role="slider" tabindex="0" aria-label="思维深度" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" aria-valuetext="Instant">
                                             <div class="slider-track-bg">
                                                 <div id="sliderTrackFill" class="slider-track-fill" style="transform: translate3d(0, 0, 0) scaleX(0);">
                                                     <span id="sliderGradientCurrent" class="slider-gradient-layer slider-gradient-current"></span>
@@ -1068,6 +1070,7 @@
                                             </div>
                                             <div class="slider-dots" aria-hidden="true">
                                                 <span class="slider-dot"></span>
+                                                <span class="slider-dot inactive"></span>
                                                 <span class="slider-dot inactive"></span>
                                                 <span class="slider-dot inactive"></span>
                                                 <span class="slider-dot inactive"></span>
@@ -1638,15 +1641,88 @@
             <span>API_TOOLS (直角便携版)</span>
             <span id="liveClock">—</span>
         </footer>
-    </div>
 
-    <!-- 自定义轻量吐司通知 -->
-    <div id="toast">
-        <i id="toastIcon" data-lucide="circle-check" class="icon-14 color-good" aria-hidden="true"></i>
-        <span id="toastMessage">保存成功</span>
+        <!-- 自定义轻量吐司通知 -->
+        <div id="toast">
+            <i id="toastIcon" data-lucide="circle-check" class="icon-14 color-good" aria-hidden="true"></i>
+            <span id="toastMessage">保存成功</span>
+        </div>
+        </div>
     </div>
 
     <script>
+
+        const PAGE_ZOOM_STORAGE_KEY = 'api-tools-page-zoom';
+        const PAGE_ZOOM_STORAGE_VERSION_KEY = 'api-tools-page-zoom-version';
+        const PAGE_ZOOM_STORAGE_VERSION = '2';
+        const DEFAULT_PAGE_ZOOM = 1;
+        const MIN_PAGE_ZOOM = 0.8;
+        const MAX_PAGE_ZOOM = 2;
+        const PAGE_ZOOM_STEP = 0.1;
+
+        function normalizePageZoom(value) {
+            const numericValue = Number(value);
+            const fallback = Number.isFinite(numericValue) ? numericValue : DEFAULT_PAGE_ZOOM;
+            return Number(Math.max(
+                MIN_PAGE_ZOOM,
+                Math.min(MAX_PAGE_ZOOM, Math.round(fallback / PAGE_ZOOM_STEP) * PAGE_ZOOM_STEP)
+            ).toFixed(1));
+        }
+
+        function getPageZoom() {
+            const value = getComputedStyle(document.documentElement).getPropertyValue('--page-zoom');
+            return normalizePageZoom(Number.parseFloat(value));
+        }
+
+        function pageZoomMetrics() {
+            const layer = document.getElementById('pageZoomLayer');
+            return {
+                layer,
+                scale: getPageZoom(),
+                rect: layer?.getBoundingClientRect()
+            };
+        }
+
+        function applyPageZoom(value, persist = false, announce = false) {
+            const zoom = normalizePageZoom(value);
+            document.documentElement.style.setProperty('--page-zoom', String(zoom));
+            if (persist) {
+                localStorage.setItem(PAGE_ZOOM_STORAGE_KEY, String(zoom));
+                localStorage.setItem(PAGE_ZOOM_STORAGE_VERSION_KEY, PAGE_ZOOM_STORAGE_VERSION);
+            }
+            requestAnimationFrame(() => {
+                handleResponsiveLayout();
+                positionKeySwitcherMenu();
+                positionImageGenerationPanel();
+                positionImageReasoningMenu();
+                resizeImagePrompt();
+            });
+            if (announce) showToast(`页面缩放 ${Math.round(zoom * 100)}%`, 'info');
+            return zoom;
+        }
+
+        function restorePageZoom() {
+            const savedZoom = localStorage.getItem(PAGE_ZOOM_STORAGE_VERSION_KEY) === PAGE_ZOOM_STORAGE_VERSION
+                ? localStorage.getItem(PAGE_ZOOM_STORAGE_KEY)
+                : DEFAULT_PAGE_ZOOM;
+            return applyPageZoom(
+                savedZoom || DEFAULT_PAGE_ZOOM,
+                true
+            );
+        }
+
+        function handlePageZoomShortcut(event) {
+            if (!event.ctrlKey || event.altKey || event.metaKey) return;
+            const zoomIn = event.key === '+' || event.key === '=' || event.code === 'NumpadAdd';
+            const zoomOut = event.key === '-' || event.key === '_' || event.code === 'NumpadSubtract';
+            const reset = event.key === '0' || event.code === 'Numpad0';
+            if (!zoomIn && !zoomOut && !reset) return;
+            event.preventDefault();
+            const nextZoom = reset
+                ? DEFAULT_PAGE_ZOOM
+                : getPageZoom() + (zoomIn ? PAGE_ZOOM_STEP : -PAGE_ZOOM_STEP);
+            applyPageZoom(nextZoom, true, true);
+        }
 
         function renderLucideIcons() {
             if (!window.lucide || typeof window.lucide.createIcons !== 'function') return;
@@ -2081,11 +2157,13 @@
             const button = document.getElementById('imageGenerationControlsButton');
             const form = document.getElementById('imageEditForm');
             if (!panel || panel.hidden || !button || !form) return;
+            const { layer, scale, rect: layerRect } = pageZoomMetrics();
+            if (!layer || !layerRect) return;
             const buttonRect = button.getBoundingClientRect();
             const formRect = form.getBoundingClientRect();
-            panel.style.setProperty('--image-popover-left', `${formRect.left}px`);
-            panel.style.setProperty('--image-popover-width', `${formRect.width}px`);
-            panel.style.setProperty('--image-popover-bottom', `${Math.max(12, window.innerHeight - buttonRect.top + 8)}px`);
+            panel.style.setProperty('--image-popover-left', `${(formRect.left - layerRect.left) / scale}px`);
+            panel.style.setProperty('--image-popover-width', `${formRect.width / scale}px`);
+            panel.style.setProperty('--image-popover-bottom', `${Math.max(12, (layerRect.bottom - buttonRect.top) / scale + 8)}px`);
         }
 
         function closeImageGenerationControls() {
@@ -2183,30 +2261,34 @@
             }
         }
 
-        const IMAGE_REASONING_MODES = ['instant', 'flash', 'medium', 'high', 'max'];
+        const IMAGE_REASONING_MODES = ['instant', 'flash', 'medium', 'high', 'extra', 'max'];
         const IMAGE_REASONING_LABELS = {
-            instant: 'Instant', flash: 'Flash', medium: 'Medium', high: 'High', max: 'Max'
+            instant: 'Instant', flash: 'Flash', medium: 'Medium', high: 'High', extra: 'Extra', max: 'Max'
         };
         const IMAGE_REASONING_DESCRIPTIONS = {
             instant: 'Instant 模式：不经过额外思考直接生成',
             flash: 'Flash 模式：快速高效思考优化结果质量',
             medium: 'Medium 模式：均衡思考分析并优化生成方案',
-            high: 'High 模式：使用更强模型深入分析生成需求',
+            high: 'High 模式：使用更高推理强度深入分析生成需求',
+            extra: 'Extra 模式：延长思维链和思考时间预算获得更强推理能力',
             max: 'Max 模式：使用最强大的模型深度推导反思'
         };
         const IMAGE_REASONING_TRACK_GRADIENTS = [
             'linear-gradient(90deg, #64748b 0%, #94a3b8 100%)',
             'linear-gradient(90deg, #a9dcff 0%, #86ceff 42%, #a8c9ff 100%)',
             'linear-gradient(90deg, #9fcaff 0%, #8fddff 48%, #b5e8ff 100%)',
+            'linear-gradient(90deg, #91c7f3 0%, #89aef0 48%, #aaaaf7 100%)',
             'linear-gradient(90deg, #aeaaff 0%, #c4b7ff 50%, #dfd3ff 100%)',
             'linear-gradient(90deg, #aebcff 0%, #c2b0ff 32%, #dfcdff 64%, #b7ddff 100%)'
         ];
         const IMAGE_REASONING_PULSE_PALETTES = {
             flash: ['#8fd3ff', '#b9e6ff', '#79c7ff', '#9fbfff', '#d8f3ff'],
             medium: ['#4f7df3', '#5b8def', '#5cc8ff', '#9bdcff'],
-            high: ['#6d5dfc', '#8b6cff', '#b99cff', '#d9c7ff'],
+            high: ['#668ee8', '#78a7ef', '#91b8f3', '#aaaaf7'],
+            extra: ['#6d5dfc', '#8b6cff', '#b99cff', '#d9c7ff'],
             max: ['#536dfe', '#5b8def', '#8b6cff', '#e9ddff', '#3b82f6']
         };
+        const IMAGE_REASONING_HOVER_PLAYBACK_RATE = 2.5;
         let imageReasoningGradientTimer = 0;
         let imageReasoningPulseTimer = 0;
         let imageReasoningMaxTransitionTimer = 0;
@@ -2224,6 +2306,29 @@
                 : value;
             const number = Number.parseInt(normalized, 16);
             return `rgba(${(number >> 16) & 255}, ${(number >> 8) & 255}, ${number & 255}, ${alpha})`;
+        }
+
+        function setImageReasoningAnimationPlaybackRate(playbackRate) {
+            const activeLayer = document.querySelector('#imageReasoningControl .reasoning-bg-layer.is-visible');
+            activeLayer?.getAnimations({ subtree: true }).forEach(animation => {
+                if (typeof animation.updatePlaybackRate === 'function') {
+                    animation.updatePlaybackRate(playbackRate);
+                } else {
+                    animation.playbackRate = playbackRate;
+                }
+            });
+        }
+
+        function initializeImageReasoningHoverPlayback() {
+            const generateButton = document.getElementById('generateEditedImageButton');
+            if (!generateButton || generateButton.dataset.hoverPlaybackInitialized === 'true') return;
+            generateButton.dataset.hoverPlaybackInitialized = 'true';
+            generateButton.addEventListener('pointerenter', () => {
+                setImageReasoningAnimationPlaybackRate(IMAGE_REASONING_HOVER_PLAYBACK_RATE);
+            });
+            const restorePlaybackRate = () => setImageReasoningAnimationPlaybackRate(1);
+            generateButton.addEventListener('pointerleave', restorePlaybackRate);
+            generateButton.addEventListener('pointercancel', restorePlaybackRate);
         }
 
         function createImageReasoningColorPulse(mode) {
@@ -2259,6 +2364,9 @@
                 { transform: `translate3d(${startX + (endX - startX) * 0.8}px, ${verticalDrift * 0.88}px, 0) scale(0.94)`, opacity: 0.38, offset: 0.8 },
                 { transform: `translate3d(${endX}px, ${verticalDrift}px, 0) scale(0.72)`, opacity: 0 }
             ], { duration, easing: 'cubic-bezier(0.22, 0.58, 0.34, 1)', fill: 'forwards' });
+            if (document.getElementById('generateEditedImageButton')?.matches(':hover')) {
+                animation.updatePlaybackRate(IMAGE_REASONING_HOVER_PLAYBACK_RATE);
+            }
             animation.addEventListener('finish', () => pulse.remove(), { once: true });
             animation.addEventListener('cancel', () => pulse.remove(), { once: true });
         }
@@ -2276,17 +2384,19 @@
             const menu = document.getElementById('imageReasoningMenu');
             const control = document.getElementById('imageReasoningControl');
             if (!menu || menu.hidden || !control) return;
+            const { layer, scale, rect: layerRect } = pageZoomMetrics();
+            if (!layer || !layerRect) return;
             const controlRect = control.getBoundingClientRect();
-            const footerRect = control.closest('.image-generation-footer')?.getBoundingClientRect();
-            const menuWidth = Math.min(220, Math.max(0, window.innerWidth - 16));
+            const menuWidth = Math.min(220, Math.max(0, layer.clientWidth - 16));
+            const controlRight = (controlRect.right - layerRect.left) / scale;
             const menuLeft = Math.min(
-                window.innerWidth - menuWidth - 8,
-                Math.max(8, controlRect.right - menuWidth)
+                layer.clientWidth - menuWidth - 8,
+                Math.max(8, controlRight - menuWidth)
             );
             menu.style.setProperty('--reasoning-menu-left', `${menuLeft}px`);
             menu.style.setProperty('--reasoning-menu-width', `${menuWidth}px`);
-            const anchorTop = footerRect?.top ?? controlRect.top;
-            menu.style.setProperty('--reasoning-menu-bottom', `${Math.max(12, window.innerHeight - anchorTop + 8)}px`);
+            const anchorTop = (controlRect.top - layerRect.top) / scale;
+            menu.style.setProperty('--reasoning-menu-bottom', `${Math.max(12, layer.clientHeight - anchorTop + 8)}px`);
         }
 
         function closeImageReasoningMenu() {
@@ -2394,7 +2504,7 @@
             const sliderTrack = document.getElementById('reasoningSliderTrack');
             const rect = sliderTrack.getBoundingClientRect();
             const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-            setImageReasoningMode(IMAGE_REASONING_MODES[Math.round(fraction * 4)]);
+            setImageReasoningMode(IMAGE_REASONING_MODES[Math.round(fraction * (IMAGE_REASONING_MODES.length - 1))]);
         }
 
         function initializeImageReasoningSlider() {
@@ -2427,7 +2537,7 @@
                 else if (event.key === 'End') nextIndex = IMAGE_REASONING_MODES.length - 1;
                 else return;
                 event.preventDefault();
-                setImageReasoningMode(IMAGE_REASONING_MODES[Math.max(0, Math.min(4, nextIndex))]);
+                setImageReasoningMode(IMAGE_REASONING_MODES[Math.max(0, Math.min(IMAGE_REASONING_MODES.length - 1, nextIndex))]);
             });
         }
 
@@ -2488,6 +2598,10 @@
                 requestedCount,
                 prompt,
                 originalPrompt: metadata.originalPrompt || prompt,
+                operation: metadata.operation || 'generate',
+                continuation: metadata.continuation === true,
+                continuationRationale: metadata.continuationRationale || '',
+                selectedAssetIds: Array.isArray(metadata.selectedAssetIds) ? [...metadata.selectedAssetIds] : [],
                 createdAt: metadata.createdAt || new Date().toISOString(),
                 status: 'running',
                 expanded: metadata.expanded !== false,
@@ -2504,6 +2618,7 @@
                 reasoningContentExpanded: metadata.reasoningContentExpanded === true,
                 reasoningStartedAt: Number(metadata.reasoningStartedAt) || 0,
                 reasoningCompletedAt: Number(metadata.reasoningCompletedAt) || 0,
+                reasoningDurationMs: Math.max(0, Number(metadata.reasoningDurationMs) || 0),
                 effectivePrompt: metadata.effectivePrompt || '',
                 webSearchEnabled: metadata.webSearchEnabled === true,
                 webSearchStatus: metadata.webSearchFailed
@@ -2580,12 +2695,21 @@
         }
 
         function reasoningElapsed(set, turn = activeReasoningTurn(set)) {
-            const startedAt = Number(turn?.startedAt) || Number(set.reasoningStartedAt) || Date.now();
-            const completedAt = Number(turn?.completedAt) || Number(set.reasoningCompletedAt) || Date.now();
+            const startedAt = Number(turn?.startedAt) || Number(set.reasoningStartedAt) || 0;
+            const completedAt = Number(turn?.completedAt)
+                || Number(set.reasoningCompletedAt)
+                || (set.reasoningStatus === 'running' ? Date.now() : 0);
+            if (!startedAt || (!completedAt && set.reasoningStatus !== 'running')) {
+                return formatReasoningDuration(Number(turn?.durationMs) || Number(set.reasoningDurationMs) || 0);
+            }
             return formatReasoningDuration(completedAt - startedAt);
         }
 
         function totalReasoningElapsed(set) {
+            const persistedDuration = Math.max(0, Number(set.reasoningDurationMs) || 0);
+            if (persistedDuration && set.reasoningStatus !== 'running') {
+                return formatReasoningDuration(persistedDuration);
+            }
             const startedAt = Number(set.reasoningStartedAt) || Number(reasoningTurnsForSet(set)[0]?.startedAt) || Date.now();
             const completedAt = Number(set.reasoningCompletedAt) || Date.now();
             return formatReasoningDuration(completedAt - startedAt);
@@ -2722,7 +2846,8 @@
         }
 
         const IMAGE_STREAM_INITIAL_BLUR = 32;
-        const IMAGE_STREAM_CLARITY_STEP = 0.25;
+        const IMAGE_STREAM_PARTIAL_FLOOR_BLUR = 3;
+        const IMAGE_STREAM_PARTIAL_BLUR_STEP = 0.22;
         const IMAGE_STREAM_PARTIAL_DURATION = 10000;
         const IMAGE_STREAM_FINAL_DURATION = 3000;
         const IMAGE_STREAM_INITIAL_FADE_DURATION = 5000;
@@ -2859,7 +2984,10 @@
                 const frames = Array.isArray(item.revealFrames) ? item.revealFrames : [];
                 const latestEnd = frames.reduce((endAt, frame) => {
                     if (!frame.startedAt) return Math.max(endAt, Date.now() + 1000);
-                    return Math.max(endAt, frame.startedAt + (Number(frame.duration) || 0));
+                    return Math.max(endAt, frame.startedAt + Math.max(
+                        Number(frame.duration) || 0,
+                        frame.kind === 'final' ? IMAGE_STREAM_CROSSFADE_DURATION : 0
+                    ));
                 }, 0);
                 if (Date.now() <= Math.max(state.activeUntil, latestEnd) + 250) {
                     state.frameRequest = requestAnimationFrame(tick);
@@ -2884,10 +3012,12 @@
 
         function imageRevealTargetBlur(partialIndex) {
             const index = Math.max(1, Math.floor(Number(partialIndex) || 1));
-            const remainingBlurRatio = index <= 3
-                ? 1 - index * IMAGE_STREAM_CLARITY_STEP
-                : IMAGE_STREAM_CLARITY_STEP / (2 ** (index - 3));
-            return IMAGE_STREAM_INITIAL_BLUR * remainingBlurRatio;
+            const regularSteps = Math.min(index, 3);
+            const extraSteps = Math.max(0, index - 3);
+            const regularReduction = regularSteps * IMAGE_STREAM_PARTIAL_BLUR_STEP;
+            const extraReduction = IMAGE_STREAM_PARTIAL_BLUR_STEP * (1 - 1 / (2 ** extraSteps));
+            const remaining = Math.max(0, 1 - regularReduction - extraReduction);
+            return Math.max(IMAGE_STREAM_PARTIAL_FLOOR_BLUR, IMAGE_STREAM_INITIAL_BLUR * remaining);
         }
 
         function imageRevealBlurAt(frame, timestamp = Date.now()) {
@@ -2947,7 +3077,7 @@
                 kind,
                 duration: kind === 'final' ? IMAGE_STREAM_FINAL_DURATION : IMAGE_STREAM_PARTIAL_DURATION,
                 startedAt: 0,
-                fromBlur: previousTarget,
+                fromBlur: null,
                 toBlur: Math.min(previousTarget, requestedTarget)
             };
             item.revealFrames.push(frame);
@@ -2968,7 +3098,7 @@
             const initialPartial = frameIndex === 0 && frame.kind === 'partial';
             const crossfadeDuration = initialPartial
                 ? IMAGE_STREAM_INITIAL_FADE_DURATION
-                : frame.kind === 'final' ? frame.duration : IMAGE_STREAM_CROSSFADE_DURATION;
+                : IMAGE_STREAM_CROSSFADE_DURATION;
             image.classList.remove('is-reveal-pending');
             image.classList.add('is-image-reveal', `is-${frame.kind}-reveal`);
             image.style.removeProperty('animation');
@@ -2994,7 +3124,7 @@
             if (frame.kind !== 'final' || frame.cleanupScheduled) return;
             frame.cleanupScheduled = true;
             const elapsed = Math.max(0, Date.now() - Number(frame.startedAt || 0));
-            const cleanupDuration = frame.duration;
+            const cleanupDuration = Math.max(frame.duration, IMAGE_STREAM_CROSSFADE_DURATION);
             window.setTimeout(() => {
                 if (!item.revealFrames?.includes(frame) || item.revealFrames.at(-1) !== frame) return;
                 freezeImageRevealFrame(frame, imageRevealElementCache.get(frame), 0, 1);
@@ -3028,6 +3158,7 @@
                         Number(getComputedStyle(previousImages[previousIndex]).opacity)
                     );
                 });
+                frame.fromBlur = Math.max(Number(frame.toBlur) || 0, visibleBlur);
                 frame.startedAt = timestamp;
                 imageStreamDebugLog('frame-started', {
                     ...imageStreamDebugContext(item, frame, frameIndex),
@@ -3137,6 +3268,7 @@
             if (tool.name === 'search_web') return query ? `搜索关键词“${query}”` : '搜索网页';
             if (tool.name === 'search_visual_references') return query ? `搜索图片“${query}”` : '搜索图片';
             if (tool.name === 'select_visual_references') return '筛选可用参考图';
+            if (tool.name === 'plan_image_continuation') return '规划续作与素材';
             return '调用工具';
         }
 
@@ -3288,6 +3420,18 @@
             return panel;
         }
 
+        function imageGenerationItemAspectRatio(item) {
+            const result = item?.result || item || {};
+            let width = Number(result.width) || 0;
+            let height = Number(result.height) || 0;
+            if ((!width || !height) && result.actualSize) {
+                const match = String(result.actualSize).match(/(\d+)\s*[x×]\s*(\d+)/i);
+                width = Number(match?.[1]) || 0;
+                height = Number(match?.[2]) || 0;
+            }
+            return width > 0 && height > 0 ? `${width} / ${height}` : '';
+        }
+
         function renderImageGenerationSets() {
             const container = document.getElementById('imageGenerationSets');
             const sets = window.imageEditState.resultSets;
@@ -3334,7 +3478,7 @@
                 actions.className = 'image-generation-set-actions';
                 const continueButton = document.createElement('button');
                 continueButton.type = 'button';
-                continueButton.title = '整组作为参考继续编辑';
+                continueButton.title = '基于此轮继续创作';
                 continueButton.setAttribute('aria-label', continueButton.title);
                 continueButton.disabled = completedCount === 0;
                 continueButton.innerHTML = `${iconMarkup('corner-down-left', 'icon-12')}<span>继续编辑</span>`;
@@ -3372,7 +3516,7 @@
                     : null;
 
                 const grid = document.createElement('div');
-                grid.className = 'image-generation-set-grid';
+                grid.className = `image-generation-set-grid${set.history ? ' is-history' : ''}`;
                 grid.dataset.count = String(set.requestedCount);
                 grid.hidden = set.reasoningStatus === 'running';
                 if (set.loadingPreviews) {
@@ -3389,8 +3533,10 @@
                     const completed = item.status === 'completed';
                     const card = document.createElement(completed ? 'button' : 'div');
                     if (completed) card.type = 'button';
-                    card.className = `image-generation-item is-${item.status}`;
+                    card.className = `image-generation-item is-${item.status}${set.history ? ' is-history' : ''}`;
                     card.dataset.itemIndex = String(item.itemIndex);
+                    const historyAspectRatio = set.history ? imageGenerationItemAspectRatio(item) : '';
+                    if (historyAspectRatio) card.style.aspectRatio = historyAspectRatio;
                     const displayUri = completed
                         ? item.result?.previewUri || item.previewUri || item.result?.uri || item.uri
                         : item.previewUri || item.uri;
@@ -3480,10 +3626,15 @@
                 set.sessionId = event.sessionId || set.sessionId;
                 set.parentSetId = event.parentSetId || set.parentSetId;
                 set.roundNumber = Number(event.roundNumber) || set.roundNumber;
+                set.operation = event.operation || set.operation;
+                set.continuation = event.continuation === true || set.continuation;
+                set.continuationRationale = event.continuationRationale || set.continuationRationale;
+                if (Array.isArray(event.selectedAssetIds)) set.selectedAssetIds = [...event.selectedAssetIds];
                 set.reasoningMode = normalizeImageReasoningMode(event.reasoningMode || set.reasoningMode);
                 set.reasoningModel = event.reasoningModel || set.reasoningModel;
                 set.reasoningEffort = event.reasoningEffort || set.reasoningEffort;
                 set.reasoningSummary = event.reasoningSummary || set.reasoningSummary;
+                set.reasoningDurationMs = Math.max(0, Number(event.reasoningDurationMs) || set.reasoningDurationMs);
                 set.effectivePrompt = event.prompt || set.effectivePrompt;
                 set.webSearchEnabled = event.webSearchEnabled === true || set.webSearchEnabled;
                 if (event.webSearchFailed) set.webSearchStatus = 'failed';
@@ -3557,12 +3708,18 @@
             } else if (event.type === 'react_visual_selected') {
                 set.webSearchStatus = 'completed';
                 set.webReferenceCount = Number(event.selectedCount) || 0;
+            } else if (event.type === 'react_continuation_planned') {
+                set.operation = event.operation || set.operation;
+                set.continuation = true;
+                set.continuationRationale = event.rationale || set.continuationRationale;
+                if (Array.isArray(event.selectedAssetIds)) set.selectedAssetIds = [...event.selectedAssetIds];
             } else if (event.type === 'react_summary_delta') {
                 if (!reasoningTurnsForSet(set).length) set.reasoningSummary += event.delta || '';
                 return;
             } else if (event.type === 'react_completed') {
                 set.reasoningStatus = 'completed';
                 set.reasoningSummary = event.summary || set.reasoningSummary;
+                set.reasoningDurationMs = Math.max(0, Number(event.reasoningDurationMs) || set.reasoningDurationMs);
                 set.reasoningCompletedAt ||= Date.now();
                 reasoningTurnsForSet(set).forEach(turn => {
                     if (turn.status === 'running') {
@@ -3700,6 +3857,11 @@
             set.parentSetId = result.parentSetId || set.parentSetId;
             set.roundNumber = Number(result.roundNumber) || set.roundNumber;
             set.originalPrompt = result.originalPrompt || set.originalPrompt || result.prompt || '';
+            set.reasoningDurationMs = Math.max(0, Number(result.reasoningDurationMs) || set.reasoningDurationMs);
+            set.operation = result.operation || set.operation;
+            set.continuation = result.continuation === true || set.continuation;
+            set.continuationRationale = result.continuationRationale || set.continuationRationale;
+            if (Array.isArray(result.selectedAssetIds)) set.selectedAssetIds = [...result.selectedAssetIds];
             set.effectivePrompt = result.reasoningMode && result.reasoningMode !== 'instant'
                 ? result.prompt || set.effectivePrompt
                 : set.effectivePrompt;
@@ -3738,27 +3900,9 @@
             notifyImageGenerationCompleted(set);
         }
 
-        function generatedResultReference(result) {
-            if (!result?.path) return null;
-            return {
-                path: result.path,
-                uri: result.uri,
-                previewUri: result.previewUri || result.uri,
-                name: result.path.split(/[\\/]/).pop(),
-                sizeBytes: result.sizeBytes || 0
-            };
-        }
-
-        function generatedResultReferences(results) {
-            return results
-                .map(generatedResultReference)
-                .filter(Boolean)
-                .slice(0, 16);
-        }
-
         function setImageEditSessionUi(active) {
             const placeholder = active
-                ? '请输入要调整的内容'
+                ? '描述本轮要修改或继续创作的内容'
                 : '描述要生成的图片；也可以粘贴或拖入参考图片';
             document.getElementById('editImageSelection').hidden = active;
             document.getElementById('imageEditPrompt').placeholder = placeholder;
@@ -3773,15 +3917,19 @@
             if (!window.imageEditState.draftBeforeSession) {
                 window.imageEditState.draftBeforeSession = {
                     files: [...window.imageEditState.files],
-                    prompt: document.getElementById('imageEditPrompt').value
+                    prompt: document.getElementById('imageEditPrompt').value,
+                    reasoningMode: window.imageEditState.reasoningMode,
+                    webSearchEnabled: window.imageEditState.webSearchEnabled
                 };
             }
             window.imageEditState.editSession = {
                 sessionId: set.sessionId || set.setId,
                 setId: set.setId,
                 roundNumber: Number(set.roundNumber) || 1,
-                references: generatedResultReferences(results)
+                previousPrompt: set.originalPrompt || set.prompt || ''
             };
+            setImageReasoningMode(normalizeImageReasoningMode(set.reasoningMode), false);
+            setImageWebSearchEnabled(set.webSearchEnabled === true, false);
             setImageEditSessionUi(true);
             const prompt = document.getElementById('imageEditPrompt');
             prompt.value = '';
@@ -3799,6 +3947,9 @@
             if (draft) {
                 window.imageEditState.files = [...draft.files];
                 document.getElementById('imageEditPrompt').value = draft.prompt || '';
+                setImageReasoningMode(normalizeImageReasoningMode(draft.reasoningMode), false);
+                setImageWebSearchEnabled(draft.webSearchEnabled === true, false);
+                persistImageGenerationPreferences();
             }
             setImageEditSessionUi(false);
             renderEditImageList();
@@ -3818,7 +3969,7 @@
                 sessionId: result.sessionId,
                 setId: result.setId,
                 roundNumber: Number(result.roundNumber) || window.imageEditState.editSession.roundNumber + 1,
-                references: generatedResultReferences(successful)
+                previousPrompt: result.originalPrompt || result.prompt || ''
             };
             setImageEditSessionUi(true);
             document.getElementById('imageEditPrompt').value = '';
@@ -4075,7 +4226,7 @@
             event.preventDefault();
             if (window.imageEditState.busy) return;
             const session = window.imageEditState.editSession;
-            const files = session ? session.references : window.imageEditState.files;
+            const files = session ? [] : window.imageEditState.files;
             const activeKey = getActiveKey();
             const promptInput = document.getElementById('imageEditPrompt');
             const prompt = promptInput.value.trim();
@@ -4084,8 +4235,6 @@
                 promptInput.focus();
                 return showToast('请输入生图提示词', 'error');
             }
-            if (session && !files?.length) return showToast('上一轮参考图不可用，请重新选择续作图片集', 'error');
-
             const button = document.getElementById('generateEditedImageButton');
             const status = document.getElementById('imageEditStatus');
             const requestId = globalThis.crypto?.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -4094,6 +4243,7 @@
                 sessionId: session?.sessionId || requestId,
                 parentSetId: session?.setId || '',
                 roundNumber: session ? session.roundNumber + 1 : 1,
+                continuation: Boolean(session),
                 reasoningMode: window.imageEditState.reasoningMode,
                 reasoningStatus: window.imageEditState.reasoningMode === 'instant' ? 'idle' : 'running',
                 reasoningStartedAt: Date.now(),
@@ -4142,6 +4292,7 @@
                         requestId,
                         sessionId: session?.sessionId || requestId,
                         parentSetId: session?.setId || '',
+                        continuation: Boolean(session),
                         reasoningMode: window.imageEditState.reasoningMode,
                         webSearchEnabled: window.imageEditState.webSearchEnabled
                     }
@@ -4351,11 +4502,13 @@
             if (window.__pageInitialized) return;
             window.__pageInitialized = true;
 
+            restorePageZoom();
             runAuthAndInitialize();
             void loadImageGenerationHistory();
             initializeImageViewerInteractions();
             initializeEditImageScrollbar();
             initializeImageReasoningSlider();
+            initializeImageReasoningHoverPlayback();
             restoreImageGenerationPreferences();
             window.setInterval(updateReasoningTimers, 1000);
 
@@ -4438,6 +4591,7 @@
             resizeImagePrompt();
 
             document.addEventListener('keydown', event => {
+                handlePageZoomShortcut(event);
                 if (event.key === 'Escape') {
                     closeKeySwitcher();
                     closeModelModal();
@@ -4498,11 +4652,11 @@
     <script>
         function handleResponsiveLayout() {
             const root = document.getElementById('widget-root');
-            if (!root) return;
+            const zoomLayer = document.getElementById('pageZoomLayer');
+            if (!root || !zoomLayer) return;
 
-            const rect = root.getBoundingClientRect();
-            const width = Math.max(0, Math.round(rect.width || window.innerWidth));
-            const height = Math.max(0, Math.round(rect.height || window.innerHeight));
+            const width = Math.max(0, Math.round(zoomLayer.clientWidth));
+            const height = Math.max(0, Math.round(zoomLayer.clientHeight));
 
             root.classList.remove(
                 'height-summary-2', 'height-summary-4', 'height-summary-countdown',
@@ -4600,19 +4754,23 @@
             const button = document.getElementById('keySwitcherButton');
             const menu = document.getElementById('keySwitcherMenu');
             if (!button || !menu || menu.hidden) return;
+            const { layer, scale, rect: layerRect } = pageZoomMetrics();
+            if (!layer || !layerRect) return;
             const rect = button.getBoundingClientRect();
             const minimal = window.appState.activeTitleBarMode === 'minimal';
             const width = minimal
-                ? Math.min(220, Math.max(150, window.innerWidth - 12))
-                : Math.min(320, Math.max(rect.width, 180));
-            const left = Math.min(Math.max(6, rect.left), Math.max(6, window.innerWidth - width - 6));
+                ? Math.min(220, Math.max(150, layer.clientWidth - 12))
+                : Math.min(320, Math.max(rect.width / scale, 180));
+            const buttonLeft = (rect.left - layerRect.left) / scale;
+            const left = Math.min(Math.max(6, buttonLeft), Math.max(6, layer.clientWidth - width - 6));
             menu.style.left = `${left}px`;
             menu.style.width = `${width}px`;
             const menuHeight = menu.offsetHeight;
-            const below = rect.bottom + 4;
-            const top = below + menuHeight <= window.innerHeight - 6
+            const below = (rect.bottom - layerRect.top) / scale + 4;
+            const buttonTop = (rect.top - layerRect.top) / scale;
+            const top = below + menuHeight <= layer.clientHeight - 6
                 ? below
-                : Math.max(6, rect.top - menuHeight - 4);
+                : Math.max(6, buttonTop - menuHeight - 4);
             menu.style.top = `${top}px`;
         }
 
@@ -4807,13 +4965,16 @@
                 const activeKey = getActiveKey();
                 toolbar.title = activeKey ? `当前密钥：${activeKey.name}` : '选择密钥';
                 setLucideIcon(document.getElementById('keySwitcherChevron'), 'key-round', 'icon-10');
-            } else if (toolbar && titleBar?.nextElementSibling) {
-                const lastResizeHandle = document.querySelector('.resize-bottom-right');
-                lastResizeHandle?.after(toolbar);
+            } else if (toolbar) {
+                document.getElementById('pageZoomLayer')?.prepend(toolbar);
                 toolbar.removeAttribute('title');
                 setLucideIcon(document.getElementById('keySwitcherChevron'), 'chevron-down', 'icon-10');
             }
             closeKeySwitcher();
+            requestAnimationFrame(() => {
+                handleResponsiveLayout();
+                resizeImagePrompt();
+            });
         }
 
         function updateTitleBarModeControls() {

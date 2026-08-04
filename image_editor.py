@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import io
 import json
+import os
 import shutil
 import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -65,7 +68,7 @@ def image_preview_data_url(
 
 
 class ImageSessionStore:
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
     _manifest_lock = threading.RLock()
 
     def __init__(self, pictures_root: Path) -> None:
@@ -93,22 +96,42 @@ class ImageSessionStore:
     def _read_manifest(self, session_id: str) -> dict[str, Any] | None:
         manifest_path = self._manifest_path(session_id)
         try:
-            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            manifest_text = manifest_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return None
-        return payload if isinstance(payload, dict) else None
+        try:
+            payload = json.loads(manifest_text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("图片会话清单已损坏") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("图片会话清单格式无效")
+        return payload
 
     def _write_manifest(self, manifest: dict[str, Any]) -> None:
+        manifest["schemaVersion"] = self.SCHEMA_VERSION
+        manifest.setdefault("assets", [])
         manifest["updatedAt"] = self._timestamp()
         manifest["roundCount"] = len(manifest.get("rounds") or [])
         manifest_path = self._manifest_path(str(manifest["sessionId"]))
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = manifest_path.with_suffix(".json.tmp")
+        temporary_path = manifest_path.with_name(
+            f".{manifest_path.name}.{uuid.uuid4().hex}.tmp"
+        )
         temporary_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        temporary_path.replace(manifest_path)
+        try:
+            for attempt in range(3):
+                try:
+                    os.replace(temporary_path, manifest_path)
+                    break
+                except PermissionError:
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.04 * (2 ** attempt))
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
     def begin_round(
         self,
@@ -133,6 +156,7 @@ class ImageSessionStore:
                     "updatedAt": created_at,
                     "roundCount": 0,
                     "rounds": [],
+                    "assets": [],
                 }
             existing = next(
                 (round_data for round_data in manifest["rounds"] if round_data.get("setId") == clean_set_id),
@@ -161,10 +185,20 @@ class ImageSessionStore:
                     "size": str(options.get("size") or "auto"),
                     "quality": str(options.get("quality") or "auto"),
                     "outputPreset": str(options.get("outputPreset") or "lossless"),
+                    "operation": str(options.get("operation") or "generate"),
+                    "continuation": bool(options.get("continuation")),
+                    "continuationRationale": str(options.get("continuationRationale") or "")[:600],
+                    "selectedReferenceIndexes": list(options.get("selectedReferenceIndexes") or []),
+                    "selectedAssetIds": list(options.get("selectedAssetIds") or [])[:16],
+                    "inputAssetIds": list(options.get("inputAssetIds") or [])[:16],
+                    "inputReferencePaths": [
+                        str(path) for path in list(options.get("inputReferencePaths") or [])[:16]
+                    ],
                     "reasoningMode": str(options.get("reasoningMode") or "instant"),
                     "reasoningModel": str(options.get("reasoningModel") or ""),
                     "reasoningEffort": str(options.get("reasoningEffort") or ""),
                     "reasoningSummary": str(options.get("reasoningSummary") or ""),
+                    "reasoningDurationMs": max(0, int(options.get("reasoningDurationMs") or 0)),
                     "originalPrompt": str(options.get("originalPrompt") or prompt),
                     "webSearchEnabled": bool(options.get("webSearchEnabled")),
                     "webSearchUsed": bool(options.get("webSearchUsed")),
@@ -181,6 +215,265 @@ class ImageSessionStore:
             (self._session_dir(clean_session_id) / directory_name).mkdir(parents=True, exist_ok=True)
             self._write_manifest(manifest)
             return dict(round_data)
+
+    def update_round_options(
+        self,
+        session_id: str,
+        set_id: str,
+        updates: dict[str, Any],
+    ) -> None:
+        clean_session_id = self._safe_id(session_id)
+        clean_set_id = self._safe_id(set_id)
+        with self._manifest_lock:
+            manifest = self._read_manifest(clean_session_id)
+            if manifest is None:
+                raise RuntimeError("图片会话不存在")
+            round_data = next(
+                (item for item in manifest["rounds"] if item.get("setId") == clean_set_id),
+                None,
+            )
+            if round_data is None:
+                raise RuntimeError("图片生成轮次不存在")
+            options = round_data.setdefault("options", {})
+            options.update(updates)
+            self._write_manifest(manifest)
+
+    def _register_asset_locked(
+        self,
+        manifest: dict[str, Any],
+        session_id: str,
+        source_path: Path,
+        source_set_id: str,
+        source_role: str,
+        description: str = "",
+    ) -> dict[str, Any] | None:
+        try:
+            image_bytes = source_path.read_bytes()
+            preview_bytes = image_preview_bytes(image_bytes)
+        except (OSError, ValueError):
+            return None
+        digest = hashlib.sha256(image_bytes).hexdigest()
+        asset_id = f"asset-{digest[:24]}"
+        assets = manifest.setdefault("assets", [])
+        existing = next(
+            (item for item in assets if item.get("assetId") == asset_id),
+            None,
+        )
+        if existing is not None:
+            source_set_ids = existing.setdefault("sourceSetIds", [])
+            if source_set_id and source_set_id not in source_set_ids:
+                source_set_ids.append(source_set_id)
+            source_roles = existing.setdefault("sourceRoles", [])
+            if source_role and source_role not in source_roles:
+                source_roles.append(source_role)
+            if description and not str(existing.get("description") or "").strip():
+                existing["description"] = description[:1200]
+            return existing
+
+        suffix = source_path.suffix.lower()
+        if suffix not in SUPPORTED_IMAGE_SUFFIXES:
+            suffix = ".png"
+        session_dir = self._session_dir(session_id)
+        asset_dir = session_dir / "assets"
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        original_path = asset_dir / f"{asset_id}{suffix}"
+        preview_path = asset_dir / f"{asset_id}-preview.jpg"
+        if source_path.resolve() != original_path.resolve():
+            original_path.write_bytes(image_bytes)
+        preview_path.write_bytes(preview_bytes)
+        asset = {
+            "assetId": asset_id,
+            "sha256": digest,
+            "original": original_path.relative_to(session_dir).as_posix(),
+            "preview": preview_path.relative_to(session_dir).as_posix(),
+            "description": description[:1200],
+            "sourceSetIds": [source_set_id] if source_set_id else [],
+            "sourceRoles": [source_role] if source_role else [],
+            "createdAt": self._timestamp(),
+        }
+        assets.append(asset)
+        return asset
+
+    def register_assets(
+        self,
+        session_id: str,
+        source_paths: list[str] | tuple[Path, ...],
+        source_set_id: str,
+        source_role: str,
+        descriptions: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        clean_session_id = self._safe_id(session_id)
+        clean_set_id = self._safe_id(source_set_id, "") if source_set_id else ""
+        with self._manifest_lock:
+            manifest = self._read_manifest(clean_session_id)
+            if manifest is None:
+                raise RuntimeError("图片会话不存在")
+            registered: list[dict[str, Any]] = []
+            for raw_path in source_paths:
+                source_path = Path(str(raw_path or "")).expanduser().resolve()
+                description = str((descriptions or {}).get(str(source_path)) or "")
+                asset = self._register_asset_locked(
+                    manifest,
+                    clean_session_id,
+                    source_path,
+                    clean_set_id,
+                    source_role,
+                    description,
+                )
+                if asset is not None:
+                    registered.append(dict(asset))
+            self._write_manifest(manifest)
+            return registered
+
+    def update_asset_descriptions(
+        self,
+        session_id: str,
+        descriptions: dict[str, str],
+    ) -> None:
+        clean_session_id = self._safe_id(session_id)
+        with self._manifest_lock:
+            manifest = self._read_manifest(clean_session_id)
+            if manifest is None:
+                raise RuntimeError("图片会话不存在")
+            changed = False
+            for asset in manifest.setdefault("assets", []):
+                asset_id = str(asset.get("assetId") or "")
+                description = str(descriptions.get(asset_id) or "").strip()[:1200]
+                if description and not str(asset.get("description") or "").strip():
+                    asset["description"] = description
+                    asset["describedAt"] = self._timestamp()
+                    changed = True
+            if changed:
+                self._write_manifest(manifest)
+
+    def continuation_context(self, session_id: str, set_id: str) -> dict[str, Any]:
+        clean_session_id = self._safe_id(session_id)
+        clean_set_id = self._safe_id(set_id)
+        with self._manifest_lock:
+            manifest = self._read_manifest(clean_session_id)
+            if manifest is None:
+                return {}
+            rounds = manifest.get("rounds") or []
+            round_by_id = {
+                str(item.get("setId") or ""): item
+                for item in rounds
+                if item.get("setId")
+            }
+            round_data = round_by_id.get(clean_set_id)
+            if round_data is None:
+                return {}
+            session_dir = self._session_dir(clean_session_id)
+            dirty = False
+            for existing_round in rounds:
+                options = existing_round.get("options")
+                if not isinstance(options, dict):
+                    options = {}
+                    existing_round["options"] = options
+                input_asset_ids = list(options.get("inputAssetIds") or [])
+                for raw_path in options.get("inputReferencePaths") or []:
+                    input_path = Path(str(raw_path or "")).expanduser().resolve()
+                    asset = self._register_asset_locked(
+                        manifest,
+                        clean_session_id,
+                        input_path,
+                        str(existing_round.get("setId") or ""),
+                        "input",
+                    )
+                    if asset is not None and asset["assetId"] not in input_asset_ids:
+                        input_asset_ids.append(asset["assetId"])
+                        dirty = True
+                if input_asset_ids != list(options.get("inputAssetIds") or []):
+                    options["inputAssetIds"] = input_asset_ids
+                for item in existing_round.get("items") or []:
+                    if item.get("status") != "completed":
+                        continue
+                    output_path = session_dir / str(item.get("original") or "")
+                    asset = self._register_asset_locked(
+                        manifest,
+                        clean_session_id,
+                        output_path,
+                        str(existing_round.get("setId") or ""),
+                        "output",
+                    )
+                    if asset is not None and item.get("assetId") != asset["assetId"]:
+                        item["assetId"] = asset["assetId"]
+                        dirty = True
+                for reference in existing_round.get("webReferences") or []:
+                    reference_path = session_dir / str(reference.get("original") or "")
+                    asset = self._register_asset_locked(
+                        manifest,
+                        clean_session_id,
+                        reference_path,
+                        str(existing_round.get("setId") or ""),
+                        "web",
+                        str(reference.get("caption") or reference.get("title") or ""),
+                    )
+                    if asset is not None and reference.get("assetId") != asset["assetId"]:
+                        reference["assetId"] = asset["assetId"]
+                        dirty = True
+            if dirty:
+                self._write_manifest(manifest)
+
+            history: list[dict[str, Any]] = []
+            pending = round_data
+            seen: set[str] = set()
+            while pending is not None:
+                pending_id = str(pending.get("setId") or "")
+                if not pending_id or pending_id in seen:
+                    break
+                seen.add(pending_id)
+                options = pending.get("options")
+                if not isinstance(options, dict):
+                    options = {}
+                history.append(
+                    {
+                        "setId": pending_id,
+                        "roundNumber": int(pending.get("roundNumber") or 0),
+                        "userPrompt": str(
+                            options.get("originalPrompt") or pending.get("prompt") or ""
+                        ),
+                        "reasoningSummary": str(
+                            options.get("reasoningSummary")
+                            or options.get("continuationRationale")
+                            or ""
+                        ),
+                        "operation": str(
+                            options.get("operation")
+                            or ("edit" if pending.get("referenceCount") else "generate")
+                        ),
+                        "inputAssetIds": list(options.get("inputAssetIds") or []),
+                        "outputAssetIds": [
+                            str(item.get("assetId") or "")
+                            for item in pending.get("items") or []
+                            if item.get("status") == "completed" and item.get("assetId")
+                        ],
+                    }
+                )
+                pending = round_by_id.get(str(pending.get("parentSetId") or ""))
+            history.reverse()
+
+            assets: list[dict[str, Any]] = []
+            for asset in manifest.get("assets") or []:
+                original_path = session_dir / str(asset.get("original") or "")
+                preview_path = session_dir / str(asset.get("preview") or "")
+                if not original_path.is_file():
+                    continue
+                assets.append(
+                    {
+                        "assetId": str(asset.get("assetId") or ""),
+                        "description": str(asset.get("description") or ""),
+                        "describedAt": str(asset.get("describedAt") or ""),
+                        "sourceSetIds": list(asset.get("sourceSetIds") or []),
+                        "sourceRoles": list(asset.get("sourceRoles") or []),
+                        "path": str(original_path),
+                        "previewPath": str(preview_path) if preview_path.is_file() else "",
+                    }
+                )
+            return {
+                "history": history,
+                "assets": assets,
+                "parentOutputAssetIds": list(history[-1]["outputAssetIds"]) if history else [],
+            }
 
     def _update_item(
         self,
@@ -251,9 +544,28 @@ class ImageSessionStore:
                 "actualSize": str(result.get("actualSize") or ""),
                 "quality": str(result.get("quality") or ""),
             }
-            self._update_item(clean_session_id, clean_set_id, item_index, item_data)
+            asset = self._register_asset_locked(
+                manifest,
+                clean_session_id,
+                original_path,
+                clean_set_id,
+                "output",
+            )
+            if asset is not None:
+                item_data["assetId"] = asset["assetId"]
+            while len(round_data["items"]) <= item_index:
+                round_data["items"].append(
+                    {
+                        "itemIndex": len(round_data["items"]),
+                        "status": "queued",
+                        "error": "",
+                    }
+                )
+            round_data["items"][item_index] = item_data
+            self._write_manifest(manifest)
             return {
                 **result,
+                "assetId": str(item_data.get("assetId") or ""),
                 "path": str(original_path),
                 "uri": original_path.as_uri(),
                 "savedPath": str(original_path),
@@ -324,6 +636,16 @@ class ImageSessionStore:
                     "original": original_path.relative_to(self._session_dir(clean_session_id)).as_posix(),
                     "preview": preview_path.relative_to(self._session_dir(clean_session_id)).as_posix(),
                 }
+                asset = self._register_asset_locked(
+                    manifest,
+                    clean_session_id,
+                    original_path,
+                    clean_set_id,
+                    "web",
+                    str(reference.get("caption") or reference.get("title") or ""),
+                )
+                if asset is not None:
+                    stored_reference["assetId"] = asset["assetId"]
                 stored.append(stored_reference)
                 persisted.append(
                     {
@@ -336,6 +658,12 @@ class ImageSessionStore:
             round_data["webReferences"] = stored
             options = round_data.setdefault("options", {})
             options["webReferenceCount"] = len(persisted)
+            input_asset_ids = list(options.get("inputAssetIds") or [])
+            for reference in stored:
+                asset_id = str(reference.get("assetId") or "")
+                if asset_id and asset_id not in input_asset_ids:
+                    input_asset_ids.append(asset_id)
+            options["inputAssetIds"] = input_asset_ids[:16]
             self._write_manifest(manifest)
             return persisted
 
@@ -367,7 +695,10 @@ class ImageSessionStore:
                 reverse=True,
             )
             for manifest_path in manifest_paths:
-                manifest = self._read_manifest(manifest_path.parent.name)
+                try:
+                    manifest = self._read_manifest(manifest_path.parent.name)
+                except (OSError, RuntimeError):
+                    continue
                 if manifest is None:
                     continue
                 session_dir = manifest_path.parent
@@ -386,6 +717,7 @@ class ImageSessionStore:
                         web_references.append(
                             {
                                 "id": str(reference.get("id") or ""),
+                                "assetId": str(reference.get("assetId") or ""),
                                 "title": str(reference.get("title") or ""),
                                 "caption": str(reference.get("caption") or ""),
                                 "provider": str(reference.get("provider") or ""),
@@ -417,6 +749,7 @@ class ImageSessionStore:
                         result = {
                             "ok": True,
                             "itemIndex": item_index,
+                            "assetId": str(item_data.get("assetId") or ""),
                             "path": str(original_path),
                             "uri": original_path.as_uri(),
                             "previewPath": str(preview_path),
@@ -452,10 +785,16 @@ class ImageSessionStore:
                             "requestedCount": int(round_data.get("requestedCount") or len(items)),
                             "prompt": str(round_data.get("prompt") or ""),
                             "originalPrompt": str(options.get("originalPrompt") or round_data.get("prompt") or ""),
+                            "operation": str(options.get("operation") or ("edit" if round_data.get("referenceCount") else "generate")),
+                            "continuation": bool(options.get("continuation")),
+                            "continuationRationale": str(options.get("continuationRationale") or ""),
+                            "selectedAssetIds": list(options.get("selectedAssetIds") or []),
+                            "inputAssetIds": list(options.get("inputAssetIds") or []),
                             "reasoningMode": reasoning_mode,
                             "reasoningModel": str(options.get("reasoningModel") or ""),
                             "reasoningEffort": str(options.get("reasoningEffort") or ""),
                             "reasoningSummary": reasoning_summary,
+                            "reasoningDurationMs": max(0, int(options.get("reasoningDurationMs") or 0)),
                             "reasoningStatus": "completed" if reasoning_mode != "instant" and reasoning_summary else "idle",
                             "effectivePrompt": str(round_data.get("prompt") or "") if reasoning_mode != "instant" else "",
                             "webSearchEnabled": bool(options.get("webSearchEnabled")),
@@ -472,6 +811,90 @@ class ImageSessionStore:
         restored.sort(key=lambda item: (item["createdAt"], item["roundNumber"]), reverse=True)
         return restored
 
+    def _prune_assets_locked(
+        self,
+        manifest: dict[str, Any],
+        session_id: str,
+    ) -> list[Path]:
+        rounds = manifest.get("rounds") or []
+        remaining_set_ids = {
+            str(round_data.get("setId") or "")
+            for round_data in rounds
+            if round_data.get("setId")
+        }
+        referenced_asset_ids: set[str] = set()
+        for round_data in rounds:
+            options = round_data.get("options")
+            if not isinstance(options, dict):
+                options = {}
+            for field in ("inputAssetIds", "selectedAssetIds"):
+                referenced_asset_ids.update(
+                    str(asset_id)
+                    for asset_id in options.get(field) or []
+                    if asset_id
+                )
+            referenced_asset_ids.update(
+                str(item.get("assetId") or "")
+                for item in round_data.get("items") or []
+                if item.get("assetId")
+            )
+            referenced_asset_ids.update(
+                str(reference.get("assetId") or "")
+                for reference in round_data.get("webReferences") or []
+                if reference.get("assetId")
+            )
+
+        session_dir = self._session_dir(session_id)
+        retained_assets: list[dict[str, Any]] = []
+        cleanup_paths: list[Path] = []
+        for asset in manifest.get("assets") or []:
+            source_set_ids = [
+                str(source_set_id)
+                for source_set_id in asset.get("sourceSetIds") or []
+                if str(source_set_id) in remaining_set_ids
+            ]
+            asset["sourceSetIds"] = source_set_ids
+            asset_id = str(asset.get("assetId") or "")
+            if source_set_ids or asset_id in referenced_asset_ids:
+                retained_assets.append(asset)
+                continue
+            for field in ("original", "preview"):
+                asset_path = session_dir / str(asset.get(field) or "")
+                if asset_path.is_file() and asset_path.parent == session_dir / "assets":
+                    cleanup_paths.append(asset_path)
+        manifest["assets"] = retained_assets
+        return cleanup_paths
+
+    @staticmethod
+    def _cleanup_committed_paths(paths: list[Path]) -> None:
+        for path in paths:
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def discard_asset_source(self, session_id: str, source_set_id: str) -> None:
+        clean_session_id = self._safe_id(session_id)
+        clean_source_set_id = self._safe_id(source_set_id, "")
+        if not clean_source_set_id:
+            return
+        with self._manifest_lock:
+            manifest = self._read_manifest(clean_session_id)
+            if manifest is None:
+                return
+            for asset in manifest.get("assets") or []:
+                asset["sourceSetIds"] = [
+                    str(existing_set_id)
+                    for existing_set_id in asset.get("sourceSetIds") or []
+                    if str(existing_set_id) != clean_source_set_id
+                ]
+            cleanup_paths = self._prune_assets_locked(manifest, clean_session_id)
+            self._write_manifest(manifest)
+            self._cleanup_committed_paths(cleanup_paths)
+
     def delete_set(self, session_id: str, set_id: str) -> bool:
         clean_session_id = self._safe_id(session_id)
         clean_set_id = self._safe_id(set_id)
@@ -485,16 +908,26 @@ class ImageSessionStore:
             )
             if round_data is None:
                 return False
-            round_dir = self._session_dir(clean_session_id) / str(round_data.get("directory") or "")
-            if round_dir.is_dir() and round_dir.parent == self._session_dir(clean_session_id):
-                shutil.rmtree(round_dir)
+            if any(
+                str(item.get("parentSetId") or "") == clean_set_id
+                for item in manifest["rounds"]
+            ):
+                raise ValueError("该轮次已有后续创作，请先删除后续轮次")
+            session_dir = self._session_dir(clean_session_id)
+            round_dir = session_dir / str(round_data.get("directory") or "")
             manifest["rounds"] = [
                 item for item in manifest["rounds"] if item.get("setId") != clean_set_id
             ]
             if manifest["rounds"]:
+                cleanup_paths = self._prune_assets_locked(manifest, clean_session_id)
                 self._write_manifest(manifest)
+                if round_dir.is_dir() and round_dir.parent == session_dir:
+                    cleanup_paths.append(round_dir)
+                self._cleanup_committed_paths(cleanup_paths)
             else:
-                shutil.rmtree(self._session_dir(clean_session_id), ignore_errors=True)
+                self._prune_assets_locked(manifest, clean_session_id)
+                self._write_manifest(manifest)
+                self._cleanup_committed_paths([session_dir])
             return True
 
 
@@ -502,6 +935,7 @@ class ImageSessionStore:
 class ImageGenerationRequest:
     prompt: str
     image_paths: tuple[Path, ...]
+    operation: str
     fields: dict[str, Any]
     output_preset: str
     output_format: str
@@ -548,6 +982,13 @@ def prepare_image_generation(
         valid_paths.append(image_path)
 
     clean_options = options if isinstance(options, dict) else {}
+    operation = str(
+        clean_options.get("operation") or ("edit" if valid_paths else "generate")
+    ).lower()
+    if operation not in {"edit", "generate"}:
+        raise ValueError("无效的图片操作")
+    if operation == "edit" and not valid_paths:
+        raise ValueError("图片编辑至少需要一张参考图")
     output_preset = str(clean_options.get("outputPreset") or "lossless").lower()
     quality = str(clean_options.get("quality") or "auto").lower()
     size = str(clean_options.get("size") or "auto").lower()
@@ -598,6 +1039,7 @@ def prepare_image_generation(
     return ImageGenerationRequest(
         prompt=clean_prompt,
         image_paths=tuple(valid_paths),
+        operation=operation,
         fields=fields,
         output_preset=output_preset,
         output_format=output_format,
@@ -847,8 +1289,6 @@ class ImageGenerationService:
         generation_id = uuid.uuid4().hex[:12]
 
         def persist_partial(image_data: str, partial_index: int) -> None:
-            if on_partial is None:
-                return
             try:
                 partial_bytes = base64.b64decode(image_data, validate=True)
                 with Image.open(io.BytesIO(partial_bytes)) as partial_image:
@@ -857,19 +1297,20 @@ class ImageGenerationService:
                 partial_dir.mkdir(parents=True, exist_ok=True)
                 partial_path = partial_dir / f"{generation_id}-{partial_index}.png"
                 partial_path.write_bytes(partial_bytes)
-                on_partial(
-                    {
-                        "partialIndex": partial_index,
-                        "partialTotal": request.partial_images,
-                        "path": str(partial_path),
-                        "uri": partial_path.as_uri(),
-                        "previewUri": image_preview_data_url(
-                            partial_bytes,
-                            max_side=512,
-                            optimize=False,
-                        ),
-                    }
-                )
+                if on_partial is not None:
+                    on_partial(
+                        {
+                            "partialIndex": partial_index,
+                            "partialTotal": request.partial_images,
+                            "path": str(partial_path),
+                            "uri": partial_path.as_uri(),
+                            "previewUri": image_preview_data_url(
+                                partial_bytes,
+                                max_side=512,
+                                optimize=False,
+                            ),
+                        }
+                    )
             except (binascii.Error, OSError, ValueError):
                 return
 
@@ -943,4 +1384,6 @@ class ImageGenerationService:
             "partialImagesRequested": request.partial_images if request.stream else 0,
             "partialImagesReceived": int(response.get("partial_images_received") or 0),
             "referenceCount": len(request.image_paths),
+            "operation": request.operation,
+            "transportOperation": "edit" if request.image_paths else "generate",
         }

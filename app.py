@@ -49,7 +49,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.21"
+APP_VERSION = "1.0.22"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -127,37 +127,237 @@ GMEM_MOVEABLE = 0x0002
 PROMPT_POLISH_MODEL = "gpt-5.6-terra"
 PROMPT_POLISH_REASONING_EFFORT = "medium"
 PROMPT_RESULT_MARKER = "<<<FINAL_PROMPT>>>"
+IMAGE_CONTINUATION_OPERATIONS = {"edit", "generate"}
 IMAGE_REASONING_MODES = {
     "flash": {
         "model": "gpt-5.6-luna",
-        "effort": "low",
-        "max_turns": 4,
-        "max_references": 1,
+        "effort": "medium",
+        "max_turns": 3,
+        "max_references": 3,
         "depth": "Flash 模式：仍须先判断自己要完成什么、哪些要求已明确、是否存在自己不理解或会影响结果的信息缺口；在此基础上迅速选择一个可执行方案。若开启搜索且缺口重要，立即做必要检索并根据结果快速复核，然后形成生图提示词进入迭代。Flash 压缩的是比较和反思轮次，不是省略任务理解与信息缺口判断。",
     },
     "medium": {
         "model": "gpt-5.6-terra",
         "effort": "medium",
-        "max_turns": 6,
-        "max_references": 3,
+        "max_turns": 5,
+        "max_references": 4,
         "depth": "Medium 模式：进行均衡的需求拆解、方案设计和适度信息获取，检查关键可用性后形成生图方案。",
     },
     "high": {
-        "model": "gpt-5.6-sol",
-        "effort": "medium",
-        "max_turns": 9,
-        "max_references": 4,
+        "model": "gpt-5.6-terra",
+        "effort": "high",
+        "max_turns": 7,
+        "max_references": 6,
         "depth": "High 模式：详细拆解需求和视觉方案，主动获取有价值的信息，比较主要候选方案，并对构图、事实准确性和生成风险做一轮明确反思后再定稿。",
+    },
+    "extra": {
+        "model": "gpt-5.6-terra",
+        "effort": "xhigh",
+        "max_turns": 10,
+        "max_references": 6,
+        "depth": "Max 模式：先拟定多个足够详细的候选方案，主动且可多轮搜索网页与图片，交叉核对信息并阅读视觉候选；频繁反思遗漏、冲突、构图、材质和事实风险，只有确认信息与方案均充分周全后才形成最终生图提示词。",
     },
     "max": {
         "model": "gpt-5.6-sol",
         "effort": "xhigh",
         "max_turns": 12,
-        "max_references": 6,
+        "max_references": 8,
         "depth": "Max 模式：先拟定多个足够详细的候选方案，主动且可多轮搜索网页与图片，交叉核对信息并阅读视觉候选；频繁反思遗漏、冲突、构图、材质和事实风险，只有确认信息与方案均充分周全后才形成最终生图提示词。",
     },
 }
 IMAGE_WEB_SEARCH_MODES = set(IMAGE_REASONING_MODES)
+IMAGE_CONTINUATION_PLANNER_MODEL = "gpt-5.6-luna"
+IMAGE_CONTINUATION_PLANNER_EFFORT = "minimal"
+
+
+def image_asset_record(image_path: Path) -> dict[str, Any]:
+    resolved_path = image_path.expanduser().resolve()
+    digest = hashlib.sha256(resolved_path.read_bytes()).hexdigest()
+    return {
+        "assetId": f"asset-{digest[:24]}",
+        "description": "",
+        "sourceSetIds": [],
+        "sourceRoles": ["input"],
+        "path": str(resolved_path),
+    }
+
+
+def image_continuation_prompt(
+    current_request: str,
+    context: dict[str, Any],
+    visible_assets: list[dict[str, Any]],
+) -> str:
+    history = [
+        {
+            "setId": str(item.get("setId") or ""),
+            "roundNumber": int(item.get("roundNumber") or 0),
+            "userPrompt": str(item.get("userPrompt") or ""),
+            "reasoningSummary": str(item.get("reasoningSummary") or ""),
+            "operation": str(item.get("operation") or "generate"),
+            "inputAssetIds": list(item.get("inputAssetIds") or []),
+            "outputAssetIds": list(item.get("outputAssetIds") or []),
+        }
+        for item in context.get("history") or []
+    ]
+    catalog = [
+        {
+            "assetId": str(asset.get("assetId") or ""),
+            "description": str(asset.get("description") or "")
+            or "尚无缓存描述；除非该素材列在 visibleAssetIds 中，否则不要假定其画面内容。",
+            "sourceSetIds": list(asset.get("sourceSetIds") or []),
+            "sourceRoles": list(asset.get("sourceRoles") or []),
+        }
+        for asset in context.get("assets") or []
+        if asset.get("assetId")
+    ]
+    payload = {
+        "currentRequest": str(current_request),
+        "history": history,
+        "assetCatalog": catalog,
+        "visibleAssetIds": [
+            str(asset.get("assetId") or "")
+            for asset in visible_assets
+            if asset.get("assetId")
+        ],
+        "descriptionRequiredAssetIds": [
+            str(asset.get("assetId") or "")
+            for asset in visible_assets
+            if asset.get("assetId") and not str(asset.get("description") or "").strip()
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def parse_image_asset_descriptions(
+    value: Any,
+    expected_asset_ids: list[str] | tuple[str, ...],
+) -> dict[str, str]:
+    payload = value
+    if isinstance(payload, str):
+        clean_value = payload.strip()
+        if clean_value.startswith("```"):
+            first_line_end = clean_value.find("\n")
+            clean_value = clean_value[first_line_end + 1:] if first_line_end >= 0 else ""
+            if clean_value.endswith("```"):
+                clean_value = clean_value[:-3]
+        try:
+            payload = json.loads(clean_value.strip())
+        except json.JSONDecodeError as exc:
+            raise ValueError("素材描述未返回有效 JSON") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("descriptions"), list):
+        raise ValueError("素材描述必须返回 descriptions 数组")
+    expected_ids = list(dict.fromkeys(str(asset_id) for asset_id in expected_asset_ids))
+    expected_id_set = set(expected_ids)
+    descriptions: dict[str, str] = {}
+    for item in payload["descriptions"]:
+        if not isinstance(item, dict):
+            raise ValueError("素材描述项必须是对象")
+        asset_id = str(item.get("asset_id") or "").strip()
+        description = str(item.get("description") or "").strip()
+        if asset_id not in expected_id_set:
+            raise ValueError("素材描述包含未读取的图片")
+        if not description:
+            raise ValueError("素材描述不能为空")
+        descriptions[asset_id] = description[:1200]
+    if set(descriptions) != expected_id_set:
+        raise ValueError("素材描述必须覆盖本批全部图片")
+    return {asset_id: descriptions[asset_id] for asset_id in expected_ids}
+
+
+def parse_image_continuation_plan(
+    value: Any,
+    available_assets: int | list[str] | tuple[str, ...],
+    visible_asset_ids: list[str] | tuple[str, ...] | set[str] = (),
+    required_description_ids: list[str] | tuple[str, ...] | set[str] = (),
+) -> dict[str, Any]:
+    payload = value
+    if isinstance(payload, str):
+        clean_value = payload.strip()
+        if clean_value.startswith("```"):
+            first_line_end = clean_value.find("\n")
+            clean_value = clean_value[first_line_end + 1:] if first_line_end >= 0 else ""
+            if clean_value.endswith("```"):
+                clean_value = clean_value[:-3]
+        try:
+            payload = json.loads(clean_value.strip())
+        except json.JSONDecodeError as exc:
+            raise ValueError("续作规划未返回有效 JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("续作规划必须是 JSON 对象")
+
+    operation = str(payload.get("operation") or "").strip().lower()
+    if operation not in IMAGE_CONTINUATION_OPERATIONS:
+        raise ValueError("续作规划必须选择 edit 或 generate")
+
+    if not isinstance(available_assets, int):
+        available_ids = list(dict.fromkeys(str(asset_id) for asset_id in available_assets))
+        available_id_set = set(available_ids)
+        raw_asset_ids = payload.get("selected_asset_ids")
+        if not isinstance(raw_asset_ids, list):
+            raise ValueError("续作规划必须返回素材 ID 数组")
+        selected_asset_ids: list[str] = []
+        for raw_asset_id in raw_asset_ids:
+            if not isinstance(raw_asset_id, str):
+                raise ValueError("续作素材 ID 必须是字符串")
+            asset_id = raw_asset_id.strip()
+            if asset_id not in available_id_set:
+                raise ValueError("续作素材 ID 不存在")
+            if asset_id not in selected_asset_ids:
+                selected_asset_ids.append(asset_id)
+        if len(selected_asset_ids) > 16:
+            raise ValueError("续作参考图不能超过 16 张")
+        if operation == "edit" and not selected_asset_ids:
+            raise ValueError("edit 续作至少需要一张参考图")
+
+        raw_descriptions = payload.get("descriptions") or []
+        if not isinstance(raw_descriptions, list):
+            raise ValueError("续作图片描述必须是数组")
+        visible_id_set = set(visible_asset_ids)
+        descriptions: dict[str, str] = {}
+        for item in raw_descriptions:
+            if not isinstance(item, dict):
+                raise ValueError("续作图片描述项必须是对象")
+            asset_id = str(item.get("asset_id") or "").strip()
+            description = str(item.get("description") or "").strip()
+            if asset_id not in visible_id_set:
+                raise ValueError("只能描述本轮实际读取的图片")
+            if not description:
+                raise ValueError("续作图片描述不能为空")
+            descriptions[asset_id] = description[:1200]
+        missing_descriptions = set(required_description_ids) - descriptions.keys()
+        if missing_descriptions:
+            raise ValueError("续作规划必须描述本轮首次读取的全部图片")
+        rationale = str(payload.get("rationale") or "").strip()[:600]
+        if not rationale:
+            raise ValueError("续作规划必须提供可审计理由")
+        return {
+            "operation": operation,
+            "selectedAssetIds": selected_asset_ids,
+            "descriptions": descriptions,
+            "rationale": rationale,
+        }
+
+    reference_count = available_assets
+    raw_indexes = payload.get("selected_reference_indexes")
+    if not isinstance(raw_indexes, list):
+        raise ValueError("续作规划必须返回参考图索引数组")
+    clean_indexes: list[int] = []
+    for raw_index in raw_indexes:
+        if isinstance(raw_index, bool) or not isinstance(raw_index, int):
+            raise ValueError("续作参考图索引必须是整数")
+        if not 0 <= raw_index < reference_count:
+            raise ValueError("续作参考图索引超出范围")
+        if raw_index not in clean_indexes:
+            clean_indexes.append(raw_index)
+    if operation == "edit" and not clean_indexes:
+        raise ValueError("edit 续作至少需要一张参考图")
+    return {
+        "operation": operation,
+        "selectedReferenceIndexes": clean_indexes,
+        "rationale": str(payload.get("rationale") or "").strip()[:600],
+    }
+
+
 IMAGE_AGENT_WEB_TOOLS = (
     {
         "type": "function",
@@ -221,6 +421,46 @@ IMAGE_AGENT_WEB_TOOLS = (
         "strict": True,
     },
 )
+
+IMAGE_CONTINUATION_PLAN_TOOL = {
+    "type": "function",
+    "name": "plan_image_continuation",
+    "description": (
+        "Decide whether this continuation is a local edit or a new generation, select session assets by "
+        "stable asset ID, and describe every newly visible image. Call exactly once before finalizing."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "operation": {"type": "string", "enum": ["edit", "generate"]},
+            "selected_asset_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 16,
+            },
+            "descriptions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "asset_id": {"type": "string"},
+                        "description": {"type": "string"},
+                    },
+                    "required": ["asset_id", "description"],
+                    "additionalProperties": False,
+                },
+                "maxItems": 16,
+            },
+            "rationale": {
+                "type": "string",
+                "description": "Brief auditable explanation of the operation and asset selection.",
+            },
+        },
+        "required": ["operation", "selected_asset_ids", "descriptions", "rationale"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
 
 
 class NetworkTransportError(RuntimeError):
@@ -2745,6 +2985,8 @@ class AppController:
         self.update_lock = threading.Lock()
         self.image_stream_debug_lock = threading.Lock()
         self.active_image_sets: set[str] = set()
+        self.image_session_activity_lock = threading.Lock()
+        self.active_image_sessions: set[str] = set()
         full_release_notes = bundled_changelog()
         self.update_state: dict[str, Any] = {
             "status": "idle",
@@ -2902,6 +3144,36 @@ class AppController:
     def _image_session_store() -> ImageSessionStore:
         return ImageSessionStore(generated_pictures_dir())
 
+    def _image_session_activity_state(self) -> tuple[threading.Lock, set[str]]:
+        lock = getattr(self, "image_session_activity_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self.image_session_activity_lock = lock
+        active_sessions = getattr(self, "active_image_sessions", None)
+        if active_sessions is None:
+            active_sessions = set()
+            self.active_image_sessions = active_sessions
+        return lock, active_sessions
+
+    def _reserve_image_session_activity(self, session_id: str) -> bool:
+        lock, active_sessions = self._image_session_activity_state()
+        clean_session_id = str(session_id or "")
+        with lock:
+            if clean_session_id in active_sessions:
+                return False
+            active_sessions.add(clean_session_id)
+            return True
+
+    def _release_image_session_activity(self, session_id: str) -> None:
+        lock, active_sessions = self._image_session_activity_state()
+        with lock:
+            active_sessions.discard(str(session_id or ""))
+
+    def _image_session_is_active(self, session_id: str) -> bool:
+        lock, active_sessions = self._image_session_activity_state()
+        with lock:
+            return str(session_id or "") in active_sessions
+
     def list_image_sets(self) -> dict[str, Any]:
         try:
             sets = self._image_session_store().list_sets()
@@ -2984,11 +3256,11 @@ class AppController:
 
     def delete_image_set(self, session_id: str, set_id: str) -> dict[str, Any]:
         active_sets = getattr(self, "active_image_sets", set())
-        if str(set_id) in active_sets:
-            return {"ok": False, "error": "图片集仍在生成中，暂时不能删除"}
+        if str(set_id) in active_sets or self._image_session_is_active(session_id):
+            return {"ok": False, "error": "图片会话仍在生成中，暂时不能删除"}
         try:
             deleted = self._image_session_store().delete_set(session_id, set_id)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             return {"ok": False, "error": f"删除图片集失败：{exc}"}
         if not deleted:
             return {"ok": False, "error": "图片集不存在或已被删除"}
@@ -3067,8 +3339,31 @@ class AppController:
 
     def _on_page_loaded(self) -> None:
         trace_startup("webview_page_loaded")
+        self._disable_native_zoom_control()
         if self.asset_cache.is_ready():
             self.frontend_ready.set()
+
+    def _disable_native_zoom_control(self) -> bool:
+        native_form = getattr(self.window, "native", None) if self.window else None
+        if native_form is None:
+            return False
+
+        def disable_zoom() -> None:
+            native_webview = getattr(native_form, "webview", None)
+            core_webview = getattr(native_webview, "CoreWebView2", None) if native_webview else None
+            if core_webview is not None:
+                core_webview.Settings.IsZoomControlEnabled = False
+
+        try:
+            if native_form.InvokeRequired:
+                from System import Action
+
+                native_form.BeginInvoke(Action(disable_zoom))
+            else:
+                disable_zoom()
+            return True
+        except Exception:
+            return False
 
     def set_ui_visible(self, visible: Any) -> dict[str, Any]:
         self.visible = bool(visible)
@@ -4139,6 +4434,124 @@ class AppController:
             "reasoningEffort": PROMPT_POLISH_REASONING_EFFORT,
         }
 
+    def _run_instant_image_continuation_planner(
+        self,
+        record: Any,
+        secret: str,
+        current_request: str,
+        context: dict[str, Any],
+        visible_assets: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        visible_asset_ids = [
+            str(asset.get("assetId") or "")
+            for asset in visible_assets
+            if asset.get("assetId")
+        ]
+        required_description_ids = [
+            str(asset.get("assetId") or "")
+            for asset in visible_assets
+            if asset.get("assetId") and not str(asset.get("description") or "").strip()
+        ]
+        available_asset_ids = [
+            str(asset.get("assetId") or "")
+            for asset in context.get("assets") or []
+            if asset.get("assetId")
+        ]
+        planning_input = image_continuation_prompt(
+            current_request,
+            context,
+            visible_assets,
+        )
+        visible_paths = tuple(
+            Path(str(asset.get("path") or ""))
+            for asset in visible_assets
+            if Path(str(asset.get("path") or "")).is_file()
+        )
+        output = self.client.stream_response(
+            record["base_url"],
+            secret,
+            IMAGE_CONTINUATION_PLANNER_MODEL,
+            (
+                "你是图片续作的隐藏轻量路由器。只判断本轮应做局部 edit 还是 generate 延续创作，"
+                "并从素材目录中选择真正需要送给图片模型的 assetId。edit 必须选图；generate 可选图"
+                "以保持角色、物体或世界观一致性，也可不选。完整保留用户本轮原始请求，不润色、"
+                "不反思、不联网。你实际看到的图片按 visibleAssetIds 顺序附在文字后；必须为"
+                "descriptionRequiredAssetIds 中每张图写一条客观、可复用的视觉描述。只输出 JSON："
+                '{"operation":"edit|generate","selected_asset_ids":[],"descriptions":'
+                '[{"asset_id":"...","description":"..."}],"rationale":"..."}'
+            ),
+            self._agent_input(planning_input, visible_paths),
+            reasoning_effort=IMAGE_CONTINUATION_PLANNER_EFFORT,
+        )
+        return parse_image_continuation_plan(
+            output,
+            available_asset_ids,
+            visible_asset_ids,
+            required_description_ids,
+        )
+
+    def _describe_image_asset_batch(
+        self,
+        record: Any,
+        secret: str,
+        assets: list[dict[str, Any]],
+    ) -> dict[str, str]:
+        if not assets or len(assets) > 16:
+            raise ValueError("单批素材描述必须包含 1 到 16 张图片")
+        asset_ids = [str(asset.get("assetId") or "") for asset in assets]
+        image_paths = tuple(
+            Path(str(asset.get("path") or ""))
+            for asset in assets
+            if Path(str(asset.get("path") or "")).is_file()
+        )
+        if len(image_paths) != len(assets) or any(not asset_id for asset_id in asset_ids):
+            raise ValueError("待描述素材不可用")
+        output = self.client.stream_response(
+            record["base_url"],
+            secret,
+            IMAGE_CONTINUATION_PLANNER_MODEL,
+            (
+                "你是图片素材描述器。按输入 assetIds 与随后图片的相同顺序，为每张图写一条客观、"
+                "紧凑、可跨轮复用的视觉描述，覆盖主体身份特征、构图、环境和关键风格；不要推测"
+                "看不见的信息，不润色用户请求，不反思，不联网。只输出 JSON："
+                '{"descriptions":[{"asset_id":"...","description":"..."}]}'
+            ),
+            self._agent_input(
+                json.dumps({"assetIds": asset_ids}, ensure_ascii=False),
+                image_paths,
+            ),
+            reasoning_effort=IMAGE_CONTINUATION_PLANNER_EFFORT,
+        )
+        return parse_image_asset_descriptions(output, asset_ids)
+
+    def _cache_undescribed_image_assets(
+        self,
+        record: Any,
+        secret: str,
+        session_store: ImageSessionStore,
+        session_id: str,
+        parent_set_id: str,
+        context: dict[str, Any],
+        visible_asset_ids: list[str],
+    ) -> dict[str, Any]:
+        undescribed_assets = [
+            asset
+            for asset in context.get("assets") or []
+            if asset.get("assetId")
+            and asset.get("assetId") not in visible_asset_ids
+            and not str(asset.get("description") or "").strip()
+        ]
+        for batch_start in range(0, len(undescribed_assets), 16):
+            descriptions = self._describe_image_asset_batch(
+                record,
+                secret,
+                undescribed_assets[batch_start:batch_start + 16],
+            )
+            session_store.update_asset_descriptions(session_id, descriptions)
+        if not undescribed_assets:
+            return context
+        return session_store.continuation_context(session_id, parent_set_id)
+
     def _run_image_prompt_agent(
         self,
         record: Any,
@@ -4148,7 +4561,10 @@ class AppController:
         reasoning_mode: str,
         web_search_enabled: bool,
         emit: Any,
+        continuation_context: dict[str, Any] | None = None,
+        visible_assets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        reasoning_started_at = time.perf_counter()
         config = IMAGE_REASONING_MODES[reasoning_mode]
         model = str(config["model"])
         reasoning_effort = str(config["effort"])
@@ -4164,6 +4580,26 @@ class AppController:
         selection_submitted = False
         web_search_calls = 0
         web_search_succeeded = False
+        continuation_enabled = bool(continuation_context)
+        clean_visible_assets = list(visible_assets or [])
+        available_assets = list((continuation_context or {}).get("assets") or [])
+        visible_asset_ids = [
+            str(asset.get("assetId") or "")
+            for asset in clean_visible_assets
+            if asset.get("assetId")
+        ]
+        required_description_ids = [
+            str(asset.get("assetId") or "")
+            for asset in clean_visible_assets
+            if asset.get("assetId") and not str(asset.get("description") or "").strip()
+        ]
+        asset_by_id = {
+            str(asset.get("assetId") or ""): asset
+            for asset in available_assets
+            if asset.get("assetId")
+        }
+        continuation_plan: dict[str, Any] | None = None
+        plan_submitted = False
 
         def on_delta(delta: str) -> None:
             nonlocal complete_text, published_length
@@ -4222,16 +4658,32 @@ class AppController:
                 "必要检索并比较全部候选后，再统一调用 select_visual_references 提交最终采用列表。"
                 f"当前模式最多采用 {max_reference_count} 张真正有帮助的视觉参考；宁缺毋滥。"
             )
+        if continuation_enabled:
+            instructions += (
+                "这是跨轮图片续作。输入包含本轮原始请求、截至父轮的完整用户输入历史、可审计摘要、"
+                "素材文字目录，以及按 visibleAssetIds 顺序附带的父轮产出图。第一轮必须调用一次"
+                " plan_image_continuation：独立判断本轮是局部 edit 还是 generate 延续创作，并按"
+                " assetId 选择最终图片模型需要的会话素材。edit 必须选图；generate 也可以选图保持"
+                "角色、物体和世界观一致性。必须为 descriptionRequiredAssetIds 中每张首次读取图片"
+                "提供客观、可复用的描述。更早素材先依据缓存描述筛选；工具返回被选素材原图后再检查"
+                "其画面，并把操作和素材选择纳入后续搜索、反思及最终提示词。"
+            )
         instructions += (
             f"摘要结束后单独输出标记 {PROMPT_RESULT_MARKER}，标记后只写可直接提交给图片模型的最终提示词。"
         )
-        initial_input = self._agent_input(prompt, image_paths)
+        initial_prompt = (
+            image_continuation_prompt(prompt, continuation_context or {}, clean_visible_assets)
+            if continuation_enabled
+            else prompt
+        )
+        initial_input = self._agent_input(initial_prompt, image_paths)
         if isinstance(initial_input, list):
             current_input: list[dict[str, Any]] = list(initial_input)
         else:
             current_input = [{"role": "user", "content": initial_input}]
         output = ""
-        for turn_index in range(max_agent_turns):
+        total_agent_turns = max_agent_turns + (1 if continuation_enabled else 0)
+        for turn_index in range(total_agent_turns):
             current_turn = turn_index + 1
             current_turn_start = published_length
             emit(
@@ -4240,11 +4692,18 @@ class AppController:
                 title="正在分析问题" if current_turn == 1 else "正在完善方案",
             )
             completed_payloads: list[dict[str, Any]] = []
-            tools = (
-                list(IMAGE_AGENT_WEB_TOOLS)
-                if web_search_enabled and turn_index < max_agent_turns - 1 and not selection_submitted
-                else None
-            )
+            if continuation_enabled and not plan_submitted:
+                tools = [IMAGE_CONTINUATION_PLAN_TOOL]
+                tool_choice = "required"
+            else:
+                tools = (
+                    list(IMAGE_AGENT_WEB_TOOLS)
+                    if web_search_enabled
+                    and turn_index < total_agent_turns - 1
+                    and not selection_submitted
+                    else None
+                )
+                tool_choice = "auto" if tools else None
             output = self.client.stream_response(
                 record["base_url"],
                 secret,
@@ -4254,7 +4713,7 @@ class AppController:
                 on_delta=on_delta,
                 reasoning_effort=reasoning_effort,
                 tools=tools,
-                tool_choice="auto" if tools else None,
+                tool_choice=tool_choice,
                 parallel_tool_calls=True if tools else None,
                 on_completed=completed_payloads.append,
                 allow_empty_text=bool(tools),
@@ -4424,6 +4883,81 @@ class AppController:
                             else call.get("resultCount", 0)
                         ),
                     )
+                elif name == "plan_image_continuation":
+                    try:
+                        continuation_plan = parse_image_continuation_plan(
+                            call["arguments"],
+                            list(asset_by_id),
+                            visible_asset_ids,
+                            required_description_ids,
+                        )
+                        plan_submitted = True
+                        plan_output: list[dict[str, str]] = [
+                            {
+                                "type": "input_text",
+                                "text": json.dumps(
+                                    {
+                                        "operation": continuation_plan["operation"],
+                                        "selectedAssetIds": continuation_plan["selectedAssetIds"],
+                                        "rationale": continuation_plan["rationale"],
+                                        "message": "已加载选中的更早素材；父轮可见素材沿用初始输入。",
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            }
+                        ]
+                        for asset_id in continuation_plan["selectedAssetIds"]:
+                            if asset_id in visible_asset_ids:
+                                continue
+                            asset = asset_by_id[asset_id]
+                            asset_path = Path(str(asset.get("path") or ""))
+                            if not asset_path.is_file():
+                                continue
+                            plan_output.extend(
+                                [
+                                    {
+                                        "type": "input_text",
+                                        "text": json.dumps(
+                                            {
+                                                "assetId": asset_id,
+                                                "description": str(asset.get("description") or ""),
+                                            },
+                                            ensure_ascii=False,
+                                        ),
+                                    },
+                                    {
+                                        "type": "input_image",
+                                        "image_url": image_preview_data_url(
+                                            asset_path.read_bytes(), max_side=1024
+                                        ),
+                                    },
+                                ]
+                            )
+                        tool_output = plan_output
+                        emit(
+                            "react_continuation_planned",
+                            operation=continuation_plan["operation"],
+                            selectedAssetIds=continuation_plan["selectedAssetIds"],
+                            rationale=continuation_plan["rationale"],
+                        )
+                        emit(
+                            "react_tool_completed",
+                            turn=current_turn,
+                            callId=call_id,
+                            tool=name,
+                            resultCount=len(continuation_plan["selectedAssetIds"]),
+                        )
+                    except (OSError, ValueError) as exc:
+                        tool_output = json.dumps(
+                            {"ok": False, "error": str(exc)[:500]}, ensure_ascii=False
+                        )
+                        emit(
+                            "react_tool_failed",
+                            turn=current_turn,
+                            callId=call_id,
+                            tool=name,
+                            error=str(exc),
+                        )
                 elif name == "select_visual_references":
                     arguments = call["arguments"]
                     try:
@@ -4485,14 +5019,22 @@ class AppController:
                 )
         else:
             raise RuntimeError("ReAct 工具调用次数超过限制")
+        if continuation_enabled and continuation_plan is None:
+            raise RuntimeError("ReAct 未返回续作操作与素材规划")
         output = complete_text or output
         marker_index = output.find(PROMPT_RESULT_MARKER)
         if marker_index < 0:
             raise RuntimeError("ReAct 未返回最终提示词标记")
         summary = output[:marker_index].strip()
         final_prompt = output[marker_index + len(PROMPT_RESULT_MARKER):].strip()
+        if not summary:
+            raise RuntimeError("ReAct 未返回可审计工作摘要")
         if not final_prompt:
             raise RuntimeError("ReAct 未返回最终提示词")
+        reasoning_duration_ms = max(
+            1,
+            round((time.perf_counter() - reasoning_started_at) * 1000),
+        )
         emit(
             "react_completed",
             mode=reasoning_mode,
@@ -4505,6 +5047,7 @@ class AppController:
             webSearchFailed=web_search_calls > 0 and not web_search_succeeded,
             webSearchResultCount=len(candidate_by_id),
             webReferenceCount=len(selected_ids),
+            reasoningDurationMs=reasoning_duration_ms,
         )
         return {
             "prompt": final_prompt,
@@ -4516,6 +5059,8 @@ class AppController:
             "webSearchResultCount": len(candidate_by_id),
             "webCandidates": [candidate_by_id[candidate_id] for candidate_id in selected_ids],
             "webSelectionRationale": selected_rationale,
+            "continuationPlan": continuation_plan,
+            "reasoningDurationMs": reasoning_duration_ms,
         }
 
     def generate_image(
@@ -4536,6 +5081,9 @@ class AppController:
         request_id = str(clean_options.get("requestId") or uuid.uuid4().hex)[:80]
         session_id = str(clean_options.get("sessionId") or request_id)[:80]
         parent_set_id = str(clean_options.get("parentSetId") or "")[:80]
+        continuation_enabled = bool(clean_options.get("continuation") or parent_set_id)
+        if continuation_enabled and not parent_set_id:
+            return {"ok": False, "error": "续作请求缺少来源轮次"}
         reasoning_mode = str(clean_options.get("reasoningMode") or "instant").lower()
         if reasoning_mode not in {"instant", *IMAGE_REASONING_MODES}:
             return {"ok": False, "error": "无效的思维模式"}
@@ -4550,17 +5098,50 @@ class AppController:
                 "moderation": "low",
                 "stream": True,
                 "partialImages": 3,
+                "continuation": continuation_enabled,
             }
         )
         try:
-            request = prepare_image_generation(prompt, image_paths, clean_options)
+            validation_options = dict(clean_options)
+            if continuation_enabled:
+                validation_options["operation"] = "generate"
+            request = prepare_image_generation(prompt, image_paths, validation_options)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
+        clean_options["operation"] = request.operation
+        submitted_image_paths = tuple(request.image_paths)
+        if not continuation_enabled and submitted_image_paths:
+            clean_options["inputReferencePaths"] = [
+                str(path) for path in submitted_image_paths
+            ]
 
         record = self.store.get_key_record(str(key_id or ""))
         if record is None:
             return {"ok": False, "error": "请选择有效的 API Key"}
         secret = self.store.get_secret(record["id"])
+        session_store = self._image_session_store()
+        session_activity_reserved = False
+        pending_asset_source = False
+
+        if continuation_enabled:
+            if not self._reserve_image_session_activity(session_id):
+                return {"ok": False, "error": "该图片会话正在生成中，请稍后再试"}
+            session_activity_reserved = True
+
+        def discard_pending_assets() -> None:
+            if not pending_asset_source:
+                return
+            try:
+                session_store.discard_asset_source(session_id, request_id)
+            except OSError:
+                pass
+
+        def release_session_activity() -> None:
+            nonlocal session_activity_reserved
+            if not session_activity_reserved:
+                return
+            self._release_image_session_activity(session_id)
+            session_activity_reserved = False
 
         def emit(event_type: str, item_index: int | None = None, **details: Any) -> None:
             if event_callback is None:
@@ -4581,9 +5162,11 @@ class AppController:
                 pass
 
         original_prompt = request.prompt
+        final_prompt = original_prompt
         reasoning_summary = ""
         reasoning_model = ""
         reasoning_effort = ""
+        reasoning_duration_ms = 0
         web_search_used = False
         web_search_failed = False
         web_search_result_count = 0
@@ -4591,6 +5174,77 @@ class AppController:
         persisted_web_references: list[dict[str, Any]] = []
         web_reference_paths: tuple[Path, ...] = ()
         web_reference_dir = app_data_dir() / "image-search-references" / request_id
+        continuation_context: dict[str, Any] = {}
+        visible_assets: list[dict[str, Any]] = []
+        continuation_plan: dict[str, Any] | None = None
+        selected_asset_ids: list[str] = []
+        selected_asset_paths: list[str] = []
+        if continuation_enabled:
+            try:
+                continuation_context = session_store.continuation_context(
+                    session_id,
+                    parent_set_id,
+                )
+                if not continuation_context:
+                    release_session_activity()
+                    return {"ok": False, "error": "找不到续作来源轮次"}
+                registered_inputs = session_store.register_assets(
+                    session_id,
+                    request.image_paths,
+                    request_id,
+                    "input",
+                )
+                pending_asset_source = bool(request.image_paths)
+                if registered_inputs:
+                    continuation_context = session_store.continuation_context(
+                        session_id,
+                        parent_set_id,
+                    )
+                visible_asset_ids = list(
+                    dict.fromkeys(
+                        [
+                            *list(continuation_context.get("parentOutputAssetIds") or []),
+                            *[
+                                str(asset.get("assetId") or "")
+                                for asset in registered_inputs
+                                if asset.get("assetId")
+                            ],
+                        ]
+                    )
+                )
+                if len(visible_asset_ids) > 16:
+                    raise ValueError("父轮输出与本轮新参考图合计不能超过 16 张")
+                continuation_context = self._cache_undescribed_image_assets(
+                    record,
+                    secret,
+                    session_store,
+                    session_id,
+                    parent_set_id,
+                    continuation_context,
+                    visible_asset_ids,
+                )
+                asset_by_id = {
+                    str(asset.get("assetId") or ""): asset
+                    for asset in continuation_context.get("assets") or []
+                    if asset.get("assetId")
+                }
+                visible_assets = [
+                    asset_by_id[asset_id]
+                    for asset_id in visible_asset_ids
+                    if asset_id in asset_by_id
+                ]
+                if reasoning_mode == "instant":
+                    continuation_plan = self._run_instant_image_continuation_planner(
+                        record,
+                        secret,
+                        original_prompt,
+                        continuation_context,
+                        visible_assets,
+                    )
+            except (OSError, RuntimeError, ValueError) as exc:
+                discard_pending_assets()
+                release_session_activity()
+                return {"ok": False, "error": f"续作规划失败：{exc}"}
         if reasoning_mode != "instant":
             reasoning_effort = str(IMAGE_REASONING_MODES[reasoning_mode]["effort"])
             try:
@@ -4598,25 +5252,95 @@ class AppController:
                     record,
                     secret,
                     original_prompt,
-                    request.image_paths,
+                    tuple(
+                        Path(str(asset.get("path") or ""))
+                        for asset in visible_assets
+                        if Path(str(asset.get("path") or "")).is_file()
+                    )
+                    if continuation_enabled
+                    else request.image_paths,
                     reasoning_mode,
                     web_search_enabled,
                     emit,
+                    continuation_context if continuation_enabled else None,
+                    visible_assets if continuation_enabled else None,
                 )
                 final_prompt = str(agent_result["prompt"])
                 reasoning_summary = str(agent_result["summary"])
                 reasoning_model = str(agent_result["model"])
+                reasoning_duration_ms = int(agent_result.get("reasoningDurationMs") or 0)
                 web_search_enabled = bool(agent_result.get("webSearchEnabled"))
                 web_search_used = bool(agent_result.get("webSearchUsed"))
                 web_search_failed = bool(agent_result.get("webSearchFailed"))
                 web_search_result_count = int(agent_result.get("webSearchResultCount") or 0)
+                if continuation_enabled:
+                    continuation_plan = agent_result.get("continuationPlan")
+            except (RuntimeError, OSError, ValueError) as exc:
+                discard_pending_assets()
+                release_session_activity()
+                shutil.rmtree(web_reference_dir, ignore_errors=True)
+                emit("react_failed", mode=reasoning_mode, error=str(exc))
+                return {"ok": False, "error": f"思维处理失败：{exc}"}
+        if continuation_enabled:
+            if not isinstance(continuation_plan, dict):
+                discard_pending_assets()
+                release_session_activity()
+                return {"ok": False, "error": "续作规划未返回有效结果"}
+            selected_asset_ids = list(continuation_plan.get("selectedAssetIds") or [])
+            descriptions = dict(continuation_plan.get("descriptions") or {})
+            try:
+                session_store.update_asset_descriptions(session_id, descriptions)
+            except (OSError, RuntimeError) as exc:
+                discard_pending_assets()
+                release_session_activity()
+                return {"ok": False, "error": f"无法保存素材描述：{exc}"}
+            asset_by_id = {
+                str(asset.get("assetId") or ""): asset
+                for asset in continuation_context.get("assets") or []
+                if asset.get("assetId")
+            }
+            selected_asset_paths = [
+                str(asset_by_id[asset_id]["path"])
+                for asset_id in selected_asset_ids
+                if asset_id in asset_by_id and Path(str(asset_by_id[asset_id].get("path") or "")).is_file()
+            ]
+            clean_options.update(
+                {
+                    "operation": str(continuation_plan["operation"]),
+                    "continuationRationale": str(continuation_plan.get("rationale") or ""),
+                    "selectedAssetIds": selected_asset_ids,
+                    "inputAssetIds": selected_asset_ids,
+                    "inputReferencePaths": selected_asset_paths,
+                }
+            )
+            try:
+                request = prepare_image_generation(
+                    final_prompt,
+                    selected_asset_paths,
+                    clean_options,
+                )
+            except ValueError as exc:
+                discard_pending_assets()
+                release_session_activity()
+                return {"ok": False, "error": f"续作规划失败：{exc}"}
+        elif reasoning_mode != "instant":
+            request = prepare_image_generation(
+                final_prompt,
+                [str(path) for path in request.image_paths],
+                clean_options,
+            )
+        if reasoning_mode != "instant":
+            try:
                 available_slots = max(0, 16 - len(request.image_paths))
                 web_candidates = list(agent_result.get("webCandidates") or [])
                 if web_candidates and available_slots:
                     staged_web_references = self.web_search.stage_reference_records(
                         web_candidates,
                         web_reference_dir,
-                        min(int(IMAGE_REASONING_MODES[reasoning_mode]["max_references"]), available_slots),
+                        min(
+                            int(IMAGE_REASONING_MODES[reasoning_mode]["max_references"]),
+                            available_slots,
+                        ),
                     )
                     web_reference_paths = tuple(
                         Path(reference["path"]) for reference in staged_web_references
@@ -4624,7 +5348,9 @@ class AppController:
                 combined_paths = [str(path) for path in request.image_paths]
                 combined_paths.extend(str(path) for path in web_reference_paths)
                 request = prepare_image_generation(final_prompt, combined_paths, clean_options)
-            except (RuntimeError, OSError, ValueError) as exc:
+            except (OSError, RuntimeError, ValueError) as exc:
+                discard_pending_assets()
+                release_session_activity()
                 shutil.rmtree(web_reference_dir, ignore_errors=True)
                 emit("react_failed", mode=reasoning_mode, error=str(exc))
                 return {"ok": False, "error": f"思维处理失败：{exc}"}
@@ -4634,16 +5360,16 @@ class AppController:
                 "reasoningModel": reasoning_model,
                 "reasoningEffort": reasoning_effort,
                 "reasoningSummary": reasoning_summary,
+                "reasoningDurationMs": reasoning_duration_ms,
                 "originalPrompt": original_prompt,
                 "webSearchEnabled": web_search_enabled,
                 "webSearchUsed": web_search_used,
                 "webSearchFailed": web_search_failed,
                 "webSearchResultCount": web_search_result_count,
                 "webReferenceCount": len(web_reference_paths),
+                "operation": request.operation,
             }
         )
-        managed_output_dir = app_data_dir() / "image-generations"
-        session_store = self._image_session_store()
         try:
             round_data = session_store.begin_round(
                 session_id,
@@ -4655,6 +5381,8 @@ class AppController:
                 parent_set_id=parent_set_id,
             )
         except OSError as exc:
+            discard_pending_assets()
+            release_session_activity()
             shutil.rmtree(web_reference_dir, ignore_errors=True)
             return {"ok": False, "error": f"无法创建图片集：{exc}"}
         active_sets = getattr(self, "active_image_sets", None)
@@ -4662,6 +5390,36 @@ class AppController:
             active_sets = set()
             self.active_image_sets = active_sets
         active_sets.add(request_id)
+
+        if not continuation_enabled and submitted_image_paths:
+            try:
+                registered_inputs = session_store.register_assets(
+                    session_id,
+                    submitted_image_paths,
+                    request_id,
+                    "input",
+                )
+                input_asset_ids = [
+                    str(asset.get("assetId") or "")
+                    for asset in registered_inputs
+                    if asset.get("assetId")
+                ]
+                session_store.update_round_options(
+                    session_id,
+                    request_id,
+                    {
+                        "inputAssetIds": input_asset_ids,
+                        "selectedAssetIds": input_asset_ids,
+                    },
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                active_sets.discard(request_id)
+                release_session_activity()
+                try:
+                    session_store.delete_set(session_id, request_id)
+                except (OSError, RuntimeError):
+                    pass
+                return {"ok": False, "error": f"无法保存参考素材：{exc}"}
 
         if staged_web_references:
             try:
@@ -4672,6 +5430,7 @@ class AppController:
                 )
             except (OSError, RuntimeError, ValueError) as exc:
                 active_sets.discard(request_id)
+                release_session_activity()
                 shutil.rmtree(web_reference_dir, ignore_errors=True)
                 try:
                     session_store.delete_set(session_id, request_id)
@@ -4684,12 +5443,17 @@ class AppController:
             requestedCount=image_count,
             prompt=request.prompt,
             referenceCount=len(request.image_paths),
+            operation=request.operation,
+            continuation=continuation_enabled,
+            continuationRationale=str((continuation_plan or {}).get("rationale") or ""),
+            selectedAssetIds=selected_asset_ids,
             roundNumber=int(round_data["roundNumber"]),
             originalPrompt=original_prompt,
             reasoningMode=reasoning_mode,
             reasoningModel=reasoning_model,
             reasoningEffort=reasoning_effort,
             reasoningSummary=reasoning_summary,
+            reasoningDurationMs=reasoning_duration_ms,
             webSearchEnabled=web_search_enabled,
             webSearchUsed=web_search_used,
             webSearchFailed=web_search_failed,
@@ -4709,7 +5473,11 @@ class AppController:
                     record["base_url"],
                     secret,
                     request,
-                    managed_output_dir,
+                    session_store.root
+                    / session_store._safe_id(session_id)
+                    / str(round_data["directory"])
+                    / "process-images"
+                    / f"item-{item_index + 1:03d}",
                     on_partial=on_partial,
                 )
                 source_path = Path(result["path"])
@@ -4747,6 +5515,7 @@ class AppController:
                     items.append(future.result())
         except BaseException:
             active_sets.discard(request_id)
+            release_session_activity()
             shutil.rmtree(web_reference_dir, ignore_errors=True)
             raise
         items.sort(key=lambda item: int(item.get("itemIndex") or 0))
@@ -4763,7 +5532,13 @@ class AppController:
             "reasoningModel": reasoning_model,
             "reasoningEffort": reasoning_effort,
             "reasoningSummary": reasoning_summary,
+            "reasoningDurationMs": reasoning_duration_ms,
             "referenceCount": len(request.image_paths),
+            "operation": request.operation,
+            "transportOperation": "edit" if request.image_paths else "generate",
+            "continuation": continuation_enabled,
+            "continuationRationale": str((continuation_plan or {}).get("rationale") or ""),
+            "selectedAssetIds": selected_asset_ids,
             "webSearchEnabled": web_search_enabled,
             "webSearchUsed": web_search_used,
             "webSearchFailed": web_search_failed,
@@ -4777,6 +5552,7 @@ class AppController:
             session_store.complete_round(session_id, request_id)
         finally:
             active_sets.discard(request_id)
+            release_session_activity()
             shutil.rmtree(web_reference_dir, ignore_errors=True)
         result.update(
             {
@@ -4785,7 +5561,15 @@ class AppController:
                 "roundNumber": int(round_data["roundNumber"]),
             }
         )
-        emit("set_completed", items=items, ok=bool(successful))
+        emit(
+            "set_completed",
+            items=items,
+            ok=bool(successful),
+            operation=request.operation,
+            continuation=continuation_enabled,
+            continuationRationale=str((continuation_plan or {}).get("rationale") or ""),
+            selectedAssetIds=selected_asset_ids,
+        )
         return result
 
     def delete_key(self, key_id: str) -> dict[str, Any]:
