@@ -7,6 +7,7 @@ import ctypes
 import hashlib
 from html import unescape
 from html.parser import HTMLParser
+import http.client
 import ipaddress
 import io
 import json
@@ -49,7 +50,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.22"
+APP_VERSION = "1.0.23"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -1598,6 +1599,106 @@ def safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def response_usage_metrics(payload: Any) -> dict[str, Any]:
+    source = payload if isinstance(payload, dict) else {}
+    usage = source.get("usage")
+    if not isinstance(usage, dict):
+        response = source.get("response")
+        usage = response.get("usage") if isinstance(response, dict) else {}
+    if not isinstance(usage, dict):
+        usage = {}
+
+    def token_value(*names: str) -> int:
+        for name in names:
+            if name not in usage:
+                continue
+            try:
+                return max(0, int(usage[name]))
+            except (TypeError, ValueError):
+                continue
+        return 0
+
+    def cost_value(value: Any) -> float | None:
+        if isinstance(value, dict):
+            for name in ("total", "cost", "amount", "value", "usd"):
+                if name in value:
+                    parsed = cost_value(value[name])
+                    if parsed is not None:
+                        return parsed
+            return None
+        try:
+            parsed = float(str(value).strip().lstrip("$"))
+        except (TypeError, ValueError):
+            return None
+        return parsed if math.isfinite(parsed) and parsed >= 0 else None
+
+    input_tokens = token_value("input_tokens", "inputTokens", "prompt_tokens", "promptTokens")
+    output_tokens = token_value(
+        "output_tokens", "outputTokens", "completion_tokens", "completionTokens"
+    )
+    total_tokens = token_value("total_tokens", "totalTokens")
+    if not total_tokens and (input_tokens or output_tokens):
+        total_tokens = input_tokens + output_tokens
+    has_token_usage = any(
+        name in usage
+        for name in (
+            "input_tokens", "inputTokens", "prompt_tokens", "promptTokens",
+            "output_tokens", "outputTokens", "completion_tokens", "completionTokens",
+            "total_tokens", "totalTokens",
+        )
+    )
+    cost = None
+    for container in (usage, source):
+        for name in ("cost", "total_cost", "totalCost", "cost_usd", "costUsd"):
+            if name not in container:
+                continue
+            cost = cost_value(container[name])
+            if cost is not None:
+                break
+        if cost is not None:
+            break
+    return {
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "totalTokens": total_tokens,
+        "callCount": 1,
+        "costUsd": cost or 0.0,
+        "hasTokenUsage": has_token_usage,
+        "hasCost": cost is not None,
+    }
+
+
+def total_usage_cost(payload: Any) -> float | None:
+    source = payload if isinstance(payload, dict) else {}
+    usage = source.get("usage")
+    total = usage.get("total") if isinstance(usage, dict) else None
+    value = total.get("cost") if isinstance(total, dict) else None
+    try:
+        cost = float(value)
+    except (TypeError, ValueError):
+        return None
+    return cost if math.isfinite(cost) and cost >= 0 else None
+
+
+def merge_reasoning_usage(current: Any, update: Any) -> dict[str, Any]:
+    left = current if isinstance(current, dict) else {}
+    right = update if isinstance(update, dict) else {}
+    return {
+        "inputTokens": max(0, int(left.get("inputTokens") or 0))
+        + max(0, int(right.get("inputTokens") or 0)),
+        "outputTokens": max(0, int(left.get("outputTokens") or 0))
+        + max(0, int(right.get("outputTokens") or 0)),
+        "totalTokens": max(0, int(left.get("totalTokens") or 0))
+        + max(0, int(right.get("totalTokens") or 0)),
+        "callCount": max(0, int(left.get("callCount") or 0))
+        + max(0, int(right.get("callCount") or 0)),
+        "costUsd": max(0.0, safe_float(left.get("costUsd")))
+        + max(0.0, safe_float(right.get("costUsd"))),
+        "hasTokenUsage": bool(left.get("hasTokenUsage") or right.get("hasTokenUsage")),
+        "hasCost": bool(left.get("hasCost") or right.get("hasCost")),
+    }
+
+
 def load_pressure_from_usage_percent(usage_percent: float) -> float:
     value = max(0.0, safe_float(usage_percent))
     pressure_points = (
@@ -1748,7 +1849,10 @@ def html_text(value: Any) -> str:
 
 
 def require_public_https_url(value: Any) -> str:
-    url = str(value or "").strip()
+    raw_url = str(value or "")
+    if any(ord(character) < 32 or ord(character) == 127 for character in raw_url):
+        raise ValueError("图片地址包含控制字符")
+    url = raw_url.strip()
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme.lower() != "https" or not parsed.hostname:
         raise ValueError("仅允许公开 HTTPS 图片地址")
@@ -1769,7 +1873,29 @@ def require_public_https_url(value: Any) -> str:
             raise ValueError("图片地址无法解析") from exc
     if not addresses or any(not address.is_global for address in addresses):
         raise ValueError("图片地址不能指向非公开网络")
-    return urllib.parse.urlunsplit(parsed)
+    hostname = hostname.encode("idna").decode("ascii")
+    netloc = f"[{hostname}]" if ":" in hostname else hostname
+    if parsed.port == 443:
+        netloc += ":443"
+    path = urllib.parse.quote(
+        parsed.path,
+        safe="/:@-._~!$&'*+,;=%",
+        encoding="utf-8",
+        errors="strict",
+    )
+    query = urllib.parse.quote(
+        parsed.query,
+        safe="/?:@-._~!$&'*+,;=%",
+        encoding="utf-8",
+        errors="strict",
+    )
+    fragment = urllib.parse.quote(
+        parsed.fragment,
+        safe="/?:@-._~!$&'*+,;=%",
+        encoding="utf-8",
+        errors="strict",
+    )
+    return urllib.parse.urlunsplit(("https", netloc, path, query, fragment))
 
 
 class PublicHttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -1782,14 +1908,14 @@ class PublicHttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
         headers: Any,
         new_url: str,
     ) -> urllib.request.Request | None:
-        require_public_https_url(new_url)
+        clean_url = require_public_https_url(new_url)
         return super().redirect_request(
             request,
             file_pointer,
             code,
             message,
             headers,
-            new_url,
+            clean_url,
         )
 
 
@@ -1863,7 +1989,7 @@ class WebSearchService:
                     if content_type and not content_type.startswith("image/"):
                         raise ValueError("远程地址未返回图片")
                     return read_limited_response(response, max_bytes)
-            except (OSError, ValueError, urllib.error.URLError) as exc:
+            except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as exc:
                 errors.append(str(exc))
         raise RuntimeError(errors[-1] if errors else "无法下载远程图片")
 
@@ -4565,6 +4691,15 @@ class AppController:
         visible_assets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         reasoning_started_at = time.perf_counter()
+        billing_started_at: float | None = None
+        get_json = getattr(self.client, "get_json", None)
+        if callable(get_json):
+            try:
+                billing_started_at = total_usage_cost(
+                    get_json(record["base_url"], secret, "/usage?days=30", timeout=8)
+                )
+            except (RuntimeError, OSError, ValueError):
+                pass
         config = IMAGE_REASONING_MODES[reasoning_mode]
         model = str(config["model"])
         reasoning_effort = str(config["effort"])
@@ -4580,6 +4715,7 @@ class AppController:
         selection_submitted = False
         web_search_calls = 0
         web_search_succeeded = False
+        reasoning_usage: dict[str, Any] = {}
         continuation_enabled = bool(continuation_context)
         clean_visible_assets = list(visible_assets or [])
         available_assets = list((continuation_context or {}).get("assets") or [])
@@ -4719,6 +4855,8 @@ class AppController:
                 allow_empty_text=bool(tools),
             )
             response = completed_payloads[-1] if completed_payloads else {}
+            turn_usage = response_usage_metrics(response)
+            reasoning_usage = merge_reasoning_usage(reasoning_usage, turn_usage)
             response_output = [
                 item for item in response.get("output") or [] if isinstance(item, dict)
             ]
@@ -4738,6 +4876,8 @@ class AppController:
                     else "方案已确定"
                 ),
                 text=turn_text,
+                usage=turn_usage,
+                reasoningUsage=reasoning_usage,
             )
             if not function_calls:
                 break
@@ -5035,6 +5175,25 @@ class AppController:
             1,
             round((time.perf_counter() - reasoning_started_at) * 1000),
         )
+        if not reasoning_usage.get("hasCost") and billing_started_at is not None and callable(get_json):
+            for attempt in range(2):
+                try:
+                    billing_completed_at = total_usage_cost(
+                        get_json(record["base_url"], secret, "/usage?days=30", timeout=8)
+                    )
+                except (RuntimeError, OSError, ValueError):
+                    break
+                cost_delta = (
+                    billing_completed_at - billing_started_at
+                    if billing_completed_at is not None
+                    else 0.0
+                )
+                if cost_delta > 1e-12:
+                    reasoning_usage["costUsd"] = cost_delta
+                    reasoning_usage["hasCost"] = True
+                    break
+                if attempt == 0:
+                    time.sleep(0.35)
         emit(
             "react_completed",
             mode=reasoning_mode,
@@ -5048,6 +5207,7 @@ class AppController:
             webSearchResultCount=len(candidate_by_id),
             webReferenceCount=len(selected_ids),
             reasoningDurationMs=reasoning_duration_ms,
+            reasoningUsage=reasoning_usage,
         )
         return {
             "prompt": final_prompt,
@@ -5061,6 +5221,7 @@ class AppController:
             "webSelectionRationale": selected_rationale,
             "continuationPlan": continuation_plan,
             "reasoningDurationMs": reasoning_duration_ms,
+            "reasoningUsage": reasoning_usage,
         }
 
     def generate_image(
@@ -5167,6 +5328,7 @@ class AppController:
         reasoning_model = ""
         reasoning_effort = ""
         reasoning_duration_ms = 0
+        reasoning_usage: dict[str, Any] = {}
         web_search_used = False
         web_search_failed = False
         web_search_result_count = 0
@@ -5269,6 +5431,7 @@ class AppController:
                 reasoning_summary = str(agent_result["summary"])
                 reasoning_model = str(agent_result["model"])
                 reasoning_duration_ms = int(agent_result.get("reasoningDurationMs") or 0)
+                reasoning_usage = dict(agent_result.get("reasoningUsage") or {})
                 web_search_enabled = bool(agent_result.get("webSearchEnabled"))
                 web_search_used = bool(agent_result.get("webSearchUsed"))
                 web_search_failed = bool(agent_result.get("webSearchFailed"))
@@ -5361,6 +5524,7 @@ class AppController:
                 "reasoningEffort": reasoning_effort,
                 "reasoningSummary": reasoning_summary,
                 "reasoningDurationMs": reasoning_duration_ms,
+                "reasoningUsage": reasoning_usage,
                 "originalPrompt": original_prompt,
                 "webSearchEnabled": web_search_enabled,
                 "webSearchUsed": web_search_used,
@@ -5454,6 +5618,7 @@ class AppController:
             reasoningEffort=reasoning_effort,
             reasoningSummary=reasoning_summary,
             reasoningDurationMs=reasoning_duration_ms,
+            reasoningUsage=reasoning_usage,
             webSearchEnabled=web_search_enabled,
             webSearchUsed=web_search_used,
             webSearchFailed=web_search_failed,
@@ -5533,6 +5698,7 @@ class AppController:
             "reasoningEffort": reasoning_effort,
             "reasoningSummary": reasoning_summary,
             "reasoningDurationMs": reasoning_duration_ms,
+            "reasoningUsage": reasoning_usage,
             "referenceCount": len(request.image_paths),
             "operation": request.operation,
             "transportOperation": "edit" if request.image_paths else "generate",

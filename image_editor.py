@@ -5,6 +5,7 @@ import binascii
 import hashlib
 import io
 import json
+import math
 import os
 import shutil
 import threading
@@ -86,6 +87,32 @@ class ImageSessionStore:
     @staticmethod
     def _timestamp() -> str:
         return datetime.now().astimezone().isoformat(timespec="seconds")
+
+    @staticmethod
+    def _reasoning_usage(value: Any) -> dict[str, Any]:
+        source = value if isinstance(value, dict) else {}
+
+        def nonnegative_int(name: str) -> int:
+            try:
+                return max(0, int(source.get(name) or 0))
+            except (TypeError, ValueError):
+                return 0
+
+        try:
+            cost_usd = float(source.get("costUsd") or 0)
+        except (TypeError, ValueError):
+            cost_usd = 0.0
+        if not math.isfinite(cost_usd) or cost_usd < 0:
+            cost_usd = 0.0
+        return {
+            "inputTokens": nonnegative_int("inputTokens"),
+            "outputTokens": nonnegative_int("outputTokens"),
+            "totalTokens": nonnegative_int("totalTokens"),
+            "callCount": nonnegative_int("callCount"),
+            "costUsd": cost_usd,
+            "hasTokenUsage": bool(source.get("hasTokenUsage")),
+            "hasCost": bool(source.get("hasCost")),
+        }
 
     def _session_dir(self, session_id: str) -> Path:
         return self.root / self._safe_id(session_id)
@@ -199,6 +226,7 @@ class ImageSessionStore:
                     "reasoningEffort": str(options.get("reasoningEffort") or ""),
                     "reasoningSummary": str(options.get("reasoningSummary") or ""),
                     "reasoningDurationMs": max(0, int(options.get("reasoningDurationMs") or 0)),
+                    "reasoningUsage": self._reasoning_usage(options.get("reasoningUsage")),
                     "originalPrompt": str(options.get("originalPrompt") or prompt),
                     "webSearchEnabled": bool(options.get("webSearchEnabled")),
                     "webSearchUsed": bool(options.get("webSearchUsed")),
@@ -795,6 +823,7 @@ class ImageSessionStore:
                             "reasoningEffort": str(options.get("reasoningEffort") or ""),
                             "reasoningSummary": reasoning_summary,
                             "reasoningDurationMs": max(0, int(options.get("reasoningDurationMs") or 0)),
+                            "reasoningUsage": self._reasoning_usage(options.get("reasoningUsage")),
                             "reasoningStatus": "completed" if reasoning_mode != "instant" and reasoning_summary else "idle",
                             "effectivePrompt": str(round_data.get("prompt") or "") if reasoning_mode != "instant" else "",
                             "webSearchEnabled": bool(options.get("webSearchEnabled")),

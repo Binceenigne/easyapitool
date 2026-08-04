@@ -1239,16 +1239,16 @@ html.dark #keySwitcherMenu {
 }
 .reasoning-bg-layer[data-layer-mode="medium"] .reasoning-effect-a,
 .reasoning-bg-layer[data-layer-mode="medium"] .reasoning-effect-b { display: none; }
-.reasoning-bg-layer[data-layer-mode="high"] { background: #668ee8; }
+.reasoning-bg-layer[data-layer-mode="high"] { background: #5865f2; }
 .reasoning-bg-layer[data-layer-mode="high"] .reasoning-gradient {
     --reasoning-animation-duration: 28s;
-    background: linear-gradient(135deg, #668ee8 0%, #78a7ef 25%, #91b8f3 50%, #aaaaf7 75%, #668ee8 100%);
+    background: linear-gradient(135deg, #5865f2 0%, #6478f5 25%, #7185f7 50%, #8170f5 75%, #5865f2 100%);
     background-size: 300% 300%;
     animation: highSeamlessFlow var(--reasoning-animation-duration) linear infinite;
 }
 .reasoning-bg-layer[data-layer-mode="high"] .reasoning-effect-a {
     inset: 0;
-    background: radial-gradient(circle at 50% 0%, rgba(224, 231, 255, 0.28) 0%, transparent 75%);
+    background: radial-gradient(circle at 50% 0%, rgba(224, 231, 255, 0.16) 0%, transparent 75%);
 }
 .reasoning-bg-layer[data-layer-mode="high"] .reasoning-effect-b { display: none; }
 .reasoning-bg-layer[data-layer-mode="extra"] { background: #6d5dfc; }
@@ -1284,7 +1284,7 @@ html.dark #keySwitcherMenu {
 .image-reasoning-control[data-mode="instant"] { background: #27303d; box-shadow: none; }
 .image-reasoning-control[data-mode="flash"] { background: #8fd3ff; box-shadow: none; }
 .image-reasoning-control[data-mode="medium"] { background: #4f7df3; box-shadow: none; }
-.image-reasoning-control[data-mode="high"] { background: #668ee8; }
+.image-reasoning-control[data-mode="high"] { background: #5865f2; }
 .image-reasoning-control[data-mode="extra"] { background: #6d5dfc; }
 .image-reasoning-control[data-mode="max"] { background: #536dfe; }
 .image-reasoning-control[data-mode="high"] {
@@ -1511,9 +1511,12 @@ html.dark #keySwitcherMenu {
 }
 .slider-desc {
     margin-top: -2px;
+    overflow: hidden;
     color: var(--muted);
     font-size: 9px;
     text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 @keyframes flashFluidGradient {
     0% { background-position: 0% 22%; }
@@ -1544,8 +1547,8 @@ html.dark #keySwitcherMenu {
     100% { background-position: 0% 26%; }
 }
 @keyframes highGlowPulse {
-    0% { box-shadow: 0 0 0 1px rgba(125, 168, 235, 0.2), 0 0 9px rgba(102, 142, 232, 0.2), 0 0 16px rgba(170, 170, 247, 0.1); }
-    100% { box-shadow: 0 0 0 1px rgba(170, 190, 249, 0.38), 0 0 14px rgba(102, 142, 232, 0.32), 0 0 24px rgba(170, 170, 247, 0.18); }
+    0% { box-shadow: 0 0 0 1px rgba(100, 120, 245, 0.24), 0 0 9px rgba(88, 101, 242, 0.24), 0 0 16px rgba(129, 112, 245, 0.12); }
+    100% { box-shadow: 0 0 0 1px rgba(113, 133, 247, 0.42), 0 0 14px rgba(88, 101, 242, 0.38), 0 0 24px rgba(129, 112, 245, 0.22); }
 }
 @keyframes extraGlowPulse {
     0% { box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.2), 0 0 9px rgba(124, 58, 237, 0.2), 0 0 16px rgba(167, 139, 250, 0.1); }
@@ -1627,7 +1630,7 @@ html.dark #keySwitcherMenu {
 }
 .image-reasoning-panel.mode-flash { --reasoning-accent: #0284c7; --reasoning-glow: rgba(2, 132, 199, 0.34); --reasoning-tint: color-mix(in srgb, #0ea5e9 8%, var(--bg)); }
 .image-reasoning-panel.mode-medium { --reasoning-accent: #0f84a5; --reasoning-glow: rgba(8, 145, 178, 0.34); --reasoning-tint: color-mix(in srgb, #06b6d4 7%, var(--bg)); }
-.image-reasoning-panel.mode-high { --reasoning-accent: #668ee8; --reasoning-glow: rgba(102, 142, 232, 0.38); --reasoning-tint: color-mix(in srgb, #668ee8 8%, var(--bg)); }
+.image-reasoning-panel.mode-high { --reasoning-accent: #5865f2; --reasoning-glow: rgba(88, 101, 242, 0.42); --reasoning-tint: color-mix(in srgb, #5865f2 8%, var(--bg)); }
 .image-reasoning-panel.mode-extra { --reasoning-accent: #6366f1; --reasoning-glow: rgba(99, 102, 241, 0.38); --reasoning-tint: color-mix(in srgb, #6366f1 8%, var(--bg)); }
 .image-reasoning-panel.mode-max { --reasoning-accent: #8b5cf6; --reasoning-glow: rgba(139, 92, 246, 0.46); --reasoning-tint: color-mix(in srgb, #8b5cf6 9%, var(--bg)); }
 .image-reasoning-panel::before,
@@ -1705,7 +1708,7 @@ html.dark #keySwitcherMenu {
 .image-reasoning-toggle:hover { background: color-mix(in srgb, var(--reasoning-accent) 7%, transparent); }
 .image-reasoning-toggle svg { width: 12px; height: 12px; }
 .image-reasoning-toggle strong { overflow: hidden; color: currentColor; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.image-reasoning-toggle span { color: color-mix(in srgb, var(--reasoning-accent) 72%, var(--muted)); font: 8px/1.2 var(--font-mono); white-space: nowrap; }
+.image-reasoning-toggle .image-reasoning-usage { overflow: hidden; max-width: 260px; color: color-mix(in srgb, var(--reasoning-accent) 72%, var(--muted)); font: 8px/1.2 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .image-reasoning-body { position: relative; z-index: 1; display: grid; min-width: 0; padding: 0 8px 8px; gap: 7px; animation: reasoningBodyOpen 240ms ease-out both; }
 .image-reasoning-log-shell { position: relative; min-width: 0; }
 .image-reasoning-log {

@@ -2266,25 +2266,25 @@
             instant: 'Instant', flash: 'Flash', medium: 'Medium', high: 'High', extra: 'Extra', max: 'Max'
         };
         const IMAGE_REASONING_DESCRIPTIONS = {
-            instant: 'Instant 模式：不经过额外思考直接生成',
-            flash: 'Flash 模式：快速高效思考优化结果质量',
-            medium: 'Medium 模式：均衡思考分析并优化生成方案',
-            high: 'High 模式：使用更高推理强度深入分析生成需求',
-            extra: 'Extra 模式：延长思维链和思考时间预算获得更强推理能力',
-            max: 'Max 模式：使用最强大的模型深度推导反思'
+            instant: '直接生成，省去额外思考',
+            flash: '快速分析，轻量优化画面',
+            medium: '均衡分析，兼顾速度与质量',
+            high: '深入分析，强化构图与细节',
+            extra: '延长思考，提升推理与一致性',
+            max: '最强模型，多轮推导与反思'
         };
         const IMAGE_REASONING_TRACK_GRADIENTS = [
             'linear-gradient(90deg, #64748b 0%, #94a3b8 100%)',
             'linear-gradient(90deg, #a9dcff 0%, #86ceff 42%, #a8c9ff 100%)',
             'linear-gradient(90deg, #9fcaff 0%, #8fddff 48%, #b5e8ff 100%)',
-            'linear-gradient(90deg, #91c7f3 0%, #89aef0 48%, #aaaaf7 100%)',
+            'linear-gradient(90deg, #6b95f4 0%, #5d6ff2 48%, #8170f5 100%)',
             'linear-gradient(90deg, #aeaaff 0%, #c4b7ff 50%, #dfd3ff 100%)',
             'linear-gradient(90deg, #aebcff 0%, #c2b0ff 32%, #dfcdff 64%, #b7ddff 100%)'
         ];
         const IMAGE_REASONING_PULSE_PALETTES = {
             flash: ['#8fd3ff', '#b9e6ff', '#79c7ff', '#9fbfff', '#d8f3ff'],
             medium: ['#4f7df3', '#5b8def', '#5cc8ff', '#9bdcff'],
-            high: ['#668ee8', '#78a7ef', '#91b8f3', '#aaaaf7'],
+            high: ['#5865f2', '#6478f5', '#7185f7', '#8170f5'],
             extra: ['#6d5dfc', '#8b6cff', '#b99cff', '#d9c7ff'],
             max: ['#536dfe', '#5b8def', '#8b6cff', '#e9ddff', '#3b82f6']
         };
@@ -2619,6 +2619,7 @@
                 reasoningStartedAt: Number(metadata.reasoningStartedAt) || 0,
                 reasoningCompletedAt: Number(metadata.reasoningCompletedAt) || 0,
                 reasoningDurationMs: Math.max(0, Number(metadata.reasoningDurationMs) || 0),
+                reasoningUsage: normalizeReasoningUsage(metadata.reasoningUsage),
                 effectivePrompt: metadata.effectivePrompt || '',
                 webSearchEnabled: metadata.webSearchEnabled === true,
                 webSearchStatus: metadata.webSearchFailed
@@ -2692,6 +2693,34 @@
             const minutes = Math.floor(totalSeconds / 60);
             const seconds = totalSeconds % 60;
             return minutes ? `${minutes}m:${String(seconds).padStart(2, '0')}s` : `${totalSeconds}s`;
+        }
+
+        function normalizeReasoningUsage(value) {
+            const source = value && typeof value === 'object' ? value : {};
+            return {
+                inputTokens: Math.max(0, Number(source.inputTokens) || 0),
+                outputTokens: Math.max(0, Number(source.outputTokens) || 0),
+                totalTokens: Math.max(0, Number(source.totalTokens) || 0),
+                callCount: Math.max(0, Number(source.callCount) || 0),
+                costUsd: Math.max(0, Number(source.costUsd) || 0),
+                hasTokenUsage: source.hasTokenUsage === true,
+                hasCost: source.hasCost === true
+            };
+        }
+
+        function formatReasoningUsage(set) {
+            const usage = normalizeReasoningUsage(set.reasoningUsage);
+            const tokens = usage.hasTokenUsage ? Math.round(usage.totalTokens).toLocaleString() : '--';
+            const calls = usage.callCount ? Math.round(usage.callCount) : '--';
+            const cost = usage.hasCost ? `$${usage.costUsd.toFixed(6)}` : '$--';
+            return `${tokens} token · ${calls} 次调用 · ${cost}`;
+        }
+
+        function reasoningUsageTitle(set) {
+            const usage = normalizeReasoningUsage(set.reasoningUsage);
+            const input = usage.hasTokenUsage ? Math.round(usage.inputTokens).toLocaleString() : '--';
+            const output = usage.hasTokenUsage ? Math.round(usage.outputTokens).toLocaleString() : '--';
+            return `输入 ${input} token · 输出 ${output} token · Responses 调用 ${usage.callCount || '--'} 次 · 实际费用 ${usage.hasCost ? `$${usage.costUsd.toFixed(6)}` : '$--'}`;
         }
 
         function reasoningElapsed(set, turn = activeReasoningTurn(set)) {
@@ -3229,6 +3258,13 @@
         const pendingReasoningTurnRenders = new Set();
         let reasoningTurnRenderFrame = 0;
 
+        function reasoningTurnDisplayText(turn) {
+            if (String(turn?.text || '').trim()) return turn.text;
+            if (turn?.status === 'running') return '正在形成这一轮的判断…';
+            if (turn?.status === 'failed') return '本轮判断未完成';
+            return '本轮判断已完成';
+        }
+
         function queueReasoningTurnRender(setId, turnNumber) {
             pendingReasoningTurnRenders.add(`${setId}\n${turnNumber}`);
             if (reasoningTurnRenderFrame) return;
@@ -3244,7 +3280,7 @@
                         `[data-reasoning-turn-text="${CSS.escape(pendingSetId)}:${pendingTurnNumber}"]`
                     );
                     if (!pendingSet || !turn || !text) return;
-                    text.textContent = turn.text || '正在形成这一轮的判断…';
+                    text.textContent = reasoningTurnDisplayText(turn);
                     text.classList.toggle('is-streaming', turn.status === 'running');
                     const log = text.closest('.image-reasoning-log');
                     if (log && !pendingSet.reasoningContentExpanded) {
@@ -3259,7 +3295,8 @@
             document.querySelectorAll('[data-reasoning-elapsed]').forEach(element => {
                 const set = imageGenerationSetById(element.dataset.reasoningElapsed);
                 if (!set) return;
-                element.textContent = `（${totalReasoningElapsed(set)}）`;
+                element.textContent = `${totalReasoningElapsed(set)} · ${formatReasoningUsage(set)}`;
+                element.title = reasoningUsageTitle(set);
             });
         }
 
@@ -3290,7 +3327,7 @@
             const title = activeTool
                 ? reasoningToolLabel(activeTool)
                 : activeTurn?.title || (set.reasoningStatus === 'completed' ? '方案已确定' : '正在分析问题');
-            toggle.innerHTML = `${iconMarkup(statusIcon, 'icon-12')}<strong>${escapeHtml(title)}</strong><span data-reasoning-elapsed="${escapeHtml(set.setId)}">（${totalReasoningElapsed(set)}）</span>${iconMarkup(set.reasoningExpanded ? 'chevron-up' : 'chevron-right', 'icon-12')}`;
+            toggle.innerHTML = `${iconMarkup(statusIcon, 'icon-12')}<strong>${escapeHtml(title)}</strong><span class="image-reasoning-usage" data-reasoning-elapsed="${escapeHtml(set.setId)}" title="${escapeHtml(reasoningUsageTitle(set))}">${totalReasoningElapsed(set)} · ${formatReasoningUsage(set)}</span>${iconMarkup(set.reasoningExpanded ? 'chevron-up' : 'chevron-right', 'icon-12')}`;
             panel.append(toggle);
 
             if (!set.reasoningExpanded) return panel;
@@ -3317,7 +3354,7 @@
                 turnTitle.innerHTML = `<strong>${escapeHtml(turn.title || '正在完善方案')}</strong><span>${reasoningElapsed(set, turn)}</span>`;
                 const turnText = document.createElement('p');
                 turnText.dataset.reasoningTurnText = `${set.setId}:${turn.turn}`;
-                turnText.textContent = turn.text || '正在形成这一轮的判断…';
+                turnText.textContent = reasoningTurnDisplayText(turn);
                 if (turn.status === 'running') turnText.classList.add('is-streaming');
                 turnBlock.append(turnTitle, turnText);
                 (turn.tools || []).forEach(tool => {
@@ -3635,6 +3672,7 @@
                 set.reasoningEffort = event.reasoningEffort || set.reasoningEffort;
                 set.reasoningSummary = event.reasoningSummary || set.reasoningSummary;
                 set.reasoningDurationMs = Math.max(0, Number(event.reasoningDurationMs) || set.reasoningDurationMs);
+                set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage);
                 set.effectivePrompt = event.prompt || set.effectivePrompt;
                 set.webSearchEnabled = event.webSearchEnabled === true || set.webSearchEnabled;
                 if (event.webSearchFailed) set.webSearchStatus = 'failed';
@@ -3678,6 +3716,7 @@
                 turn.text = event.text || turn.text;
                 turn.status = 'completed';
                 turn.completedAt ||= Date.now();
+                set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage);
             } else if (event.type === 'react_tool_started') {
                 const turn = reasoningTurnByNumber(set, event.turn);
                 turn.tools.push({
@@ -3720,6 +3759,7 @@
                 set.reasoningStatus = 'completed';
                 set.reasoningSummary = event.summary || set.reasoningSummary;
                 set.reasoningDurationMs = Math.max(0, Number(event.reasoningDurationMs) || set.reasoningDurationMs);
+                set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage);
                 set.reasoningCompletedAt ||= Date.now();
                 reasoningTurnsForSet(set).forEach(turn => {
                     if (turn.status === 'running') {

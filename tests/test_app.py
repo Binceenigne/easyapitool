@@ -348,6 +348,37 @@ class StoreTests(unittest.TestCase):
 
 
 class UtilityTests(unittest.TestCase):
+    def test_response_usage_metrics_preserves_actual_tokens_calls_and_cost(self):
+        first = app.response_usage_metrics(
+            {
+                "usage": {
+                    "input_tokens": 120,
+                    "output_tokens": 30,
+                    "total_tokens": 150,
+                    "cost": {"total": 0.0042},
+                }
+            }
+        )
+        second = app.response_usage_metrics(
+            {"usage": {"input_tokens": 80, "output_tokens": 20, "total_tokens": 100}}
+        )
+
+        combined = app.merge_reasoning_usage(first, second)
+
+        self.assertEqual(combined["inputTokens"], 200)
+        self.assertEqual(combined["outputTokens"], 50)
+        self.assertEqual(combined["totalTokens"], 250)
+        self.assertEqual(combined["callCount"], 2)
+        self.assertAlmostEqual(combined["costUsd"], 0.0042)
+        self.assertTrue(combined["hasTokenUsage"])
+        self.assertTrue(combined["hasCost"])
+        self.assertFalse(second["hasCost"])
+
+    def test_total_usage_cost_requires_valid_account_total(self):
+        self.assertEqual(app.total_usage_cost({"usage": {"total": {"cost": "12.75"}}}), 12.75)
+        self.assertIsNone(app.total_usage_cost({"usage": {"today": {"cost": 1}}}))
+        self.assertIsNone(app.total_usage_cost({"usage": {"total": {"cost": -1}}}))
+
 
     def test_continuation_plan_separates_operation_from_reference_selection(self):
         generated = app.parse_image_continuation_plan(
@@ -995,6 +1026,102 @@ class UtilityTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "非公开网络"):
                 app.require_public_https_url("https://images.example/image.jpg")
 
+    def test_public_image_url_encodes_special_characters_and_rejects_injection(self):
+        raw_url = (
+            "https://images.example/gallery/img/automobiles/Hyundai/"
+            "现代/2016 Hyundai%20Tuson (TL) 0N/d/1542094232 jpg"
+            "?size=full image#原图 1"
+        )
+        with patch(
+            "app.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("8.8.8.8", 443))],
+        ):
+            normalized = app.require_public_https_url(raw_url)
+
+        self.assertEqual(
+            normalized,
+            "https://images.example/gallery/img/automobiles/Hyundai/"
+            "%E7%8E%B0%E4%BB%A3/2016%20Hyundai%20Tuson%20%28TL%29%200N/d/"
+            "1542094232%20jpg?size=full%20image#%E5%8E%9F%E5%9B%BE%201",
+        )
+        self.assertNotIn(" ", app.urllib.request.Request(normalized).selector)
+        unsafe_urls = (
+            "https://images.example/image.jpg\r\nX-Injected: true",
+            "\nhttps://images.example/image.jpg",
+            "https://images.example/image.jpg\x00",
+            "https://images.example/image.jpg\x7f",
+        )
+        for unsafe_url in unsafe_urls:
+            with self.subTest(unsafe_url=repr(unsafe_url)):
+                with self.assertRaisesRegex(ValueError, "控制字符"):
+                    app.require_public_https_url(unsafe_url)
+
+    def test_public_image_download_uses_encoded_selector_and_contains_invalid_url(self):
+        requested_urls = []
+
+        class FakeHeaders:
+            @staticmethod
+            def get(name):
+                return "image/jpeg" if name == "Content-Type" else None
+
+        class FakeResponse:
+            headers = FakeHeaders()
+
+            def __init__(self, url):
+                self.url = url
+                self.read_count = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def geturl(self):
+                return self.url
+
+            def read(self, _size):
+                if self.read_count:
+                    return b""
+                self.read_count += 1
+                return b"jpeg-bytes"
+
+        class FakeOpener:
+            def open(self, request, timeout):
+                self.timeout = timeout
+                requested_urls.append(request.full_url)
+                return FakeResponse(request.full_url)
+
+        with patch(
+            "app.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("8.8.8.8", 443))],
+        ), patch("app.urllib.request.build_opener", return_value=FakeOpener()):
+            image_bytes = app.WebSearchService._public_image_bytes(
+                "https://images.example/gallery/2016 Hyundai Tuson (TL).jpg",
+                1024,
+            )
+
+        self.assertEqual(image_bytes, b"jpeg-bytes")
+        self.assertEqual(
+            requested_urls,
+            ["https://images.example/gallery/2016%20Hyundai%20Tuson%20%28TL%29.jpg"],
+        )
+
+        class InvalidUrlOpener:
+            @staticmethod
+            def open(_request, timeout):
+                raise app.http.client.InvalidURL("bad selector")
+
+        with patch(
+            "app.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("8.8.8.8", 443))],
+        ), patch("app.urllib.request.build_opener", return_value=InvalidUrlOpener()):
+            with self.assertRaisesRegex(RuntimeError, "bad selector"):
+                app.WebSearchService._public_image_bytes(
+                    "https://images.example/image.jpg",
+                    1024,
+                )
+
     def test_client_posts_multiple_edit_images_as_multipart(self):
         class FakeResponse:
             def __enter__(self):
@@ -1507,6 +1634,11 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn("const finalPrompt = document.createElement('details')", page)
         self.assertIn("function queueReasoningTurnRender(setId, turnNumber)", page)
         self.assertIn("reasoningTurnRenderFrame = requestAnimationFrame", page)
+        self.assertIn("function reasoningTurnDisplayText(turn)", page)
+        self.assertIn("if (turn?.status === 'running') return '正在形成这一轮的判断…'", page)
+        self.assertIn("return '本轮判断已完成'", page)
+        self.assertIn("text.textContent = reasoningTurnDisplayText(turn)", page)
+        self.assertIn("turnText.textContent = reasoningTurnDisplayText(turn)", page)
         self.assertIn("data-reasoning-turn-text", page)
         self.assertIn("event.type === 'react_turn_started'", page)
         self.assertIn("event.type === 'react_turn_delta'", page)
@@ -1516,13 +1648,28 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("function updateReasoningTimers()", page)
         self.assertIn("totalReasoningElapsed(set)", page)
         self.assertIn("reasoningDurationMs", page)
+        self.assertIn("reasoningUsage: normalizeReasoningUsage(metadata.reasoningUsage)", page)
+        self.assertIn("function normalizeReasoningUsage(value)", page)
+        self.assertIn("function formatReasoningUsage(set)", page)
+        self.assertIn("function reasoningUsageTitle(set)", page)
+        self.assertIn("${tokens} token · ${calls} 次调用 · ${cost}", page)
+        self.assertIn("set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage)", page)
+        self.assertIn("class=\"image-reasoning-usage\"", page)
         self.assertIn("persistedDuration && set.reasoningStatus !== 'running'", page)
         self.assertIn("reasoningToolLabel(activeTool)", page)
         self.assertIn("flash: 'Flash'", page)
-        self.assertIn("flash: 'Flash 模式：快速高效思考优化结果质量'", page)
+        self.assertIn("instant: '直接生成，省去额外思考'", page)
+        self.assertIn("flash: '快速分析，轻量优化画面'", page)
+        self.assertIn("medium: '均衡分析，兼顾速度与质量'", page)
+        self.assertIn("high: '深入分析，强化构图与细节'", page)
         self.assertIn("extra: 'Extra'", page)
-        self.assertIn("extra: 'Extra 模式：延长思维链和思考时间预算获得更强推理能力'", page)
-        self.assertIn("max: 'Max 模式：使用最强大的模型深度推导反思'", page)
+        self.assertIn("extra: '延长思考，提升推理与一致性'", page)
+        self.assertIn("max: '最强模型，多轮推导与反思'", page)
+        for mode_label in ("Instant", "Flash", "Medium", "High", "Extra", "Max"):
+            self.assertNotIn(f"{mode_label} 模式：", page)
+        self.assertIn("high: ['#5865f2', '#6478f5', '#7185f7', '#8170f5']", page)
+        self.assertIn(".image-reasoning-control[data-mode=high] {\n  background: #5865f2;", stylesheet)
+        self.assertRegex(stylesheet, r"\.slider-desc\s*\{[^}]*white-space: nowrap;")
         self.assertIn(".image-reasoning-control[data-mode=flash]", stylesheet)
         self.assertIn(".image-reasoning-control[data-mode=extra]", stylesheet)
         self.assertIn(".image-reasoning-control[data-mode=max]", stylesheet)
@@ -1550,7 +1697,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('.reasoning-bg-layer[data-layer-mode=max] .reasoning-gradient', stylesheet)
         self.assertRegex(
             stylesheet,
-            r"\.image-reasoning-control\[data-mode=high\]\s*\{[^}]*background: #668ee8;",
+            r"\.image-reasoning-control\[data-mode=high\]\s*\{[^}]*background: #5865f2;",
         )
         self.assertRegex(
             stylesheet,
@@ -2267,6 +2414,7 @@ class ControllerTests(unittest.TestCase):
     def test_flash_agent_assesses_information_gaps_and_keeps_search_tools(self):
         controller = app.AppController.__new__(app.AppController)
         captured = {}
+        events = []
 
         def stream_response(*args, **kwargs):
             captured["instructions"] = args[3]
@@ -2274,7 +2422,15 @@ class ControllerTests(unittest.TestCase):
             captured["reasoning_effort"] = kwargs["reasoning_effort"]
             text = "已判断任务目标与信息缺口。\n<<<FINAL_PROMPT>>>Fast final prompt"
             kwargs["on_delta"](text)
-            kwargs["on_completed"]({"output": []})
+            kwargs["on_completed"]({
+                "output": [],
+                "usage": {
+                    "input_tokens": 180,
+                    "output_tokens": 45,
+                    "total_tokens": 225,
+                    "cost": 0.0036,
+                },
+            })
             return text
 
         controller.client = SimpleNamespace(stream_response=stream_response)
@@ -2285,18 +2441,62 @@ class ControllerTests(unittest.TestCase):
             (),
             "flash",
             True,
-            lambda *_args, **_kwargs: None,
+            lambda event_type, **details: events.append({"type": event_type, **details}),
         )
 
         self.assertEqual(captured["reasoning_effort"], "medium")
         self.assertIn("第一步都必须先判断", captured["instructions"])
         self.assertIn("不得因为处于 Flash 模式就跳过", captured["instructions"])
         self.assertIn("若缺口会影响事实", captured["instructions"])
+        self.assertEqual(result["reasoningUsage"]["totalTokens"], 225)
+        self.assertEqual(result["reasoningUsage"]["callCount"], 1)
+        self.assertAlmostEqual(result["reasoningUsage"]["costUsd"], 0.0036)
+        completed_turn = next(event for event in events if event["type"] == "react_turn_completed")
+        self.assertEqual(completed_turn["usage"]["totalTokens"], 225)
+        completed = next(event for event in events if event["type"] == "react_completed")
+        self.assertEqual(completed["reasoningUsage"], result["reasoningUsage"])
         self.assertEqual(
             [tool["name"] for tool in captured["tools"]],
             ["search_web", "search_visual_references", "select_visual_references"],
         )
         self.assertEqual(result["prompt"], "Fast final prompt")
+
+    def test_image_agent_uses_actual_account_cost_delta_when_response_omits_cost(self):
+        controller = app.AppController.__new__(app.AppController)
+        usage_payloads = iter(
+            [
+                {"usage": {"total": {"cost": 10.0}}},
+                {"usage": {"total": {"cost": 10.0065}}},
+            ]
+        )
+
+        def stream_response(*_args, **kwargs):
+            text = "已完成分析。\n<<<FINAL_PROMPT>>>Final prompt"
+            kwargs["on_delta"](text)
+            kwargs["on_completed"](
+                {"output": [], "usage": {"input_tokens": 200, "output_tokens": 50}}
+            )
+            return text
+
+        controller.client = SimpleNamespace(
+            stream_response=stream_response,
+            get_json=lambda *_args, **_kwargs: next(usage_payloads),
+        )
+
+        result = controller._run_image_prompt_agent(
+            {"base_url": "https://example.test/v1"},
+            "secret",
+            "Create an image",
+            (),
+            "flash",
+            False,
+            lambda *_args, **_kwargs: None,
+        )
+
+        self.assertEqual(result["reasoningUsage"]["totalTokens"], 250)
+        self.assertEqual(result["reasoningUsage"]["callCount"], 1)
+        self.assertTrue(result["reasoningUsage"]["hasCost"])
+        self.assertAlmostEqual(result["reasoningUsage"]["costUsd"], 0.0065)
 
     def test_extra_agent_uses_terra_xhigh_with_max_depth_logic(self):
         controller = app.AppController.__new__(app.AppController)

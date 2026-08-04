@@ -500,6 +500,15 @@ class ImageEditorTests(unittest.TestCase):
                     "reasoningMode": "high",
                     "reasoningSummary": "先分析构图与灯光。",
                     "reasoningDurationMs": 12_345,
+                    "reasoningUsage": {
+                        "inputTokens": 900,
+                        "outputTokens": 300,
+                        "totalTokens": 1200,
+                        "callCount": 2,
+                        "costUsd": 0.01875,
+                        "hasTokenUsage": True,
+                        "hasCost": True,
+                    },
                     "webSearchEnabled": True,
                     "webSearchUsed": True,
                     "webSearchFailed": False,
@@ -543,6 +552,9 @@ class ImageEditorTests(unittest.TestCase):
             self.assertEqual(manifest["rounds"][1]["options"]["webSearchResultCount"], 4)
             self.assertEqual(manifest["rounds"][1]["options"]["webReferenceCount"], 1)
             self.assertEqual(manifest["rounds"][1]["options"]["reasoningDurationMs"], 12_345)
+            self.assertEqual(manifest["rounds"][1]["options"]["reasoningUsage"]["totalTokens"], 1200)
+            self.assertEqual(manifest["rounds"][1]["options"]["reasoningUsage"]["callCount"], 2)
+            self.assertAlmostEqual(manifest["rounds"][1]["options"]["reasoningUsage"]["costUsd"], 0.01875)
             self.assertEqual(manifest["rounds"][1]["webReferences"][0]["title"], "Neon reference")
             self.assertTrue(manifest["rounds"][1]["webReferences"][0]["assetId"].startswith("asset-"))
             self.assertIn(
@@ -566,6 +578,9 @@ class ImageEditorTests(unittest.TestCase):
             self.assertFalse(restored[0]["webSearchFailed"])
             self.assertEqual(restored[0]["webSearchResultCount"], 4)
             self.assertEqual(restored[0]["reasoningDurationMs"], 12_345)
+            self.assertEqual(restored[0]["reasoningUsage"]["totalTokens"], 1200)
+            self.assertEqual(restored[0]["reasoningUsage"]["callCount"], 2)
+            self.assertAlmostEqual(restored[0]["reasoningUsage"]["costUsd"], 0.01875)
             self.assertEqual(restored[0]["webReferenceCount"], 1)
             self.assertEqual(restored[0]["webReferences"][0]["provider"], "Bing Images")
             self.assertTrue(restored[0]["webReferences"][0]["assetId"].startswith("asset-"))

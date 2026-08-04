@@ -1807,19 +1807,19 @@ html.dark #keySwitcherMenu {
 }
 
 .reasoning-bg-layer[data-layer-mode=high] {
-  background: #668ee8;
+  background: #5865f2;
 }
 
 .reasoning-bg-layer[data-layer-mode=high] .reasoning-gradient {
   --reasoning-animation-duration: 28s;
-  background: linear-gradient(135deg, #668ee8 0%, #78a7ef 25%, #91b8f3 50%, #aaaaf7 75%, #668ee8 100%);
+  background: linear-gradient(135deg, #5865f2 0%, #6478f5 25%, #7185f7 50%, #8170f5 75%, #5865f2 100%);
   background-size: 300% 300%;
   animation: highSeamlessFlow var(--reasoning-animation-duration) linear infinite;
 }
 
 .reasoning-bg-layer[data-layer-mode=high] .reasoning-effect-a {
   inset: 0;
-  background: radial-gradient(circle at 50% 0%, rgba(224, 231, 255, 0.28) 0%, transparent 75%);
+  background: radial-gradient(circle at 50% 0%, rgba(224, 231, 255, 0.16) 0%, transparent 75%);
 }
 
 .reasoning-bg-layer[data-layer-mode=high] .reasoning-effect-b {
@@ -1886,7 +1886,7 @@ html.dark #keySwitcherMenu {
 }
 
 .image-reasoning-control[data-mode=high] {
-  background: #668ee8;
+  background: #5865f2;
 }
 
 .image-reasoning-control[data-mode=extra] {
@@ -2193,9 +2193,12 @@ html.dark #keySwitcherMenu {
 
 .slider-desc {
   margin-top: -2px;
+  overflow: hidden;
   color: var(--muted);
   font-size: 9px;
   text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @keyframes flashFluidGradient {
@@ -2268,10 +2271,10 @@ html.dark #keySwitcherMenu {
 }
 @keyframes highGlowPulse {
   0% {
-    box-shadow: 0 0 0 1px rgba(125, 168, 235, 0.2), 0 0 9px rgba(102, 142, 232, 0.2), 0 0 16px rgba(170, 170, 247, 0.1);
+    box-shadow: 0 0 0 1px rgba(100, 120, 245, 0.24), 0 0 9px rgba(88, 101, 242, 0.24), 0 0 16px rgba(129, 112, 245, 0.12);
   }
   100% {
-    box-shadow: 0 0 0 1px rgba(170, 190, 249, 0.38), 0 0 14px rgba(102, 142, 232, 0.32), 0 0 24px rgba(170, 170, 247, 0.18);
+    box-shadow: 0 0 0 1px rgba(113, 133, 247, 0.42), 0 0 14px rgba(88, 101, 242, 0.38), 0 0 24px rgba(129, 112, 245, 0.22);
   }
 }
 @keyframes extraGlowPulse {
@@ -2521,9 +2524,9 @@ html.dark #keySwitcherMenu {
 }
 
 .image-reasoning-panel.mode-high {
-  --reasoning-accent: #668ee8;
-  --reasoning-glow: rgba(102, 142, 232, 0.38);
-  --reasoning-tint: color-mix(in srgb, #668ee8 8%, var(--bg));
+  --reasoning-accent: #5865f2;
+  --reasoning-glow: rgba(88, 101, 242, 0.42);
+  --reasoning-tint: color-mix(in srgb, #5865f2 8%, var(--bg));
 }
 
 .image-reasoning-panel.mode-extra {
@@ -2642,9 +2645,12 @@ html.dark #keySwitcherMenu {
   white-space: nowrap;
 }
 
-.image-reasoning-toggle span {
+.image-reasoning-toggle .image-reasoning-usage {
+  overflow: hidden;
+  max-width: 260px;
   color: color-mix(in srgb, var(--reasoning-accent) 72%, var(--muted));
   font: 8px/1.2 var(--font-mono);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
