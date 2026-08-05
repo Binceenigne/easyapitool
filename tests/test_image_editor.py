@@ -597,7 +597,7 @@ class ImageEditorTests(unittest.TestCase):
             root = Path(temp)
             partial_buffer = io.BytesIO()
             final_buffer = io.BytesIO()
-            Image.new("RGB", (4, 4), "blue").save(partial_buffer, format="PNG")
+            Image.new("RGB", (8, 4), "blue").save(partial_buffer, format="PNG")
             Image.new("RGB", (8, 8), "green").save(final_buffer, format="PNG")
             partial_encoded = base64.b64encode(partial_buffer.getvalue()).decode("ascii")
             final_encoded = base64.b64encode(final_buffer.getvalue()).decode("ascii")
@@ -632,6 +632,8 @@ class ImageEditorTests(unittest.TestCase):
             self.assertTrue(any(root.glob("partials/*-4.png")))
             self.assertTrue(partial_events[0]["uri"].startswith("file:"))
             self.assertTrue(partial_events[0]["previewUri"].startswith("data:image/jpeg;base64,"))
+            self.assertTrue(all(event["width"] == 8 for event in partial_events))
+            self.assertTrue(all(event["height"] == 4 for event in partial_events))
             self.assertTrue(result["previewUri"].startswith("data:image/jpeg;base64,"))
 
     def test_service_persists_partial_without_frontend_callback(self):

@@ -50,7 +50,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.24"
+APP_VERSION = "1.0.25"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -125,6 +125,13 @@ RESTART_READY_ENV = "API_TOOLS_RESTART_READY"
 MANUAL_REFRESH_COOLDOWN_SECONDS = 5
 CF_DIB = 8
 GMEM_MOVEABLE = 0x0002
+DEFAULT_WINDOW_WIDTH = 920
+DEFAULT_WINDOW_HEIGHT = 680
+MIN_WINDOW_WIDTH = 220
+MIN_WINDOW_HEIGHT = 96
+MAX_WINDOW_WIDTH = 8192
+MAX_WINDOW_HEIGHT = 8192
+WINDOW_SIZE_SAVE_DELAY = 0.25
 PROMPT_POLISH_MODEL = "gpt-5.6-terra"
 PROMPT_POLISH_REASONING_EFFORT = "medium"
 PROMPT_RESULT_MARKER = "<<<FINAL_PROMPT>>>"
@@ -633,6 +640,22 @@ def window_frame_options(title_bar_mode: Any) -> dict[str, bool]:
 
 def window_min_size(title_bar_mode: Any) -> tuple[int, int]:
     return (220, 96) if normalize_title_bar_mode(title_bar_mode) == "minimal" else (260, 120)
+
+
+def normalize_window_size(width: Any, height: Any) -> dict[str, int]:
+    def clean(value: Any, fallback: int, minimum: int, maximum: int) -> int:
+        try:
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                raise ValueError
+            return min(max(int(round(numeric)), minimum), maximum)
+        except (TypeError, ValueError, OverflowError):
+            return fallback
+
+    return {
+        "width": clean(width, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH),
+        "height": clean(height, DEFAULT_WINDOW_HEIGHT, MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT),
+    }
 
 
 class POINT(ctypes.Structure):
@@ -1383,6 +1406,7 @@ RPC_METHODS = {
     "restart_app",
     "restart_update",
     "set_always_on_top",
+    "set_window_size",
     "claim_ui_release",
     "notify_ui_hidden",
     "set_ui_visible",
@@ -2918,6 +2942,31 @@ class Store:
             )
         return clean
 
+    def get_window_size(self) -> dict[str, int]:
+        with self.lock, self.connect() as db:
+            row = db.execute(
+                "SELECT value FROM settings WHERE name='window_size'"
+            ).fetchone()
+        if not row:
+            return normalize_window_size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
+        try:
+            loaded = json.loads(row["value"])
+        except (TypeError, json.JSONDecodeError):
+            return normalize_window_size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
+        if not isinstance(loaded, dict):
+            return normalize_window_size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
+        return normalize_window_size(loaded.get("width"), loaded.get("height"))
+
+    def set_window_size(self, width: Any, height: Any) -> dict[str, int]:
+        clean = normalize_window_size(width, height)
+        with self.lock, self.connect() as db:
+            db.execute(
+                """INSERT INTO settings(name,value) VALUES('window_size',?)
+                ON CONFLICT(name) DO UPDATE SET value=excluded.value""",
+                (json.dumps(clean, separators=(",", ":")),),
+            )
+        return clean
+
     def get_background_ui_mode(self) -> str:
         with self.lock, self.connect() as db:
             row = db.execute(
@@ -3213,6 +3262,14 @@ class AppController:
         self.ui_visibility_token = 0
         self.always_on_top = self.store.get_always_on_top()
         self.maximized = False
+        saved_window_size = self.store.get_window_size()
+        self._last_saved_window_size = (
+            saved_window_size["width"],
+            saved_window_size["height"],
+        )
+        self._window_size_lock = threading.Lock()
+        self._pending_window_size: tuple[int, int] | None = None
+        self._window_size_timer: threading.Timer | None = None
         self.drag_restore_suppressed_until = 0.0
         self.stopping = threading.Event()
         self.frontend_ready = threading.Event()
@@ -3252,7 +3309,121 @@ class AppController:
         window.events.minimized += self._on_minimized
         window.events.maximized += self._on_maximized
         window.events.restored += self._on_restored
+        window.events.resized += self._on_resized
         window.events.closing += self._on_closing
+
+    def set_window_size(self, width: Any, height: Any) -> dict[str, Any]:
+        clean = normalize_window_size(width, height)
+        size = (clean["width"], clean["height"])
+        lock = getattr(self, "_window_size_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._window_size_lock = lock
+        with lock:
+            if size == getattr(
+                self,
+                "_last_saved_window_size",
+                (DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT),
+            ):
+                return {"ok": True, "windowSize": clean, "changed": False}
+            saved = self.store.set_window_size(clean["width"], clean["height"])
+            self._last_saved_window_size = (saved["width"], saved["height"])
+        return {"ok": True, "windowSize": saved, "changed": True}
+
+    def _window_is_normal(self) -> bool:
+        if getattr(self, "maximized", False):
+            return False
+        try:
+            hwnd = self._window_handle()
+        except (AttributeError, OSError, RuntimeError):
+            return True
+        return not hwnd or (not user32.IsZoomed(hwnd) and not user32.IsIconic(hwnd))
+
+    def _current_window_size(
+        self, width: Any = None, height: Any = None
+    ) -> tuple[int, int]:
+        window = getattr(self, "window", None)
+        if width is None:
+            try:
+                width = window.width if window else None
+            except (AttributeError, OSError, RuntimeError):
+                width = None
+        if height is None:
+            try:
+                height = window.height if window else None
+            except (AttributeError, OSError, RuntimeError):
+                height = None
+        if width is None or height is None:
+            return getattr(
+                self,
+                "_last_saved_window_size",
+                (DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT),
+            )
+        clean = normalize_window_size(width, height)
+        return clean["width"], clean["height"]
+
+    def _schedule_window_size_save(
+        self, width: Any = None, height: Any = None
+    ) -> None:
+        if not self._window_is_normal():
+            return
+        size = self._current_window_size(width, height)
+        if size == getattr(
+            self,
+            "_last_saved_window_size",
+            (DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT),
+        ):
+            return
+        lock = getattr(self, "_window_size_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._window_size_lock = lock
+        with lock:
+            self._pending_window_size = size
+            timer = getattr(self, "_window_size_timer", None)
+            if timer and timer.is_alive():
+                return
+            timer = threading.Timer(
+                WINDOW_SIZE_SAVE_DELAY, self._persist_pending_window_size
+            )
+            timer.daemon = True
+            self._window_size_timer = timer
+            timer.start()
+
+    def _persist_pending_window_size(self) -> None:
+        lock = getattr(self, "_window_size_lock", None)
+        if lock is None:
+            return
+        with lock:
+            size = getattr(self, "_pending_window_size", None)
+            self._pending_window_size = None
+            self._window_size_timer = None
+        if size is None or not self._window_is_normal():
+            return
+        try:
+            self.set_window_size(*size)
+        except Exception:
+            pass
+
+    def _flush_window_size(self) -> None:
+        lock = getattr(self, "_window_size_lock", None)
+        if lock is None:
+            return
+        with lock:
+            size = getattr(self, "_pending_window_size", None)
+            self._pending_window_size = None
+            timer = getattr(self, "_window_size_timer", None)
+            self._window_size_timer = None
+        if timer:
+            timer.cancel()
+        if size is None:
+            size = self._current_window_size()
+        if not self._window_is_normal():
+            return
+        try:
+            self.set_window_size(*size)
+        except Exception:
+            pass
 
     def choose_edit_images(self) -> dict[str, Any]:
         if not self.window:
@@ -3826,14 +3997,20 @@ class AppController:
         if was_maximized:
             self._set_window_corner(False)
             self._push_window_state()
+        self._schedule_window_size_save()
+
+    def _on_resized(self, width: Any = None, height: Any = None) -> None:
+        self._schedule_window_size_save(width, height)
 
     def _on_closing(self) -> bool | None:
+        self._flush_window_size()
         if self.stopping.is_set():
             return None
         self._handle_close_request()
         return False
 
     def _handle_close_request(self, selection: str | None = None) -> str:
+        self._flush_window_size()
         action = selection or self.store.get_close_action()
         if action == "exit":
             threading.Timer(0.05, self.exit_app).start()
@@ -4556,6 +4733,12 @@ class AppController:
 
     def get_state(self) -> dict[str, Any]:
         keys = [self._normalize(record, self.store.latest_payload(record["id"])) for record in self.store.list_key_records()]
+        get_window_size = getattr(self.store, "get_window_size", None)
+        window_size = (
+            get_window_size()
+            if callable(get_window_size)
+            else normalize_window_size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
+        )
         return {
             "keys": keys,
             "thresholds": self.store.get_thresholds(),
@@ -4572,6 +4755,7 @@ class AppController:
             ),
             "closeAction": self.store.get_close_action(),
             "alwaysOnTop": bool(getattr(self, "always_on_top", False)),
+            "windowSize": window_size,
             "backgroundUiMode": self.store.get_background_ui_mode(),
             "titleBarMode": self.store.get_title_bar_mode(),
             "activeTitleBarMode": self.active_title_bar_mode,
@@ -5986,6 +6170,7 @@ class AppController:
         }
 
     def restart_app(self) -> dict[str, Any]:
+        self._flush_window_size()
         script = app_data_dir() / "restart-app.ps1"
         ready = app_data_dir() / "restart.ready"
         ready.unlink(missing_ok=True)
@@ -6140,6 +6325,7 @@ class AppController:
             pass
 
     def exit_app(self) -> None:
+        self._flush_window_size()
         pending_update = getattr(self, "pending_update_path", None)
         if pending_update and Path(pending_update).is_file():
             self.pending_update_path = None
@@ -6275,6 +6461,9 @@ class WebApi:
 
     def set_always_on_top(self, enabled: Any) -> dict[str, Any]:
         return self._controller.set_always_on_top(enabled)
+
+    def set_window_size(self, width: Any, height: Any) -> dict[str, Any]:
+        return self._controller.set_window_size(width, height)
 
     def set_window_background(self, mode: Any) -> dict[str, Any]:
         return self._controller.set_window_background(mode)
@@ -6418,6 +6607,7 @@ class UiController(AppController):
     def exit_app(self) -> None:
         if self.release_timer:
             self.release_timer.cancel()
+        self._flush_window_size()
         try:
             self.rpc_client.call("exit_app")
         finally:
@@ -6435,6 +6625,7 @@ class UiController(AppController):
             pass
 
     def restart_app(self) -> dict[str, Any]:
+        self._flush_window_size()
         return self.rpc_client.call("restart_app")
 
     def restart_update(self) -> dict[str, Any]:
@@ -6467,6 +6658,16 @@ class UiController(AppController):
         result = self.rpc_client.call("set_always_on_top", clean)
         self.always_on_top = bool(result.get("alwaysOnTop"))
         return {"ok": True, "alwaysOnTop": self.always_on_top}
+
+    def set_window_size(self, width: Any, height: Any) -> dict[str, Any]:
+        result = self.rpc_client.call("set_window_size", width, height)
+        window_size = result.get("windowSize") if isinstance(result, dict) else None
+        if isinstance(window_size, dict):
+            clean = normalize_window_size(
+                window_size.get("width"), window_size.get("height")
+            )
+            self._last_saved_window_size = (clean["width"], clean["height"])
+        return result
 
 
 class RemoteWebApi(WebApi):
@@ -6588,6 +6789,13 @@ def run_ui_process(rpc_address: str, rpc_authkey: bytes) -> None:
     title_bar_mode = state.get("titleBarMode") or "default"
     frame_options = window_frame_options(title_bar_mode)
     minimum_size = window_min_size(title_bar_mode)
+    saved_window_size = state.get("windowSize")
+    window_size = normalize_window_size(
+        saved_window_size.get("width") if isinstance(saved_window_size, dict) else None,
+        saved_window_size.get("height") if isinstance(saved_window_size, dict) else None,
+    )
+    window_size["width"] = max(minimum_size[0], window_size["width"])
+    window_size["height"] = max(minimum_size[1], window_size["height"])
     initial_page = (
         asset_cache.main_page if asset_cache.is_ready() else resource_path("initialize.html")
     )
@@ -6597,8 +6805,8 @@ def run_ui_process(rpc_address: str, rpc_authkey: bytes) -> None:
         WINDOW_TITLE,
         url=str(initial_page),
         js_api=RemoteWebApi(controller, rpc_client),
-        width=920,
-        height=680,
+        width=window_size["width"],
+        height=window_size["height"],
         min_size=minimum_size,
         resizable=True,
         frameless=frame_options["frameless"],

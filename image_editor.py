@@ -1442,6 +1442,7 @@ class ImageGenerationService:
             try:
                 partial_bytes = base64.b64decode(image_data, validate=True)
                 with Image.open(io.BytesIO(partial_bytes)) as partial_image:
+                    width, height = partial_image.size
                     partial_image.verify()
                 partial_dir = output_dir / "partials"
                 partial_dir.mkdir(parents=True, exist_ok=True)
@@ -1454,6 +1455,8 @@ class ImageGenerationService:
                             "partialTotal": request.partial_images,
                             "path": str(partial_path),
                             "uri": partial_path.as_uri(),
+                            "width": width,
+                            "height": height,
                             "previewUri": image_preview_data_url(
                                 partial_bytes,
                                 max_side=512,

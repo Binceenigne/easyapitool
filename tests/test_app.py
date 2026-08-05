@@ -242,6 +242,21 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.set_close_action("invalid"), "ask")
         self.assertEqual(self.store.set_background_ui_mode("invalid"), "delayed")
 
+    def test_window_size_is_clamped_and_persisted(self):
+        self.assertEqual(
+            self.store.get_window_size(),
+            {"width": app.DEFAULT_WINDOW_WIDTH, "height": app.DEFAULT_WINDOW_HEIGHT},
+        )
+
+        saved = self.store.set_window_size(1280.4, 840.6)
+
+        self.assertEqual(saved, {"width": 1280, "height": 841})
+        self.assertEqual(self.store.get_window_size(), saved)
+        self.assertEqual(
+            self.store.set_window_size(1, 99999),
+            {"width": app.MIN_WINDOW_WIDTH, "height": app.MAX_WINDOW_HEIGHT},
+        )
+
     def test_title_bar_mode_is_normalized_and_persisted(self):
         self.assertEqual(self.store.get_title_bar_mode(), "default")
         self.assertEqual(self.store.set_title_bar_mode("minimal"), "minimal")
@@ -1352,7 +1367,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=31">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=33">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -1647,9 +1662,19 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("--fixed-titlebar-height: 33px", stylesheet)
         self.assertIn('id="pageZoomLayer"', page)
         self.assertIn("--page-zoom: 1", stylesheet)
-        self.assertIn("width: calc(100% * var(--page-zoom))", stylesheet)
-        self.assertIn("height: calc((100% - var(--fixed-titlebar-height) / var(--page-zoom)) * var(--page-zoom))", stylesheet)
-        self.assertIn("zoom: var(--page-zoom)", stylesheet)
+        self.assertIn('id="pageZoomViewport"', page)
+        self.assertIn("width: calc(100% / var(--page-zoom));", stylesheet)
+        self.assertIn("height: calc(100% / var(--page-zoom));", stylesheet)
+        self.assertIn("overflow: visible;", stylesheet)
+        self.assertIn("transform: scale(var(--page-zoom));", stylesheet)
+        self.assertIn("transform-origin: top left;", stylesheet)
+        self.assertNotIn("zoom: var(--page-zoom)", stylesheet)
+        self.assertIn("zoomViewport.clientWidth / pageZoom", page)
+        self.assertIn("zoomViewport.clientHeight / pageZoom", page)
+        self.assertIn(
+            "overflow-x: hidden;\n  overflow-y: auto;\n  background: var(--bg);",
+            stylesheet,
+        )
         self.assertIn("const PAGE_ZOOM_STORAGE_KEY = 'api-tools-page-zoom'", page)
         self.assertIn("const DEFAULT_PAGE_ZOOM = 1", page)
         self.assertIn("const PAGE_ZOOM_STORAGE_VERSION = '2'", page)
@@ -1976,7 +2001,13 @@ class StaticAssetCacheTests(unittest.TestCase):
         )
         self.assertIn("function imageGenerationItemAspectRatio(item)", page)
         self.assertIn("set.history ? ' is-history' : ''", page)
-        self.assertIn("card.style.aspectRatio = historyAspectRatio", page)
+        self.assertIn("function applyImageGenerationItemAspectRatio(card, item, image = null)", page)
+        self.assertIn("item.width = image.naturalWidth", page)
+        self.assertIn("card.style.aspectRatio = aspectRatio", page)
+        self.assertIn("applyImageGenerationItemAspectRatio(card, item)", page)
+        self.assertIn("image.addEventListener('load', () => applyImageGenerationItemAspectRatio(card, item, image))", page)
+        self.assertIn("item.width = Number(event.width) || item.width || 0", page)
+        self.assertIn("item.height = Number(event.height) || item.height || 0", page)
         self.assertIn("animation-name: imageBlurReveal, imageLayerReveal", stylesheet)
         self.assertIn("will-change: filter, opacity, transform", stylesheet)
         self.assertIn("transform: translate3d(0, 0, 0)", stylesheet)
@@ -1984,6 +2015,34 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("contain: paint", stylesheet)
         self.assertIn("@keyframes imageBlurReveal", stylesheet)
         self.assertIn("@keyframes imageLayerReveal", stylesheet)
+        self.assertIn("const reasoningMode = normalizeImageReasoningMode(set.reasoningMode)", page)
+        self.assertIn("mode-${reasoningMode}", page)
+        self.assertIn("function cloneImageReasoningBackground(mode)", page)
+        self.assertIn("source.cloneNode(true)", page)
+        self.assertIn("card.append(reasoningLayer)", page)
+        self.assertIn("function createReasoningColorPulse(target, mode)", page)
+        self.assertIn("new IntersectionObserver(entries =>", page)
+        self.assertIn("animation.pause()", page)
+        self.assertIn("animation.play()", page)
+        self.assertIn(".image-generation-item.is-animation-active", stylesheet)
+        self.assertIn("animation-play-state: paused !important", stylesheet)
+        self.assertIn("will-change: auto", stylesheet)
+        self.assertIn("will-change: transform, opacity, background-position", stylesheet)
+        self.assertNotIn("@keyframes imageGenerationDiffuseDrift", stylesheet)
+        self.assertNotIn("@keyframes imageGenerationLightFlow", stylesheet)
+        self.assertNotIn("--generation-glow-a", stylesheet)
+        self.assertRegex(
+            stylesheet,
+            r"\.image-generation-item\s*\{[^}]*background: var\(--bg\);[^}]*contain: layout paint style;",
+        )
+        self.assertRegex(
+            stylesheet,
+            r"\.image-generation-item img\s*\{[^}]*object-fit: contain;[^}]*background: var\(--bg\);",
+        )
+        self.assertRegex(
+            stylesheet,
+            r"\.image-generation-item > span:not\(\.reasoning-bg-layer\)\s*\{[^}]*z-index: 2;",
+        )
         self.assertIn(".image-generation-item img.is-reveal-pending", stylesheet)
         self.assertIn(".image-generation-set-loading", stylesheet)
         self.assertIn(".image-prompt-copy", stylesheet)
@@ -3602,6 +3661,92 @@ class ControllerTests(unittest.TestCase):
         post_message.assert_called_once_with(1234, app.WM_SYSCOMMAND, app.SC_MINIMIZE, 0)
         controller.window.minimize.assert_not_called()
 
+    def test_window_size_save_deduplicates_and_skips_maximized_resize(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.store = SimpleNamespace(
+            set_window_size=lambda width, height: {"width": width, "height": height}
+        )
+        controller._last_saved_window_size = (920, 680)
+        controller._window_size_lock = __import__("threading").Lock()
+
+        saved = controller.set_window_size(1200.4, 800.6)
+        duplicate = controller.set_window_size(1200, 801)
+
+        self.assertEqual(
+            saved,
+            {
+                "ok": True,
+                "windowSize": {"width": 1200, "height": 801},
+                "changed": True,
+            },
+        )
+        self.assertEqual(
+            duplicate,
+            {
+                "ok": True,
+                "windowSize": {"width": 1200, "height": 801},
+                "changed": False,
+            },
+        )
+
+        controller._pending_window_size = None
+        controller._window_size_timer = None
+        controller._window_is_normal = Mock(return_value=False)
+        controller._schedule_window_size_save(1920, 1080)
+
+        self.assertIsNone(controller._pending_window_size)
+
+    def test_ui_controller_forwards_window_size_to_background(self):
+        controller = app.UiController.__new__(app.UiController)
+        controller.rpc_client = SimpleNamespace(
+            call=Mock(
+                return_value={
+                    "ok": True,
+                    "windowSize": {"width": 1200, "height": 800},
+                }
+            )
+        )
+        controller._last_saved_window_size = (920, 680)
+
+        result = controller.set_window_size(1200, 800)
+
+        self.assertEqual(result["windowSize"], {"width": 1200, "height": 800})
+        controller.rpc_client.call.assert_called_once_with("set_window_size", 1200, 800)
+        self.assertEqual(controller._last_saved_window_size, (1200, 800))
+
+    def test_run_ui_process_uses_saved_window_size(self):
+        class FakeAssetCache:
+            main_page = Path("cached.html")
+
+            @staticmethod
+            def is_ready():
+                return True
+
+        rpc_client = SimpleNamespace(
+            call=Mock(
+                return_value={
+                    "titleBarMode": "default",
+                    "alwaysOnTop": False,
+                    "windowSize": {"width": 1234, "height": 777},
+                }
+            )
+        )
+        window = SimpleNamespace()
+        controller = SimpleNamespace(bind_window=Mock())
+
+        with patch("app.ControllerRpcClient", return_value=rpc_client), patch(
+            "app.StaticAssetCache", return_value=FakeAssetCache()
+        ), patch("app.UiController", return_value=controller), patch(
+            "app.RemoteWebApi", return_value=object()
+        ), patch("app.webview.create_window", return_value=window) as create_window, patch(
+            "app.webview.start"
+        ):
+            app.run_ui_process("pipe", b"auth")
+
+        self.assertEqual(create_window.call_args.kwargs["width"], 1234)
+        self.assertEqual(create_window.call_args.kwargs["height"], 777)
+        controller.bind_window.assert_called_once_with(window)
+
     def test_ui_controller_sets_native_always_on_top_and_syncs_background(self):
         mock = __import__("unittest.mock").mock
         controller = app.UiController.__new__(app.UiController)
@@ -4476,6 +4621,7 @@ class ControllerTests(unittest.TestCase):
                 "resolve_close_action",
                 "save_edited_image",
                 "set_always_on_top",
+                "set_window_size",
                 "set_window_background",
                 "update_app_preferences",
                 "update_refresh_intervals",

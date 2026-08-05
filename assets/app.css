@@ -145,20 +145,34 @@ img, svg {
   background: var(--bg);
 }
 
-#pageZoomLayer {
+#pageZoomViewport {
   position: absolute;
   top: var(--fixed-titlebar-height);
+  right: 0;
+  bottom: 0;
   left: 0;
   z-index: 1;
-  display: flex;
-  flex-direction: column;
-  width: calc(100% * var(--page-zoom));
-  height: calc((100% - var(--fixed-titlebar-height) / var(--page-zoom)) * var(--page-zoom));
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: var(--bg);
-  zoom: var(--page-zoom);
+}
+
+#pageZoomLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  width: calc(100% / var(--page-zoom));
+  height: calc(100% / var(--page-zoom));
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
+  background: var(--bg);
+  transform: scale(var(--page-zoom));
+  transform-origin: top left;
 }
 
 /* Native frame */
@@ -3116,10 +3130,38 @@ html.dark #keySwitcherMenu {
   min-width: 0;
   aspect-ratio: 1;
   overflow: hidden;
-  background: #fff;
+  background: var(--bg);
   color: var(--muted);
-  contain: paint;
+  contain: layout paint style;
   isolation: isolate;
+}
+
+.image-generation-item:is(.is-queued, .is-running) {
+  backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
+}
+
+.image-generation-item > .image-generation-reasoning-layer {
+  clip-path: inset(0);
+  border-radius: 0;
+}
+
+.image-generation-item:not(.is-animation-active) > .reasoning-bg-layer,
+.image-generation-item:not(.is-animation-active) > .reasoning-bg-layer :is(.reasoning-gradient, .reasoning-effect, .reasoning-color-pulse) {
+  animation-play-state: paused !important;
+  will-change: auto;
+}
+
+.image-generation-item.is-animation-active {
+  will-change: transform;
+}
+
+.image-generation-item.is-animation-active > .reasoning-bg-layer {
+  will-change: opacity;
+}
+
+.image-generation-item.is-animation-active > .reasoning-bg-layer :is(.reasoning-gradient, .reasoning-effect) {
+  will-change: transform, opacity, background-position;
 }
 
 .image-generation-item:not(button) {
@@ -3128,12 +3170,13 @@ html.dark #keySwitcherMenu {
 
 .image-generation-item img {
   position: absolute;
+  z-index: 1;
   inset: 0;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
-  background: #fff;
+  background: var(--bg);
   backface-visibility: hidden;
   transform: translate3d(0, 0, 0);
   transform-origin: center;
@@ -3168,8 +3211,9 @@ html.dark #keySwitcherMenu {
     opacity: 1;
   }
 }
-.image-generation-item > span {
+.image-generation-item > span:not(.reasoning-bg-layer) {
   position: absolute;
+  z-index: 2;
   inset: 0;
   display: flex;
   align-items: center;
@@ -3181,6 +3225,11 @@ html.dark #keySwitcherMenu {
   color: var(--muted);
   font-size: 9px;
   pointer-events: none;
+}
+
+.image-generation-item:is(.is-queued, .is-running) > span:not(.reasoning-bg-layer) {
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(15, 23, 42, 0.72), 0 0 8px rgba(255, 255, 255, 0.36);
 }
 
 .image-generation-item > span em {
@@ -3207,10 +3256,10 @@ html.dark #keySwitcherMenu {
   flex-direction: row;
   padding: 4px 6px;
   gap: 4px;
-  border: 1px solid rgba(148, 163, 184, 0.28);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.88);
-  color: #64748b;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  color: var(--text-soft);
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
 }
 
@@ -5000,6 +5049,8 @@ html.dark #avgMinVal {
   .reasoning-color-pulse,
   .horizontal-slider-container::after,
   .image-reasoning-panel > p.is-streaming::after,
+  .image-generation-item:is(.is-queued, .is-running)::before,
+  .image-generation-item:is(.is-queued, .is-running)::after,
   .image-generation-item img.is-image-reveal {
     animation: none !important;
   }
@@ -5023,7 +5074,7 @@ html.dark #avgMinVal {
 }
 
 #toast {
-  position: fixed;
+  position: absolute;
   right: 12px;
   bottom: 12px;
   z-index: 60;
