@@ -2289,11 +2289,14 @@
             extra: ['#6d5dfc', '#8b6cff', '#b99cff', '#d9c7ff'],
             max: ['#536dfe', '#5b8def', '#8b6cff', '#e9ddff', '#3b82f6']
         };
+        const IMAGE_REASONING_STATUS_COLORS = {
+            instant: '#27303d', flash: '#0284c7', medium: '#2563eb',
+            high: '#5865f2', extra: '#6d5dfc', max: '#536dfe'
+        };
         const IMAGE_REASONING_HOVER_PLAYBACK_RATE = 2.5;
         let imageReasoningGradientTimer = 0;
         let imageReasoningPulseTimer = 0;
         let imageReasoningMaxTransitionTimer = 0;
-        let imageGenerationAnimationObserver = null;
         let activeImageReasoningGradient = IMAGE_REASONING_TRACK_GRADIENTS[0];
 
         function normalizeImageReasoningMode(mode) {
@@ -2308,16 +2311,6 @@
                 : value;
             const number = Number.parseInt(normalized, 16);
             return `rgba(${(number >> 16) & 255}, ${(number >> 8) & 255}, ${number & 255}, ${alpha})`;
-        }
-
-        function cloneImageReasoningBackground(mode) {
-            const cleanMode = normalizeImageReasoningMode(mode);
-            const source = document.querySelector(`#imageReasoningControl .reasoning-bg-layer[data-layer-mode="${cleanMode}"]`);
-            if (!source) return null;
-            const layer = source.cloneNode(true);
-            layer.classList.add('is-visible', 'image-generation-reasoning-layer');
-            layer.querySelectorAll('.reasoning-color-pulse').forEach(pulse => pulse.remove());
-            return layer;
         }
 
         function setImageReasoningAnimationPlaybackRate(playbackRate) {
@@ -2348,34 +2341,24 @@
             const palette = IMAGE_REASONING_PULSE_PALETTES[mode];
             const layer = target?.querySelector(`.reasoning-bg-layer[data-layer-mode="${mode}"]`);
             if (!target || !palette || !layer) return;
-            const generationCard = target.classList.contains('image-generation-item');
-            if (generationCard && layer.querySelector('.reasoning-color-pulse')) return;
             const color = palette[Math.floor(Math.random() * palette.length)];
             const pulse = document.createElement('span');
             pulse.className = 'reasoning-color-pulse';
             const controlWidth = Math.max(target.clientWidth, 130);
             const controlHeight = Math.max(target.clientHeight, 34);
-            const width = generationCard
-                ? Math.max(96, controlWidth * (0.42 + Math.random() * 0.24))
-                : 68 + Math.random() * 54;
-            const height = generationCard
-                ? Math.max(72, controlHeight * (0.3 + Math.random() * 0.22))
-                : 44 + Math.random() * 34;
-            const top = generationCard
-                ? -height * 0.18 + Math.random() * Math.max(24, controlHeight - height * 0.34)
-                : -16 + Math.random() * Math.max(18, controlHeight - 3);
+            const width = 68 + Math.random() * 54;
+            const height = 44 + Math.random() * 34;
+            const top = -16 + Math.random() * Math.max(18, controlHeight - 3);
             const startX = -width * (1.05 + Math.random() * 0.22);
             const endX = controlWidth + width * (0.95 + Math.random() * 0.28);
-            const verticalDrift = generationCard
-                ? -0.08 * controlHeight + Math.random() * 0.16 * controlHeight
-                : -5 + Math.random() * 10;
+            const verticalDrift = -5 + Math.random() * 10;
             const peakAlpha = 0.19 + Math.random() * 0.11;
             const duration = 9800 + Math.random() * 4600;
             pulse.style.width = `${width}px`;
             pulse.style.height = `${height}px`;
             pulse.style.top = `${top}px`;
             pulse.style.left = '0';
-            pulse.style.setProperty('--pulse-blur', `${(generationCard ? 14 : 8) + Math.random() * (generationCard ? 12 : 6)}px`);
+            pulse.style.setProperty('--pulse-blur', `${8 + Math.random() * 6}px`);
             pulse.style.background = `radial-gradient(ellipse at center, ${imageReasoningHexToRgba(color, peakAlpha)} 0%, ${imageReasoningHexToRgba(color, peakAlpha * 0.72)} 28%, ${imageReasoningHexToRgba(color, peakAlpha * 0.28)} 52%, ${imageReasoningHexToRgba(color, 0)} 76%)`;
             layer.append(pulse);
             const animation = pulse.animate([
@@ -2385,63 +2368,47 @@
                 { transform: `translate3d(${startX + (endX - startX) * 0.8}px, ${verticalDrift * 0.88}px, 0) scale(0.94)`, opacity: 0.38, offset: 0.8 },
                 { transform: `translate3d(${endX}px, ${verticalDrift}px, 0) scale(0.72)`, opacity: 0 }
             ], { duration, easing: 'cubic-bezier(0.22, 0.58, 0.34, 1)', fill: 'forwards' });
-            if (!generationCard && document.getElementById('generateEditedImageButton')?.matches(':hover')) {
+            if (document.getElementById('generateEditedImageButton')?.matches(':hover')) {
                 animation.updatePlaybackRate(IMAGE_REASONING_HOVER_PLAYBACK_RATE);
             }
             animation.addEventListener('finish', () => pulse.remove(), { once: true });
             animation.addEventListener('cancel', () => pulse.remove(), { once: true });
+            return { duration };
+        }
+
+        function pulseImageGenerationStatusText(mode, duration) {
+            const cleanMode = normalizeImageReasoningMode(mode);
+            const color = IMAGE_REASONING_STATUS_COLORS[cleanMode];
+            const root = document.getElementById('imageGenerationSets');
+            if (!color || !root || document.hidden || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            const rootRect = root.getBoundingClientRect();
+            root.querySelectorAll('.image-generation-item:is(.is-queued, .is-running) > span > em').forEach(label => {
+                const cardRect = label.parentElement.parentElement.getBoundingClientRect();
+                if (cardRect.bottom < rootRect.top - 96 || cardRect.top > rootRect.bottom + 96) return;
+                label.imageReasoningPulseAnimation?.cancel();
+                label.style.willChange = 'color, text-shadow';
+                const animation = label.animate([
+                    { color: '#64748b', textShadow: '0 0 0 rgba(0, 0, 0, 0)' },
+                    { color, textShadow: `0 0 4px ${imageReasoningHexToRgba(color, 0.24)}`, offset: 0.18 },
+                    { color, textShadow: `0 0 10px ${imageReasoningHexToRgba(color, 0.62)}`, offset: 0.5 },
+                    { color, textShadow: `0 0 5px ${imageReasoningHexToRgba(color, 0.3)}`, offset: 0.8 },
+                    { color: '#64748b', textShadow: '0 0 0 rgba(0, 0, 0, 0)' }
+                ], { duration, easing: 'cubic-bezier(0.22, 0.58, 0.34, 1)' });
+                label.imageReasoningPulseAnimation = animation;
+                const clearWillChange = () => {
+                    if (label.imageReasoningPulseAnimation !== animation) return;
+                    label.imageReasoningPulseAnimation = null;
+                    label.style.willChange = 'auto';
+                };
+                animation.addEventListener('finish', clearWillChange, { once: true });
+                animation.addEventListener('cancel', clearWillChange, { once: true });
+            });
         }
 
         function createImageReasoningColorPulse(mode) {
-            createReasoningColorPulse(document.getElementById('imageReasoningControl'), normalizeImageReasoningMode(mode));
-            document.querySelectorAll('.image-generation-item.is-animation-active').forEach(card => {
-                createReasoningColorPulse(card, normalizeImageReasoningMode(card.dataset.reasoningMode));
-            });
-        }
-
-        function setImageGenerationAnimationActive(card, intersecting) {
-            if (!card) return;
-            const wasActive = card.classList.contains('is-animation-active');
-            card.dataset.animationIntersecting = String(intersecting === true);
-            const active = intersecting === true && !document.hidden;
-            card.classList.toggle('is-animation-active', active);
-            card.getAnimations({ subtree: true }).forEach(animation => {
-                try {
-                    if (active) animation.play();
-                    else animation.pause();
-                } catch (error) {
-                    console.debug('等待生成动画状态切换失败:', error);
-                }
-            });
-            if (active && !wasActive) {
-                requestAnimationFrame(() => createReasoningColorPulse(
-                    card,
-                    normalizeImageReasoningMode(card.dataset.reasoningMode)
-                ));
-            }
-        }
-
-        function observeImageGenerationAnimation(card) {
-            if (!card) return;
-            if (!('IntersectionObserver' in window)) {
-                setImageGenerationAnimationActive(card, true);
-                return;
-            }
-            if (!imageGenerationAnimationObserver) {
-                imageGenerationAnimationObserver = new IntersectionObserver(entries => {
-                    entries.forEach(entry => setImageGenerationAnimationActive(entry.target, entry.isIntersecting));
-                }, {
-                    root: document.getElementById('imageGenerationSets'),
-                    rootMargin: '96px 0px'
-                });
-            }
-            imageGenerationAnimationObserver.observe(card);
-        }
-
-        function refreshImageGenerationAnimationVisibility() {
-            document.querySelectorAll('.image-generation-item:is(.is-queued, .is-running)').forEach(card => {
-                setImageGenerationAnimationActive(card, card.dataset.animationIntersecting !== 'false');
-            });
+            const cleanMode = normalizeImageReasoningMode(mode);
+            const pulse = createReasoningColorPulse(document.getElementById('imageReasoningControl'), cleanMode);
+            if (pulse) pulseImageGenerationStatusText(cleanMode, pulse.duration);
         }
 
         function scheduleNextImageReasoningPulse(immediate = false) {
@@ -3409,6 +3376,19 @@
             return '调用工具';
         }
 
+        function reasoningPanelTitle(set, activeTurn, activeTool) {
+            const mode = normalizeImageReasoningMode(set.reasoningMode);
+            const modeLabel = IMAGE_REASONING_LABELS[mode];
+            const statusLabel = activeTool
+                ? reasoningToolLabel(activeTool)
+                : set.reasoningStatus === 'completed'
+                    ? '方案已确定'
+                    : set.reasoningStatus === 'running'
+                        ? '正在确认方案'
+                        : activeTurn?.title || '正在分析问题';
+            return `${modeLabel}：${statusLabel}`;
+        }
+
         function renderReasoningPanel(set) {
             const panel = document.createElement('div');
             panel.className = `image-reasoning-panel is-${set.reasoningStatus} mode-${set.reasoningMode}${set.reasoningExpanded ? ' is-expanded' : ''}`;
@@ -3424,9 +3404,7 @@
             const statusIcon = set.reasoningStatus === 'running'
                 ? 'clock-3'
                 : set.reasoningStatus === 'failed' ? 'triangle-alert' : 'circle-check';
-            const title = activeTool
-                ? reasoningToolLabel(activeTool)
-                : activeTurn?.title || (set.reasoningStatus === 'completed' ? '方案已确定' : '正在分析问题');
+            const title = reasoningPanelTitle(set, activeTurn, activeTool);
             toggle.innerHTML = `${iconMarkup(statusIcon, 'icon-12')}<strong>${escapeHtml(title)}</strong><span class="image-reasoning-usage" data-reasoning-elapsed="${escapeHtml(set.setId)}" title="${escapeHtml(reasoningUsageTitle(set))}">${totalReasoningElapsed(set)} · ${formatReasoningUsage(set)}</span>${iconMarkup(set.reasoningExpanded ? 'chevron-up' : 'chevron-right', 'icon-12')}`;
             panel.append(toggle);
 
@@ -3693,10 +3671,6 @@
                     card.dataset.itemIndex = String(item.itemIndex);
                     card.dataset.reasoningMode = reasoningMode;
                     applyImageGenerationItemAspectRatio(card, item);
-                    if (item.status === 'queued' || item.status === 'running') {
-                        const reasoningLayer = cloneImageReasoningBackground(reasoningMode);
-                        if (reasoningLayer) card.append(reasoningLayer);
-                    }
                     const displayUri = completed
                         ? browserImageSource(item.result?.previewUri, item.previewUri, item.result?.uri, item.uri)
                         : browserImageSource(item.previewUri, item.uri);
@@ -3759,7 +3733,6 @@
                 const reasoningLog = section.querySelector('.image-reasoning-log:not(.is-fully-expanded)');
                 if (reasoningLog) reasoningLog.scrollTop = reasoningLog.scrollHeight;
             });
-            container.querySelectorAll('.image-generation-item:is(.is-queued, .is-running)').forEach(observeImageGenerationAnimation);
             renderLucideIcons();
         }
 
@@ -4790,7 +4763,6 @@
             setInterval(updateClockCountdowns, 1000);
             setInterval(syncVisibleBackendState, 5000);
             document.addEventListener('visibilitychange', () => {
-                refreshImageGenerationAnimationVisibility();
                 if (document.visibilityState === 'visible') void syncVisibleBackendState();
             });
             

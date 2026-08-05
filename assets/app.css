@@ -3137,31 +3137,7 @@ html.dark #keySwitcherMenu {
 }
 
 .image-generation-item:is(.is-queued, .is-running) {
-  backface-visibility: hidden;
-  transform: translate3d(0, 0, 0);
-}
-
-.image-generation-item > .image-generation-reasoning-layer {
-  clip-path: inset(0);
-  border-radius: 0;
-}
-
-.image-generation-item:not(.is-animation-active) > .reasoning-bg-layer,
-.image-generation-item:not(.is-animation-active) > .reasoning-bg-layer :is(.reasoning-gradient, .reasoning-effect, .reasoning-color-pulse) {
-  animation-play-state: paused !important;
-  will-change: auto;
-}
-
-.image-generation-item.is-animation-active {
-  will-change: transform;
-}
-
-.image-generation-item.is-animation-active > .reasoning-bg-layer {
-  will-change: opacity;
-}
-
-.image-generation-item.is-animation-active > .reasoning-bg-layer :is(.reasoning-gradient, .reasoning-effect) {
-  will-change: transform, opacity, background-position;
+  background: #fff;
 }
 
 .image-generation-item:not(button) {
@@ -3228,8 +3204,13 @@ html.dark #keySwitcherMenu {
 }
 
 .image-generation-item:is(.is-queued, .is-running) > span:not(.reasoning-bg-layer) {
-  color: #fff;
-  text-shadow: 0 1px 3px rgba(15, 23, 42, 0.72), 0 0 8px rgba(255, 255, 255, 0.36);
+  background: #fff;
+  color: #64748b;
+  text-shadow: none;
+}
+
+.image-generation-item:is(.is-queued, .is-running) > span > em {
+  font-weight: 700;
 }
 
 .image-generation-item > span em {

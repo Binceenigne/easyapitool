@@ -1847,16 +1847,7 @@ html.dark #keySwitcherMenu {
     contain: layout paint style;
     isolation: isolate;
 }
-.image-generation-item:is(.is-queued, .is-running) { backface-visibility: hidden; transform: translate3d(0, 0, 0); }
-.image-generation-item > .image-generation-reasoning-layer { clip-path: inset(0); border-radius: 0; }
-.image-generation-item:not(.is-animation-active) > .reasoning-bg-layer,
-.image-generation-item:not(.is-animation-active) > .reasoning-bg-layer :is(.reasoning-gradient, .reasoning-effect, .reasoning-color-pulse) {
-    animation-play-state: paused !important;
-    will-change: auto;
-}
-.image-generation-item.is-animation-active { will-change: transform; }
-.image-generation-item.is-animation-active > .reasoning-bg-layer { will-change: opacity; }
-.image-generation-item.is-animation-active > .reasoning-bg-layer :is(.reasoning-gradient, .reasoning-effect) { will-change: transform, opacity, background-position; }
+.image-generation-item:is(.is-queued, .is-running) { background: #fff; }
 .image-generation-item:not(button) { user-select: none; }
 .image-generation-item img {
     position: absolute;
@@ -1889,7 +1880,8 @@ html.dark #keySwitcherMenu {
     to { opacity: 1; }
 }
 .image-generation-item > span:not(.reasoning-bg-layer) { position: absolute; z-index: 2; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 7px; padding: 12px; background: transparent; color: var(--muted); font-size: 9px; pointer-events: none; }
-.image-generation-item:is(.is-queued, .is-running) > span:not(.reasoning-bg-layer) { color: #fff; text-shadow: 0 1px 3px rgba(15, 23, 42, 0.72), 0 0 8px rgba(255, 255, 255, 0.36); }
+.image-generation-item:is(.is-queued, .is-running) > span:not(.reasoning-bg-layer) { background: #fff; color: #64748b; text-shadow: none; }
+.image-generation-item:is(.is-queued, .is-running) > span > em { font-weight: 700; }
 .image-generation-item > span em { font-style: normal; }
 .image-generation-item.is-completed > span { opacity: 0; background: rgba(2, 6, 23, 0.42); transition: opacity 140ms ease; }
 .image-generation-item.is-completed:hover > span,
