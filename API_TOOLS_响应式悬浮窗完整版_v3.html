@@ -3065,8 +3065,7 @@
         }
 
         const IMAGE_STREAM_INITIAL_BLUR = 32;
-        const IMAGE_STREAM_PARTIAL_FLOOR_BLUR = 3;
-        const IMAGE_STREAM_PARTIAL_BLUR_STEP = 0.22;
+        const IMAGE_STREAM_CLARITY_STEP = 0.25;
         const IMAGE_STREAM_PARTIAL_DURATION = 10000;
         const IMAGE_STREAM_FINAL_DURATION = 3000;
         const IMAGE_STREAM_INITIAL_FADE_DURATION = 5000;
@@ -3231,12 +3230,10 @@
 
         function imageRevealTargetBlur(partialIndex) {
             const index = Math.max(1, Math.floor(Number(partialIndex) || 1));
-            const regularSteps = Math.min(index, 3);
-            const extraSteps = Math.max(0, index - 3);
-            const regularReduction = regularSteps * IMAGE_STREAM_PARTIAL_BLUR_STEP;
-            const extraReduction = IMAGE_STREAM_PARTIAL_BLUR_STEP * (1 - 1 / (2 ** extraSteps));
-            const remaining = Math.max(0, 1 - regularReduction - extraReduction);
-            return Math.max(IMAGE_STREAM_PARTIAL_FLOOR_BLUR, IMAGE_STREAM_INITIAL_BLUR * remaining);
+            const remaining = index <= 3
+                ? 1 - index * IMAGE_STREAM_CLARITY_STEP
+                : IMAGE_STREAM_CLARITY_STEP / (2 ** (index - 3));
+            return IMAGE_STREAM_INITIAL_BLUR * Math.max(0, remaining);
         }
 
         function imageRevealBlurAt(frame, timestamp = Date.now()) {
@@ -3252,6 +3249,10 @@
         function currentImageRevealBlur(item, beforeFrameIndex, timestamp = Date.now()) {
             const frames = Array.isArray(item.revealFrames) ? item.revealFrames : [];
             for (let index = Math.min(beforeFrameIndex, frames.length) - 1; index >= 0; index -= 1) {
+                const actual = imageStreamActualStyle(imageRevealElementCache.get(frames[index]));
+                if (actual.connected && Number(actual.opacity) > 0.01 && Number.isFinite(actual.actualBlurPx)) {
+                    return actual.actualBlurPx;
+                }
                 const blur = imageRevealBlurAt(frames[index], timestamp);
                 if (blur !== null) return blur;
             }
@@ -3289,6 +3290,13 @@
             const requestedTarget = kind === 'final'
                 ? 0
                 : imageRevealTargetBlur(options.partialIndex);
+            const previousImage = previousFrame ? imageRevealElementCache.get(previousFrame) : null;
+            const previousActual = imageStreamActualStyle(previousImage);
+            const capturedBlur = previousActual.connected
+                && Number(previousActual.opacity) > 0.01
+                && Number.isFinite(previousActual.actualBlurPx)
+                ? previousActual.actualBlurPx
+                : null;
             const frame = {
                 uri,
                 fallbackUri: options.fallbackUri || '',
@@ -3296,17 +3304,16 @@
                 kind,
                 duration: kind === 'final' ? IMAGE_STREAM_FINAL_DURATION : IMAGE_STREAM_PARTIAL_DURATION,
                 startedAt: 0,
-                fromBlur: null,
+                fromBlur: capturedBlur,
                 toBlur: Math.min(previousTarget, requestedTarget)
             };
             item.revealFrames.push(frame);
-            const previousImage = previousFrame ? imageRevealElementCache.get(previousFrame) : null;
             imageStreamDebugLog('frame-inserted', {
                 ...imageStreamDebugContext(item, frame, item.revealFrames.length - 1),
                 partialIndex: Number(options.partialIndex) || 0,
                 partialTotal: Number(options.partialTotal) || 0,
                 previousFrameId: previousFrame ? imageStreamFrameId(previousFrame) : '',
-                previousActual: imageStreamActualStyle(previousImage)
+                previousActual
             });
             ensureImageStreamDebugSampler(item);
             return frame;
@@ -3315,9 +3322,11 @@
         function applyImageRevealAnimation(image, frame, frameIndex) {
             const elapsed = Math.max(0, Date.now() - Number(frame.startedAt || 0));
             const initialPartial = frameIndex === 0 && frame.kind === 'partial';
-            const crossfadeDuration = initialPartial
-                ? IMAGE_STREAM_INITIAL_FADE_DURATION
-                : IMAGE_STREAM_CROSSFADE_DURATION;
+            const crossfadeDuration = frame.kind === 'final'
+                ? frame.duration
+                : initialPartial
+                    ? IMAGE_STREAM_INITIAL_FADE_DURATION
+                    : IMAGE_STREAM_CROSSFADE_DURATION;
             image.classList.remove('is-reveal-pending');
             image.classList.add('is-image-reveal', `is-${frame.kind}-reveal`);
             image.style.removeProperty('animation');
@@ -3343,7 +3352,7 @@
             if (frame.kind !== 'final' || frame.cleanupScheduled) return;
             frame.cleanupScheduled = true;
             const elapsed = Math.max(0, Date.now() - Number(frame.startedAt || 0));
-            const cleanupDuration = Math.max(frame.duration, IMAGE_STREAM_CROSSFADE_DURATION);
+            const cleanupDuration = frame.duration;
             window.setTimeout(() => {
                 if (!item.revealFrames?.includes(frame) || item.revealFrames.at(-1) !== frame) return;
                 freezeImageRevealFrame(frame, imageRevealElementCache.get(frame), 0, 1);
@@ -3377,7 +3386,8 @@
                         Number(getComputedStyle(previousImages[previousIndex]).opacity)
                     );
                 });
-                frame.fromBlur = Math.max(Number(frame.toBlur) || 0, visibleBlur);
+                const capturedBlur = Number.isFinite(frame.fromBlur) ? frame.fromBlur : visibleBlur;
+                frame.fromBlur = Math.max(Number(frame.toBlur) || 0, Math.min(capturedBlur, visibleBlur));
                 frame.startedAt = timestamp;
                 imageStreamDebugLog('frame-started', {
                     ...imageStreamDebugContext(item, frame, frameIndex),
@@ -4145,10 +4155,12 @@
                 : `${completedCount} 张图片生成完成，可以查看大图`);
         }
 
-        function syncImageGenerationResult(result) {
-            if (!result?.setId) return;
-            const set = createImageGenerationSet(result.setId, result.requestedCount || 1, result.prompt || '', result);
-            const previousItems = set.items;
+        function syncImageGenerationResult(result, requestId = '') {
+            const resultSetId = String(result?.setId || result?.requestId || requestId || '');
+            if (!resultSetId) return;
+            const set = imageGenerationSetById(requestId)
+                || imageGenerationSetById(resultSetId)
+                || createImageGenerationSet(resultSetId, result.requestedCount || 1, result.prompt || '', result);
             set.status = 'completed';
             set.sessionId = result.sessionId || set.sessionId;
             set.parentSetId = result.parentSetId || set.parentSetId;
@@ -4172,23 +4184,31 @@
                 set.webReferences = result.webReferences.map(reference => ({ ...reference }));
                 set.webReferenceCount = set.webReferences.length;
             }
-            set.items = (result.items || []).map((item, itemIndex) => {
-                const previousItem = previousItems[itemIndex];
-                const fullUri = previousItem?.fullUri || item.fullUri || '';
-                return {
+            (result.items || []).forEach((resultItem, itemIndex) => {
+                const item = set.items[itemIndex] || {
                     itemIndex,
-                    status: item.ok ? 'completed' : 'failed',
-                    uri: item.uri || '',
-                    previewUri: item.previewUri || '',
-                    fullUri,
-                    path: item.path || '',
-                    result: item.ok ? { ...item, fullUri } : null,
-                    error: item.error || '',
-                    revealFrames: Array.isArray(previousItem?.revealFrames) ? previousItem.revealFrames : [],
-                    originalLoadAttempted: previousItem?.originalLoadAttempted === true,
-                    partialIndex: Number(previousItem?.partialIndex) || 0,
-                    partialTotal: Number(previousItem?.partialTotal) || 3
+                    status: 'queued',
+                    uri: '',
+                    previewUri: '',
+                    fullUri: '',
+                    path: '',
+                    result: null,
+                    error: '',
+                    revealFrames: [],
+                    originalLoadAttempted: false,
+                    partialIndex: 0,
+                    partialTotal: 3
                 };
+                if (!set.items[itemIndex]) set.items[itemIndex] = item;
+                item.status = resultItem.ok ? 'completed' : 'failed';
+                item.uri = resultItem.uri || item.uri;
+                item.previewUri = resultItem.previewUri || item.previewUri;
+                item.fullUri = item.fullUri || resultItem.fullUri || '';
+                item.path = resultItem.path || item.path;
+                item.result = resultItem.ok
+                    ? { ...(item.result || {}), ...resultItem, fullUri: item.fullUri }
+                    : null;
+                item.error = resultItem.error || '';
             });
             set.items.forEach(item => {
                 if (item.status !== 'completed') return;
@@ -4611,7 +4631,7 @@
                     }
                 );
                 if (!result.ok) throw new Error(result.error || '图片生成失败');
-                syncImageGenerationResult(result);
+                syncImageGenerationResult(result, requestId);
                 advanceImageEditSession(result);
                 const successCount = result.items.filter(item => item.ok).length;
                 if (!window.imageEditState.editSession) status.textContent = `已生成 ${successCount}/${result.requestedCount} 张图片`;
@@ -5214,6 +5234,15 @@
             }
         }
 
+            window.benchmark = {
+                async open() {
+                    if (!window.pywebview?.api?.open_benchmark) {
+                        throw new Error('Benchmark 尚未就绪');
+                    }
+                    return window.pywebview.api.open_benchmark();
+                }
+            };
+
         function handleDevToolsSequence(event) {
             if (!isSettingsPanelOpen()) {
                 devtoolsSequenceBuffer = '';
@@ -5510,6 +5539,12 @@
             try {
                 const result = await window.pywebview.api.download_update();
                 if (!result?.ok) throw new Error(result?.error || '无法下载更新');
+                    while (true) {
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                        const state = await window.pywebview.api.get_state();
+                        if (state?.update) window.applyUpdateState(state.update);
+                        if (state?.update?.status !== 'downloading') break;
+                    }
             } catch (error) {
                 window.applyUpdateState({
                     status: 'failed', percent: 0, message: `更新失败: ${error.message || String(error)}`

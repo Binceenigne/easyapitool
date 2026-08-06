@@ -3145,16 +3145,48 @@ html.dark #keySwitcherMenu {
 }
 
 .image-generation-set-checkbox {
-  flex: 0 0 15px;
-  width: 15px;
-  height: 15px;
-  margin: 0 2px 0 0;
-  accent-color: var(--brand);
+  position: relative;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg);
   cursor: pointer;
+}
+
+.image-generation-set-checkbox::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 11px;
+  border: solid var(--brand);
+  border-width: 0 2px 2px 0;
+  content: "";
+  opacity: 0;
+  transform: translate(-50%, -58%) rotate(45deg) scale(0.7);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.image-generation-set-checkbox:checked {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 9%, var(--bg));
+}
+
+.image-generation-set-checkbox:checked::after {
+  opacity: 1;
+  transform: translate(-50%, -58%) rotate(45deg) scale(1);
 }
 
 .image-generation-set-checkbox:disabled {
   cursor: default;
+  opacity: 0.38;
+}
+
+.image-generation-set-checkbox:hover:not(:disabled) {
+  border-color: var(--brand);
 }
 
 .image-generation-set-checkbox:focus-visible {

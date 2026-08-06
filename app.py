@@ -50,7 +50,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.28"
+APP_VERSION = "1.0.29"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -70,12 +70,13 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "46"
+STATIC_UI_VERSION = "47"
 IMAGE_STREAM_DEBUG_LOG_MAX_BYTES = 20 * 1024 * 1024
 WEB_SEARCH_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 WEB_REFERENCE_IMAGE_MAX_BYTES = 16 * 1024 * 1024
 WEB_REFERENCE_MAX_COUNT = 6
 MAIN_PAGE_NAME = "API_TOOLS_响应式悬浮窗完整版_v3.html"
+BENCHMARK_PAGE_NAME = "benchmark.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
 LUCIDE_MIRRORS = (
@@ -967,7 +968,34 @@ def changelog_for_update(
     return next((section.strip() for section in sections if section.strip()), "")
 
 
-def release_notes_since(releases: list[dict[str, Any]], current_version: Any) -> str:
+def changelog_section(markdown: str, target_version: Any) -> str:
+    target = version_tuple(target_version)
+    if not target:
+        return ""
+    sections = __import__("re").split(
+        r"(?=^##\s+v?\d)",
+        str(markdown or ""),
+        flags=__import__("re").M,
+    )
+    for section in sections:
+        heading = __import__("re").match(
+            r"^##\s+v?(\d+(?:\.\d+)+)\b",
+            section.strip(),
+        )
+        if heading and version_tuple(heading.group(1)) == target:
+            return section.strip()
+    return ""
+
+
+def release_body_is_corrupted(notes: Any) -> bool:
+    return bool(__import__("re").search(r"\?{3,}", str(notes or "")))
+
+
+def release_notes_since(
+    releases: list[dict[str, Any]],
+    current_version: Any,
+    fallback_markdown: str = "",
+) -> str:
     current = version_tuple(current_version)
     pending = [
         release
@@ -982,6 +1010,8 @@ def release_notes_since(releases: list[dict[str, Any]], current_version: Any) ->
         tag_name = str(release.get("tag_name") or "").strip()
         version = release_version(tag_name) or tag_name.lstrip("v")
         notes = str(release.get("body") or "").strip()
+        if release_body_is_corrupted(notes):
+            notes = changelog_section(fallback_markdown, version)
         if not notes:
             notes = "- 本版本暂无更新说明。"
         versioned_notes = changelog_between(notes, current_version, version)
@@ -1099,6 +1129,7 @@ class StaticAssetCache:
         self.install_thread: threading.Thread | None = None
         self.source_files = {
             MAIN_PAGE_NAME: self.bundle_root / MAIN_PAGE_NAME,
+            BENCHMARK_PAGE_NAME: self.bundle_root / BENCHMARK_PAGE_NAME,
             "assets/app.css": self.bundle_root / "assets" / "app.css",
             "assets/title_logo.png": self.bundle_root / "assets" / "title_logo.png",
         }
@@ -1392,6 +1423,7 @@ RPC_METHODS = {
     "defer_update_restart",
     "dismiss_update_prompt",
     "download_update",
+    "benchmark_run",
     "generate_image",
     "exit_app",
     "get_asset_status",
@@ -1500,7 +1532,7 @@ class ControllerRpcServer:
             if method_name not in RPC_METHODS:
                 raise ValueError("不允许的后台调用")
             method = getattr(self.controller, method_name)
-            if method_name in {"generate_image", "polish_prompt"}:
+            if method_name in {"benchmark_run", "generate_image", "polish_prompt"}:
                 send_lock = threading.Lock()
 
                 def send_event(event: dict[str, Any]) -> None:
@@ -1834,6 +1866,54 @@ def merge_reasoning_usage(current: Any, update: Any) -> dict[str, Any]:
         "hasTokenUsage": bool(left.get("hasTokenUsage") or right.get("hasTokenUsage")),
         "hasCost": has_complete_cost,
     }
+
+
+def merge_usage_metrics(*values: Any) -> dict[str, Any]:
+    total: dict[str, Any] = {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0,
+        "callCount": 0,
+        "costUsd": 0.0,
+        "costedCallCount": 0,
+        "estimatedCallCount": 0,
+        "costSource": "",
+        "callCountBasis": "每个 Responses 或 Images API 请求计为一次调用",
+        "hasTokenUsage": False,
+        "hasCost": False,
+    }
+    cost_sources: set[str] = set()
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        total["inputTokens"] += max(0, int(safe_float(value.get("inputTokens"))))
+        total["outputTokens"] += max(0, int(safe_float(value.get("outputTokens"))))
+        total["totalTokens"] += max(0, int(safe_float(value.get("totalTokens"))))
+        total["callCount"] += max(0, int(safe_float(value.get("callCount"))))
+        total["costedCallCount"] += max(
+            0, int(safe_float(value.get("costedCallCount")))
+        )
+        total["estimatedCallCount"] += max(
+            0, int(safe_float(value.get("estimatedCallCount")))
+        )
+        total["costUsd"] += max(0.0, safe_float(value.get("costUsd")))
+        total["hasTokenUsage"] = total["hasTokenUsage"] or bool(
+            value.get("hasTokenUsage")
+        )
+        if value.get("costedCallCount"):
+            cost_sources.add(str(value.get("costSource") or "response"))
+    total["hasCost"] = (
+        total["callCount"] > 0
+        and total["costedCallCount"] == total["callCount"]
+    )
+    if not total["hasCost"]:
+        total["costUsd"] = 0.0
+        total["costSource"] = ""
+    elif len(cost_sources) == 1:
+        total["costSource"] = next(iter(cost_sources))
+    else:
+        total["costSource"] = "mixed"
+    return total
 
 
 def load_pressure_from_usage_percent(usage_percent: float) -> float:
@@ -4187,13 +4267,20 @@ class AppController:
                 self.store.set_last_update_check(time.time())
                 release_tag = str(release.get("tag_name") or "")
                 latest = release_version(release_tag)
+                release_notes = str(release.get("body") or "").strip()
                 assets = {
                     str(asset.get("name")): asset
                     for asset in release.get("assets") or []
                 }
                 available = is_newer_version(latest) and RELEASE_ASSET_NAME in assets
                 full_notes = bundled_changelog()
-                pending_notes = release_notes_since(stable_releases, APP_VERSION)
+                if release_body_is_corrupted(release_notes):
+                    release_notes = changelog_section(full_notes, latest) or release_notes
+                pending_notes = release_notes_since(
+                    stable_releases,
+                    APP_VERSION,
+                    full_notes,
+                )
                 concise_notes = (
                     pending_notes
                     if available and pending_notes
@@ -4201,7 +4288,7 @@ class AppController:
                         full_notes,
                         APP_VERSION,
                         latest or APP_VERSION,
-                        str(release.get("body") or ""),
+                        release_notes,
                     )
                 )
                 complete_notes = (
@@ -4209,7 +4296,7 @@ class AppController:
                 )
                 self.update_state["release"] = {
                     "version": latest,
-                    "notes": str(release.get("body") or ""),
+                    "notes": release_notes,
                     "downloadSize": int(
                         (assets.get(RELEASE_ASSET_NAME) or {}).get("size") or 0
                     ),
@@ -4276,6 +4363,12 @@ class AppController:
             return {"ok": False, "error": "没有可下载的新版本"}
         if not getattr(sys, "frozen", False):
             return {"ok": False, "error": "开发模式不能覆盖安装，请先构建 EXE"}
+        self._set_update_state(
+            status="downloading",
+            percent=0,
+            message="正在连接下载源",
+            showPrompt=True,
+        )
         threading.Thread(
             target=self._download_update_worker,
             name="update-download",
@@ -5206,6 +5299,12 @@ class AppController:
             response = completed_payloads[-1] if completed_payloads else {}
             turn_usage = response_usage_metrics(response, model)
             reasoning_usage = merge_reasoning_usage(reasoning_usage, turn_usage)
+            emit(
+                "react_usage",
+                turn=current_turn,
+                usage=turn_usage,
+                reasoningUsage=reasoning_usage,
+            )
             response_output = [
                 item for item in response.get("output") or [] if isinstance(item, dict)
             ]
@@ -5958,6 +6057,7 @@ class AppController:
             webSearchResultCount=web_search_result_count,
             webReferenceCount=len(persisted_web_references),
             webReferences=persisted_web_references,
+            finalPrompt=request.prompt,
         )
 
         def generate_one(item_index: int) -> dict[str, Any]:
@@ -5990,6 +6090,13 @@ class AppController:
                     )
                 except OSError as exc:
                     raise RuntimeError(f"持久化图片集失败：{exc}") from exc
+                result["imageUsage"] = image_usage_metrics(
+                    result.get("usage"),
+                    str(request.fields.get("model") or "gpt-image-2"),
+                    str(result.get("quality") or request.requested_quality),
+                    str(result.get("actualSize") or request.requested_size),
+                    int(result.get("partialImagesReceived") or 0),
+                )
                 result["itemIndex"] = item_index
                 emit("item_completed", item_index, result=result)
                 return result
@@ -6018,6 +6125,10 @@ class AppController:
             raise
         items.sort(key=lambda item: int(item.get("itemIndex") or 0))
         successful = [item for item in items if item.get("ok")]
+        image_usage = merge_usage_metrics(
+            *(item.get("imageUsage") for item in successful)
+        )
+        total_usage = merge_usage_metrics(reasoning_usage, image_usage)
         result = {
             "ok": bool(successful),
             "requestId": request_id,
@@ -6032,6 +6143,9 @@ class AppController:
             "reasoningSummary": reasoning_summary,
             "reasoningDurationMs": reasoning_duration_ms,
             "reasoningUsage": reasoning_usage,
+            "imageUsage": image_usage,
+            "usage": total_usage,
+            "finalPrompt": request.prompt,
             "referenceCount": len(request.image_paths),
             "operation": request.operation,
             "transportOperation": "edit" if request.image_paths else "generate",
@@ -6061,6 +6175,14 @@ class AppController:
             }
         )
         emit(
+            "benchmark_usage",
+            reasoningUsage=reasoning_usage,
+            imageUsage=image_usage,
+            usage=total_usage,
+            finalPrompt=request.prompt,
+            webReferences=persisted_web_references,
+        )
+        emit(
             "set_completed",
             items=items,
             ok=bool(successful),
@@ -6070,6 +6192,128 @@ class AppController:
             selectedAssetIds=selected_asset_ids,
         )
         return result
+
+    def benchmark_run(
+        self,
+        key_id: str,
+        prompt: str,
+        image_paths: list[str],
+        options: dict[str, Any] | None = None,
+        event_callback: Any = None,
+    ) -> dict[str, Any]:
+        clean_options = dict(options) if isinstance(options, dict) else {}
+        benchmark_id = str(clean_options.get("benchmarkId") or uuid.uuid4().hex)[:80]
+        modes = ("instant", "flash", "medium", "high", "extra", "max")
+        base_options = {
+            key: value
+            for key, value in clean_options.items()
+            if key not in {"benchmarkId", "reasoningMode", "requestId", "sessionId"}
+        }
+        base_options.update({"imageCount": 1, "continuation": False, "parentSetId": ""})
+
+        def emit(event: dict[str, Any]) -> None:
+            if event_callback is None:
+                return
+            try:
+                event_callback(event)
+            except Exception:
+                pass
+
+        emit(
+            {
+                "type": "benchmark_started",
+                "benchmarkId": benchmark_id,
+                "modes": list(modes),
+                "prompt": str(prompt or "").strip(),
+            }
+        )
+
+        def run_mode(mode: str) -> dict[str, Any]:
+            started_at = time.perf_counter()
+            request_id = f"benchmark-{benchmark_id[:48]}-{mode}"
+            mode_options = {
+                **base_options,
+                "benchmarkId": benchmark_id,
+                "reasoningMode": mode,
+                "requestId": request_id,
+                "sessionId": request_id,
+            }
+
+            def on_event(event: dict[str, Any]) -> None:
+                emit(
+                    {
+                        **event,
+                        "benchmarkId": benchmark_id,
+                        "benchmarkMode": mode,
+                    }
+                )
+
+            try:
+                result = self.generate_image(
+                    key_id,
+                    prompt,
+                    image_paths,
+                    mode_options,
+                    event_callback=on_event,
+                )
+                result = {
+                    **result,
+                    "benchmarkId": benchmark_id,
+                    "benchmarkMode": mode,
+                    "elapsedMs": round((time.perf_counter() - started_at) * 1000, 1),
+                }
+                emit(
+                    {
+                        "type": "benchmark_mode_completed",
+                        "benchmarkId": benchmark_id,
+                        "benchmarkMode": mode,
+                        "result": result,
+                    }
+                )
+                return result
+            except Exception as exc:
+                result = {
+                    "ok": False,
+                    "benchmarkId": benchmark_id,
+                    "benchmarkMode": mode,
+                    "error": str(exc),
+                    "elapsedMs": round((time.perf_counter() - started_at) * 1000, 1),
+                }
+                emit(
+                    {
+                        "type": "benchmark_mode_completed",
+                        "benchmarkId": benchmark_id,
+                        "benchmarkMode": mode,
+                        "result": result,
+                    }
+                )
+                return result
+
+        results: list[dict[str, Any]] = []
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=6,
+            thread_name_prefix="image-benchmark",
+        ) as executor:
+            futures = [executor.submit(run_mode, mode) for mode in modes]
+            for future in concurrent.futures.as_completed(futures):
+                results.append(future.result())
+        results.sort(key=lambda item: modes.index(str(item.get("benchmarkMode") or "")))
+        successful = sum(bool(result.get("ok")) for result in results)
+        emit(
+            {
+                "type": "benchmark_completed",
+                "benchmarkId": benchmark_id,
+                "results": results,
+                "successful": successful,
+            }
+        )
+        return {
+            "ok": successful > 0,
+            "benchmarkId": benchmark_id,
+            "modes": list(modes),
+            "results": results,
+            "successful": successful,
+        }
 
     def delete_key(self, key_id: str) -> dict[str, Any]:
         self.store.delete_key(key_id)
@@ -6534,6 +6778,12 @@ class WebApi:
     def open_devtools(self) -> dict[str, Any]:
         return self._controller.open_devtools()
 
+    def open_benchmark(self) -> dict[str, Any]:
+        opener = getattr(self._controller, "open_benchmark", None)
+        if not callable(opener):
+            return {"ok": False, "error": "Benchmark 尚未就绪"}
+        return opener()
+
     def report_startup(self, stage: str, navigation_ms: Any = 0) -> dict[str, Any]:
         return self._controller.report_startup(stage, navigation_ms)
 
@@ -6628,9 +6878,14 @@ class UiController(AppController):
         super().__init__(asset_cache)
         self.rpc_client = rpc_client
         self.release_timer: threading.Timer | None = None
+        self.benchmark_window: webview.Window | None = None
 
     def _destroy_ui(self) -> None:
         self.stopping.set()
+        benchmark_window = getattr(self, "benchmark_window", None)
+        self.benchmark_window = None
+        if benchmark_window:
+            threading.Timer(0.01, benchmark_window.destroy).start()
         if self.window:
             threading.Timer(0.01, self.window.destroy).start()
 
@@ -6672,6 +6927,13 @@ class UiController(AppController):
             self.rpc_client.call("exit_app")
         finally:
             self.stopping.set()
+            benchmark_window = getattr(self, "benchmark_window", None)
+            self.benchmark_window = None
+            if benchmark_window:
+                try:
+                    benchmark_window.destroy()
+                except Exception:
+                    pass
             if self.window:
                 self.window.destroy()
 
@@ -6683,6 +6945,49 @@ class UiController(AppController):
             self.window.evaluate_js(f"window.applyImageGenerationEvent({payload});")
         except Exception:
             pass
+
+    def push_benchmark_event(self, event: dict[str, Any]) -> None:
+        benchmark_window = getattr(self, "benchmark_window", None)
+        if not benchmark_window:
+            return
+        payload = json.dumps(event, ensure_ascii=False)
+        try:
+            benchmark_window.evaluate_js(f"window.applyBenchmarkEvent({payload});")
+        except Exception:
+            pass
+
+    def open_benchmark(self) -> dict[str, Any]:
+        benchmark_window = getattr(self, "benchmark_window", None)
+        if benchmark_window:
+            try:
+                benchmark_window.show()
+                return {"ok": True, "reused": True}
+            except Exception:
+                self.benchmark_window = None
+        if not self.asset_cache.is_ready():
+            return {"ok": False, "error": "静态资源缓存尚未就绪"}
+        benchmark_window = webview.create_window(
+            "API_TOOLS Benchmark",
+            url=(self.asset_cache.release_dir / BENCHMARK_PAGE_NAME).as_uri(),
+            js_api=BenchmarkWebApi(self, self.rpc_client),
+            width=1440,
+            height=980,
+            min_size=(960, 680),
+            resizable=True,
+            frameless=False,
+            shadow=True,
+            background_color="#07111f",
+        )
+        if benchmark_window is None:
+            return {"ok": False, "error": "无法创建 Benchmark 窗口"}
+        self.benchmark_window = benchmark_window
+
+        def clear_window(*_args: Any) -> None:
+            if self.benchmark_window is benchmark_window:
+                self.benchmark_window = None
+
+        benchmark_window.events.closed += clear_window
+        return {"ok": True, "reused": False}
 
     def restart_app(self) -> dict[str, Any]:
         self._flush_window_size()
@@ -6751,6 +7056,25 @@ class RemoteWebApi(WebApi):
 
     def open_generated_pictures(self) -> dict[str, Any]:
         return self._remote("open_generated_pictures")
+
+    def open_benchmark(self) -> dict[str, Any]:
+        return self._controller.open_benchmark()
+
+    def benchmark_run(
+        self,
+        key_id: str,
+        prompt: str,
+        image_paths: list[str],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._rpc_client.call_with_events(
+            "benchmark_run",
+            key_id,
+            prompt,
+            image_paths,
+            options,
+            on_event=self._controller.push_benchmark_event,
+        )
 
     def load_generated_image(self, source_path: str) -> dict[str, Any]:
         return self._remote("load_generated_image", source_path)
@@ -6843,6 +7167,23 @@ class RemoteWebApi(WebApi):
 
     def report_startup(self, stage: str, navigation_ms: Any = 0) -> dict[str, Any]:
         return self._remote("report_startup", stage, navigation_ms)
+
+
+class BenchmarkWebApi(RemoteWebApi):
+    def get_state(self) -> dict[str, Any]:
+        return super().get_state()
+
+    def benchmark_run(
+        self,
+        key_id: str,
+        prompt: str,
+        image_paths: list[str],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return super().benchmark_run(key_id, prompt, image_paths, options)
+
+    def load_generated_image(self, source_path: str) -> dict[str, Any]:
+        return super().load_generated_image(source_path)
 
 
 def run_ui_process(rpc_address: str, rpc_authkey: bytes) -> None:

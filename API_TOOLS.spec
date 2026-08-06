@@ -5,6 +5,7 @@ from pathlib import Path
 project_root = Path(SPECPATH)
 datas = [
     (str(project_root / 'API_TOOLS_响应式悬浮窗完整版_v3.html'), '.'),
+    (str(project_root / 'benchmark.html'), '.'),
     (str(project_root / 'initialize.html'), '.'),
     (str(project_root / 'CHANGELOG.md'), '.'),
     (str(project_root / 'assets' / 'app.css'), 'assets'),

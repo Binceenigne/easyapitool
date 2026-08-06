@@ -1285,6 +1285,10 @@ class StaticAssetCacheTests(unittest.TestCase):
             '<script defer src="vendor/lucide/lucide.min.js"></script>',
             encoding="utf-8",
         )
+        (self.bundle / app.BENCHMARK_PAGE_NAME).write_text(
+            '<main id="benchmarkApp"></main>',
+            encoding="utf-8",
+        )
         (self.bundle / "assets" / "app.css").write_text("body{}", encoding="utf-8")
         (self.bundle / "assets" / "title_logo.png").write_bytes(b"logo")
         self.cache = app.StaticAssetCache(self.data, self.bundle)
@@ -1949,7 +1953,9 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn(".image-reasoning-web-reference", stylesheet)
         self.assertIn("@keyframes reasoningCursor", stylesheet)
         self.assertIn("const IMAGE_STREAM_PARTIAL_DURATION = 10000", page)
-        self.assertIn("const IMAGE_STREAM_PARTIAL_BLUR_STEP = 0.22", page)
+        self.assertIn("const IMAGE_STREAM_CLARITY_STEP = 0.25", page)
+        self.assertNotIn("IMAGE_STREAM_PARTIAL_BLUR_STEP", page)
+        self.assertNotIn("IMAGE_STREAM_PARTIAL_FLOOR_BLUR", page)
         self.assertIn("const IMAGE_STREAM_FINAL_DURATION = 3000", page)
         self.assertIn("const IMAGE_STREAM_INITIAL_FADE_DURATION = 5000", page)
         self.assertIn("const IMAGE_STREAM_CROSSFADE_DURATION = 10000", page)
@@ -1961,18 +1967,29 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("append_image_stream_debug", page)
         self.assertIn("frameIndex === 0 && frame.kind === 'partial'", page)
         self.assertIn("function currentImageRevealBlur(item, beforeFrameIndex", page)
+        self.assertIn("imageStreamActualStyle(imageRevealElementCache.get(frames[index]))", page)
+        self.assertIn("Number(actual.opacity) > 0.01 && Number.isFinite(actual.actualBlurPx)", page)
         self.assertIn("function freezeImageRevealFrame(frame, image, blur, opacity", page)
         self.assertIn("frame.frozenOpacity", page)
-        self.assertIn("frame.fromBlur = Math.max(Number(frame.toBlur) || 0, visibleBlur)", page)
-        self.assertIn("const extraReduction = IMAGE_STREAM_PARTIAL_BLUR_STEP * (1 - 1 / (2 ** extraSteps))", page)
+        self.assertIn("const capturedBlur = previousActual.connected", page)
+        self.assertIn("fromBlur: capturedBlur", page)
+        self.assertIn("Math.min(capturedBlur, visibleBlur)", page)
+        self.assertIn("1 - index * IMAGE_STREAM_CLARITY_STEP", page)
+        self.assertIn("IMAGE_STREAM_CLARITY_STEP / (2 ** (index - 3))", page)
         self.assertIn("if (incomingPartialIndex <= previousPartialIndex)", page)
         self.assertIn("imageStreamDebugLog('partial-ignored'", page)
         self.assertIn("item.revealFrames.push(frame)", page)
         self.assertIn("const imageRevealElementCache = new WeakMap()", page)
         self.assertIn("createImageRevealElement(item, frame, frameIndex)", page)
         self.assertIn("function scheduleFinalImageFrameCleanup(item, frame)", page)
-        self.assertIn("Math.max(frame.duration, IMAGE_STREAM_CROSSFADE_DURATION)", page)
+        self.assertIn("frame.kind === 'final'\n                ? frame.duration", page)
+        self.assertIn("const cleanupDuration = frame.duration", page)
         self.assertIn("item.revealFrames = [frame]", page)
+        self.assertIn("function syncImageGenerationResult(result, requestId = '')", page)
+        self.assertIn("const set = imageGenerationSetById(requestId)", page)
+        self.assertIn("if (!set.items[itemIndex]) set.items[itemIndex] = item", page)
+        self.assertNotIn("set.items = (result.items || []).map", page)
+        self.assertIn("syncImageGenerationResult(result, requestId)", page)
         self.assertIn("function toggleImageGenerationSet(setId)", page)
         self.assertIn("if (!set || set.status === 'running') return", page)
         self.assertIn("if (set.status !== 'running')", page)
@@ -2643,6 +2660,70 @@ class ControllerTests(unittest.TestCase):
             app.IMAGE_REASONING_MODES["extra"]["depth"],
             app.IMAGE_REASONING_MODES["max"]["depth"],
         )
+
+    def test_benchmark_runs_all_six_modes_in_fixed_order_and_streams_mode_events(self):
+        controller = app.AppController.__new__(app.AppController)
+        events = []
+
+        def fake_generate(_key_id, _prompt, _image_paths, options, event_callback=None):
+            mode = options["reasoningMode"]
+            event_callback({"type": "set_started", "mode": mode})
+            return {
+                "ok": True,
+                "benchmarkMode": mode,
+                "items": [{"ok": True, "itemIndex": 0}],
+                "reasoningUsage": {
+                    "inputTokens": 1,
+                    "outputTokens": 2,
+                    "totalTokens": 3,
+                    "callCount": 1,
+                    "costedCallCount": 0,
+                    "estimatedCallCount": 0,
+                    "costUsd": 0,
+                    "costSource": "",
+                    "hasTokenUsage": True,
+                    "hasCost": False,
+                },
+                "imageUsage": {},
+                "usage": {},
+                "prompt": f"final {mode}",
+            }
+
+        controller.generate_image = fake_generate
+        result = controller.benchmark_run(
+            "key-1",
+            "benchmark prompt",
+            [],
+            {"benchmarkId": "bench-1"},
+            event_callback=events.append,
+        )
+
+        modes = [item["benchmarkMode"] for item in result["results"]]
+        self.assertEqual(modes, ["instant", "flash", "medium", "high", "extra", "max"])
+        self.assertEqual(result["successful"], 6)
+        streamed_modes = {
+            event["benchmarkMode"]
+            for event in events
+            if event.get("type") == "set_started"
+        }
+        self.assertEqual(streamed_modes, set(modes))
+        self.assertTrue(all(event["benchmarkId"] == "bench-1" for event in events if "benchmarkId" in event))
+
+    def test_benchmark_page_and_open_entry_cover_required_observability(self):
+        project_root = Path(__file__).parents[1]
+        page = (project_root / app.BENCHMARK_PAGE_NAME).read_text(encoding="utf-8")
+        main_page = (project_root / app.MAIN_PAGE_NAME).read_text(encoding="utf-8")
+
+        for mode in ("instant", "flash", "medium", "high", "extra", "max"):
+            self.assertIn(f"['{mode}'", page)
+        self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr))", page)
+        self.assertIn("window.applyBenchmarkEvent", page)
+        self.assertIn("reasoningUsage", page)
+        self.assertIn("callCountBasis", page)
+        self.assertIn("finalPrompt", page)
+        self.assertIn("webReferences", page)
+        self.assertIn("window.benchmark", main_page)
+        self.assertIn("open_benchmark", main_page)
 
     def test_generate_image_rejects_removed_low_reasoning_mode(self):
         controller = app.AppController.__new__(app.AppController)
@@ -4645,6 +4726,7 @@ class ControllerTests(unittest.TestCase):
                 "load_generated_image",
                 "list_image_sets",
                 "native_drag",
+                "open_benchmark",
                 "open_devtools",
                 "open_generated_pictures",
                 "polish_prompt",
@@ -5046,12 +5128,14 @@ class ControllerTests(unittest.TestCase):
             save_edited_image=lambda path: {"local": path},
             copy_generated_image=lambda path: {"copied": path},
             push_image_generation_event=mock.Mock(),
+            push_benchmark_event=mock.Mock(),
         )
         api = app.RemoteWebApi(controller, rpc)
 
         state = api.get_state()
         refresh = api.refresh_now("trace-1")
         generated = api.generate_image("key-1", "combine", ["a.png", "b.png"], {"quality": "low"})
+        benchmarked = api.benchmark_run("key-1", "benchmark", [], {"size": "1024x1024"})
         polished = api.polish_prompt("key-1", "rough")
         listed = api.list_image_sets()
         deleted_set = api.delete_image_set("session-1", "set-1")
@@ -5073,12 +5157,23 @@ class ControllerTests(unittest.TestCase):
             },
         )
         self.assertEqual(
+            benchmarked,
+            {
+                "method": "benchmark_run",
+                "args": ("key-1", "benchmark", [], {"size": "1024x1024"}),
+            },
+        )
+        self.assertEqual(
             polished,
             {"method": "polish_prompt", "args": ("key-1", "rough")},
         )
         self.assertIs(
-            rpc.call_with_events.call_args.kwargs["on_event"],
+            rpc.call_with_events.call_args_list[0].kwargs["on_event"],
             controller.push_image_generation_event,
+        )
+        self.assertIs(
+            rpc.call_with_events.call_args_list[1].kwargs["on_event"],
+            controller.push_benchmark_event,
         )
         self.assertEqual(choose, {"local": "choose"})
         self.assertEqual(listed, {"method": "list_image_sets", "args": ()})
@@ -5108,6 +5203,26 @@ class ControllerTests(unittest.TestCase):
             __import__("unittest.mock").mock.call("save_edited_image", "result.png"),
             rpc.call.call_args_list,
         )
+
+    def test_ui_controller_exit_destroys_benchmark_and_main_windows(self):
+        mock = __import__("unittest.mock").mock
+        rpc = SimpleNamespace(call=mock.Mock(return_value={"ok": True}))
+        benchmark_window = SimpleNamespace(destroy=mock.Mock())
+        main_window = SimpleNamespace(destroy=mock.Mock())
+        controller = app.UiController.__new__(app.UiController)
+        controller.rpc_client = rpc
+        controller.release_timer = None
+        controller.stopping = __import__("threading").Event()
+        controller.benchmark_window = benchmark_window
+        controller.window = main_window
+
+        controller.exit_app()
+
+        rpc.call.assert_called_once_with("exit_app")
+        benchmark_window.destroy.assert_called_once_with()
+        main_window.destroy.assert_called_once_with()
+        self.assertIsNone(controller.benchmark_window)
+        self.assertTrue(controller.stopping.is_set())
 
     def test_ui_controller_low_power_hide_destroys_window_immediately(self):
         mock = __import__("unittest.mock").mock
