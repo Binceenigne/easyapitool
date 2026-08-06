@@ -50,7 +50,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.0.27"
+APP_VERSION = "1.0.28"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -70,7 +70,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "45"
+STATIC_UI_VERSION = "46"
 IMAGE_STREAM_DEBUG_LOG_MAX_BYTES = 20 * 1024 * 1024
 WEB_SEARCH_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 WEB_REFERENCE_IMAGE_MAX_BYTES = 16 * 1024 * 1024
@@ -1388,6 +1388,7 @@ RPC_METHODS = {
     "check_for_updates",
     "delete_key",
     "delete_image_set",
+    "export_image_sets",
     "defer_update_restart",
     "dismiss_update_prompt",
     "download_update",
@@ -3674,6 +3675,62 @@ class AppController:
         if not deleted:
             return {"ok": False, "error": "图片集不存在或已被删除"}
         return {"ok": True, "setId": str(set_id), "sessionId": str(session_id)}
+
+    def export_image_sets(self, sets: Any) -> dict[str, Any]:
+        if not self.window:
+            return {"ok": False, "error": "应用窗口尚未就绪"}
+        if not isinstance(sets, list):
+            return {"ok": False, "error": "导出选择无效"}
+        requested_sets = [item for item in sets if isinstance(item, dict)]
+        if not requested_sets:
+            return {"ok": False, "error": "请先选择要导出的图片集"}
+        selected = self.window.create_file_dialog(
+            webview.FileDialog.FOLDER,
+            directory=str(windows_pictures_dir()),
+        )
+        if not selected:
+            return {"ok": True, "cancelled": True, "exported": 0, "files": []}
+        target_root = Path(selected[0]).resolve()
+        target_root.mkdir(parents=True, exist_ok=True)
+        store = self._image_session_store()
+        exported_files: list[str] = []
+        skipped_sets: list[str] = []
+        for selected_set in requested_sets:
+            session_id = str(selected_set.get("sessionId") or "")
+            set_id = str(selected_set.get("setId") or "")
+            if not session_id or not set_id:
+                continue
+            originals = store.original_paths_for_set(session_id, set_id)
+            if not originals:
+                skipped_sets.append(set_id)
+                continue
+            set_label = "".join(
+                character
+                for character in str(selected_set.get("prompt") or set_id)[:48]
+                if character.isalnum() or character in "-_ "
+            ).strip() or set_id
+            safe_set_id = "".join(
+                character for character in set_id[:80] if character.isalnum() or character in "-_"
+            ) or "set"
+            set_directory = (target_root / f"API_TOOLS-{set_label}-{safe_set_id[:8]}").resolve()
+            if not set_directory.is_relative_to(target_root):
+                skipped_sets.append(set_id)
+                continue
+            set_directory.mkdir(parents=True, exist_ok=True)
+            for original in originals:
+                source = Path(original["path"]).resolve()
+                if not source.is_file():
+                    continue
+                destination = set_directory / f"image-{int(original['itemIndex']) + 1:02d}{source.suffix.lower()}"
+                shutil.copy2(source, destination)
+                exported_files.append(str(destination))
+        return {
+            "ok": True,
+            "cancelled": False,
+            "exported": len(exported_files),
+            "files": exported_files,
+            "skippedSets": skipped_sets,
+        }
 
     def save_edited_image(self, source_path: str) -> dict[str, Any]:
         if not self.window:
@@ -6386,6 +6443,9 @@ class WebApi:
     def delete_image_set(self, session_id: str, set_id: str) -> dict[str, Any]:
         return self._controller.delete_image_set(session_id, set_id)
 
+    def export_image_sets(self, sets: Any) -> dict[str, Any]:
+        return self._controller.export_image_sets(sets)
+
     def list_image_sets(self) -> dict[str, Any]:
         return self._controller.list_image_sets()
 
@@ -6703,6 +6763,9 @@ class RemoteWebApi(WebApi):
 
     def delete_image_set(self, session_id: str, set_id: str) -> dict[str, Any]:
         return self._remote("delete_image_set", session_id, set_id)
+
+    def export_image_sets(self, sets: Any) -> dict[str, Any]:
+        return self._remote("export_image_sets", sets)
 
     def list_image_sets(self) -> dict[str, Any]:
         return self._remote("list_image_sets")

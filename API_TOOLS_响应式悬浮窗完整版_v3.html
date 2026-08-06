@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="assets/app.css?v=33">
+    <link rel="stylesheet" href="assets/app.css?v=34">
     <script defer src="vendor/lucide/lucide.min.js"></script>
     <style media="not all" data-legacy-styles-disabled>
         * {
@@ -1090,7 +1090,11 @@
                 <section id="imageEditResult" aria-labelledby="imageEditResultHeading">
                     <div class="image-results-header">
                         <div><i data-lucide="images" aria-hidden="true"></i><span id="imageEditResultHeading">图片生成</span></div>
-                        <button type="button" onclick="openGeneratedPictures()"><i data-lucide="folder-open" aria-hidden="true"></i><small>Windows 图片文件夹</small></button>
+                        <div class="image-results-actions">
+                            <button type="button" id="exportSelectedImageSetsButton" onclick="exportSelectedImageSets()" disabled title="导出选中的图片集" aria-label="导出选中的图片集"><i data-lucide="download" aria-hidden="true"></i><small>导出所选</small></button>
+                            <button type="button" id="deleteSelectedImageSetsButton" onclick="deleteSelectedImageSets()" disabled title="删除选中的图片集" aria-label="删除选中的图片集"><i data-lucide="trash-2" aria-hidden="true"></i><small>删除所选</small></button>
+                            <button type="button" onclick="openGeneratedPictures()" title="打开 Windows 图片文件夹" aria-label="打开 Windows 图片文件夹"><i data-lucide="folder-open" aria-hidden="true"></i><small>Windows 图片文件夹</small></button>
+                        </div>
                     </div>
                     <div id="imageGenerationSets" class="is-empty">
                         <div id="imageEditResultEmpty"><i data-lucide="scan-line" aria-hidden="true"></i><span>每次生成都会在这里创建一个图片集</span></div>
@@ -1810,6 +1814,8 @@
             editSession: null,
             draftBeforeSession: null,
             pendingDeleteSetId: '',
+            pendingDeleteSetIds: [],
+            selectedSetIds: new Set(),
             aspectRatio: 'auto',
             quality: 'auto',
             outputPreset: 'lossless',
@@ -2083,6 +2089,7 @@
             const style = getComputedStyle(textarea);
             const lineHeight = Number.parseFloat(style.lineHeight) || 20;
             const verticalPadding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+            const pageZoom = Math.max(0.01, Number(getPageZoom()) || 1);
             const prompt = textarea.closest('.image-edit-prompt');
             const footer = document.querySelector('.image-generation-footer');
             const form = document.getElementById('imageEditForm');
@@ -2090,11 +2097,11 @@
             const formRect = form?.getBoundingClientRect();
             const footerRect = footer?.getBoundingClientRect();
             const formStyle = form ? getComputedStyle(form) : null;
-            const fixedBeforePrompt = formRect ? textareaRect.top - formRect.top : 0;
-            const footerHeight = footerRect?.height || 0;
+            const fixedBeforePrompt = formRect ? (textareaRect.top - formRect.top) / pageZoom : 0;
+            const footerHeight = (footerRect?.height || 0) / pageZoom;
             const formGap = Number.parseFloat(formStyle?.rowGap || formStyle?.gap || '0');
             const formPaddingBottom = Number.parseFloat(formStyle?.paddingBottom || '0');
-            const containerHeight = formRect?.height || window.innerHeight;
+            const containerHeight = formRect ? formRect.height / pageZoom : window.innerHeight / pageZoom;
             const availableHeight = Math.max(
                 lineHeight + verticalPadding,
                 containerHeight - fixedBeforePrompt - footerHeight - formGap - formPaddingBottom - 2
@@ -2626,7 +2633,9 @@
                 existingSet.items.forEach(item => {
                     item.revealFrames = [];
                     item.previewUri = '';
+                    item.fullUri = '';
                     if (item.result) item.result.previewUri = '';
+                    if (item.result) item.result.fullUri = '';
                 });
             });
             set = {
@@ -2648,6 +2657,8 @@
                 history: metadata.history === true,
                 previewsLoaded: metadata.previewsLoaded !== false,
                 loadingPreviews: false,
+                originalsLoaded: false,
+                loadingOriginals: false,
                 reasoningStatus: metadata.reasoningStatus || 'idle',
                 reasoningMode: normalizeImageReasoningMode(metadata.reasoningMode || window.imageEditState.reasoningMode),
                 reasoningModel: metadata.reasoningModel || '',
@@ -2680,10 +2691,12 @@
                     status: 'queued',
                     uri: '',
                     previewUri: '',
+                    fullUri: '',
                     path: '',
                     result: null,
                     error: '',
                     revealFrames: [],
+                    originalLoadAttempted: false,
                     partialIndex: 0,
                     partialTotal: 3
                 }))
@@ -2866,7 +2879,7 @@
         }
 
         async function loadImageGenerationSetPreviews(set) {
-            if (!set?.history || set.previewsLoaded || set.loadingPreviews) return;
+            if (!set?.history || isLatestImageGenerationSet(set) || set.previewsLoaded || set.loadingPreviews) return;
             set.loadingPreviews = true;
             renderImageGenerationSets();
             await Promise.all(set.items.map(async item => {
@@ -2884,6 +2897,119 @@
             set.previewsLoaded = true;
             set.loadingPreviews = false;
             renderImageGenerationSets();
+        }
+
+        function isLatestImageGenerationSet(set) {
+            return window.imageEditState.resultSets[0]?.setId === set?.setId;
+        }
+
+        async function loadImageGenerationSetOriginals(set) {
+            if (!set || !isLatestImageGenerationSet(set) || set.originalsLoaded || set.loadingOriginals) return;
+            const completedItems = set.items.filter(item => item.status === 'completed' && !item.fullUri && !item.originalLoadAttempted);
+            if (!completedItems.length) {
+                const completed = set.items.filter(item => item.status === 'completed');
+                set.originalsLoaded = set.status !== 'running' && completed.length > 0 && completed.every(item => Boolean(item.fullUri));
+                return;
+            }
+            const loadImage = window.pywebview?.api?.load_generated_image;
+            if (!loadImage) return;
+            completedItems.forEach(item => { item.originalLoadAttempted = true; });
+            set.loadingOriginals = true;
+            renderImageGenerationSets();
+            const loadedItems = await Promise.all(completedItems.map(async item => {
+                const sourcePath = item.path || item.result?.path;
+                if (!sourcePath) return false;
+                try {
+                    const loaded = await loadImage(sourcePath);
+                    if (!loaded.ok || !loaded.dataUrl) return false;
+                    const currentItem = set.items.find(candidate => Number(candidate.itemIndex) === Number(item.itemIndex)) || item;
+                    currentItem.fullUri = loaded.dataUrl;
+                    currentItem.originalLoadAttempted = true;
+                    if (currentItem.result) currentItem.result.fullUri = loaded.dataUrl;
+                    currentItem.revealFrames = [];
+                    return true;
+                } catch (error) {
+                    console.warn('最近一轮原图加载失败，继续使用缩略图:', error);
+                    return false;
+                }
+            }));
+            const completed = set.items.filter(item => item.status === 'completed');
+            set.originalsLoaded = set.status !== 'running' && completed.length > 0 && completed.every(item => Boolean(item.fullUri));
+            set.loadingOriginals = false;
+            renderImageGenerationSets();
+        }
+
+        function selectedImageGenerationSets() {
+            const selectedIds = window.imageEditState.selectedSetIds;
+            return window.imageEditState.resultSets.filter(set => selectedIds.has(set.setId));
+        }
+
+        function updateImageSetSelectionActions() {
+            const selected = selectedImageGenerationSets();
+            const exportButton = document.getElementById('exportSelectedImageSetsButton');
+            const deleteButton = document.getElementById('deleteSelectedImageSetsButton');
+            if (exportButton) exportButton.disabled = !selected.some(set => set.items.some(item => item.status === 'completed'));
+            if (deleteButton) deleteButton.disabled = !selected.some(set => set.status !== 'running');
+        }
+
+        function toggleImageSetSelection(setId, checked) {
+            if (checked) window.imageEditState.selectedSetIds.add(setId);
+            else window.imageEditState.selectedSetIds.delete(setId);
+            updateImageSetSelectionActions();
+        }
+
+        function deleteImageGenerationSet(setId) {
+            const set = imageGenerationSetById(setId);
+            if (!set || set.status === 'running') return;
+            window.imageEditState.pendingDeleteSetId = setId;
+            window.imageEditState.pendingDeleteSetIds = [setId];
+            const modal = document.getElementById('imageSetDeleteModal');
+            const appMain = document.getElementById('appMain');
+            document.getElementById('imageSetDeleteModalTitle').textContent = '删除图片集';
+            document.getElementById('imageSetDeleteModalMessage').textContent = '将同时删除该轮提示词、原图和压缩预览。此操作无法撤销。';
+            if (modal.parentElement !== appMain) appMain.append(modal);
+            openAnimatedModal(modal);
+            renderLucideIcons();
+            requestAnimationFrame(() => document.getElementById('cancelImageSetDeleteButton').focus());
+        }
+
+        function deleteSelectedImageSets() {
+            const selected = selectedImageGenerationSets().filter(set => set.status !== 'running');
+            if (!selected.length) return showToast('请先选择已完成的图片集', 'error');
+            window.imageEditState.pendingDeleteSetId = selected[0].setId;
+            window.imageEditState.pendingDeleteSetIds = selected.map(set => set.setId);
+            const modal = document.getElementById('imageSetDeleteModal');
+            const appMain = document.getElementById('appMain');
+            document.getElementById('imageSetDeleteModalTitle').textContent = `删除 ${selected.length} 个图片集`;
+            document.getElementById('imageSetDeleteModalMessage').textContent = `将同时删除选中的 ${selected.length} 个图片集、原图和压缩预览。此操作无法撤销。`;
+            if (modal.parentElement !== appMain) appMain.append(modal);
+            openAnimatedModal(modal);
+            renderLucideIcons();
+            requestAnimationFrame(() => document.getElementById('cancelImageSetDeleteButton').focus());
+        }
+
+        async function exportSelectedImageSets() {
+            const selected = selectedImageGenerationSets()
+                .filter(set => set.items.some(item => item.status === 'completed'))
+                .map(set => ({ setId: set.setId, sessionId: set.sessionId, prompt: set.originalPrompt || set.prompt || '图片生成' }));
+            if (!selected.length) return showToast('请先选择包含完成图片的图片集', 'error');
+            const button = document.getElementById('exportSelectedImageSetsButton');
+            button.disabled = true;
+            try {
+                const result = await window.pywebview.api.export_image_sets(selected);
+                if (!result.ok) throw new Error(result.error || '导出图片失败');
+                if (!result.cancelled) {
+                    const skippedCount = Array.isArray(result.skippedSets) ? result.skippedSets.length : 0;
+                    showToast(skippedCount
+                        ? `已导出 ${result.exported || 0} 张原图，${skippedCount} 个图片集无可用原图`
+                        : result.exported ? `已导出 ${result.exported} 张原图` : '没有可导出的原图',
+                        skippedCount ? 'error' : 'success');
+                }
+            } catch (error) {
+                showToast(error.message || String(error), 'error');
+            } finally {
+                updateImageSetSelectionActions();
+            }
         }
 
         function browserImageSource(...candidates) {
@@ -3311,8 +3437,10 @@
                 itemIndex: Number(item.itemIndex) || 0
             });
             image.alt = frame.kind === 'final' ? '生成图片' : '过程预览';
-            const frameSource = browserImageSource(frame.uri, frame.fallbackUri);
-            if (!image.getAttribute('src') && frameSource) image.src = frameSource;
+            const frameSource = frame.kind === 'final'
+                ? browserImageSource(item.fullUri || item.result?.fullUri, frame.uri, frame.fallbackUri)
+                : browserImageSource(frame.uri, frame.fallbackUri);
+            if (frameSource && image.getAttribute('src') !== frameSource) image.src = frameSource;
             if (Number.isFinite(Number(frame.frozenBlur))) {
                 freezeImageRevealFrame(frame, image, frame.frozenBlur, frame.frozenOpacity);
             } else if (frame.startedAt) {
@@ -3565,7 +3693,12 @@
         function renderImageGenerationSets() {
             const container = document.getElementById('imageGenerationSets');
             const sets = window.imageEditState.resultSets;
+            const availableSetIds = new Set(sets.map(set => set.setId));
+            window.imageEditState.selectedSetIds = new Set(
+                [...window.imageEditState.selectedSetIds].filter(setId => availableSetIds.has(setId))
+            );
             container.classList.toggle('is-empty', sets.length === 0);
+            updateImageSetSelectionActions();
             container.replaceChildren();
             if (!sets.length) {
                 const empty = document.createElement('div');
@@ -3606,6 +3739,15 @@
                 heading.append(titleRow, meta);
                 const actions = document.createElement('div');
                 actions.className = 'image-generation-set-actions';
+                const selectCheckbox = document.createElement('input');
+                selectCheckbox.type = 'checkbox';
+                selectCheckbox.className = 'image-generation-set-checkbox';
+                selectCheckbox.checked = window.imageEditState.selectedSetIds.has(set.setId);
+                selectCheckbox.disabled = set.status === 'running';
+                selectCheckbox.title = selectCheckbox.disabled ? '生成完成后可选择' : '选择图片集';
+                selectCheckbox.setAttribute('aria-label', `选择图片集：${title.textContent}`);
+                selectCheckbox.addEventListener('click', event => event.stopPropagation());
+                selectCheckbox.addEventListener('change', () => toggleImageSetSelection(set.setId, selectCheckbox.checked));
                 const continueButton = document.createElement('button');
                 continueButton.type = 'button';
                 continueButton.title = '基于此轮继续创作';
@@ -3621,7 +3763,7 @@
                 deleteButton.disabled = set.status === 'running';
                 deleteButton.innerHTML = iconMarkup('trash-2', 'icon-12');
                 deleteButton.addEventListener('click', () => deleteImageGenerationSet(set.setId));
-                actions.append(continueButton, deleteButton);
+                actions.append(selectCheckbox, continueButton, deleteButton);
                 if (set.status !== 'running') {
                     const toggleButton = document.createElement('button');
                     toggleButton.type = 'button';
@@ -3669,7 +3811,14 @@
                     card.dataset.reasoningMode = reasoningMode;
                     applyImageGenerationItemAspectRatio(card, item);
                     const displayUri = completed
-                        ? browserImageSource(item.result?.previewUri, item.previewUri, item.result?.uri, item.uri)
+                        ? browserImageSource(
+                            set.history ? item.result?.previewUri : item.fullUri || item.result?.fullUri,
+                            set.history ? item.previewUri : item.uri,
+                            item.result?.previewUri,
+                            item.previewUri,
+                            item.result?.uri,
+                            item.uri
+                        )
                         : browserImageSource(item.previewUri, item.uri);
                     const revealFrames = Array.isArray(item.revealFrames) ? item.revealFrames : [];
                     if (revealFrames.length) {
@@ -3684,7 +3833,9 @@
                         image.addEventListener('load', () => applyImageGenerationItemAspectRatio(card, item, image));
                         image.src = displayUri;
                         const fallbackUri = completed
-                            ? item.result?.previewUri || item.previewUri
+                            ? set.history
+                                ? item.result?.previewUri || item.previewUri
+                                : item.result?.previewUri || item.previewUri || item.result?.uri || item.uri
                             : item.uri;
                         if (fallbackUri && fallbackUri !== displayUri) {
                             image.addEventListener('error', async () => {
@@ -3730,6 +3881,10 @@
                 const reasoningLog = section.querySelector('.image-reasoning-log:not(.is-fully-expanded)');
                 if (reasoningLog) reasoningLog.scrollTop = reasoningLog.scrollHeight;
             });
+            const latestSet = sets[0];
+            if (latestSet && !latestSet.originalsLoaded && !latestSet.loadingOriginals) {
+                void loadImageGenerationSetOriginals(latestSet);
+            }
             renderLucideIcons();
         }
 
@@ -4019,15 +4174,18 @@
             }
             set.items = (result.items || []).map((item, itemIndex) => {
                 const previousItem = previousItems[itemIndex];
+                const fullUri = previousItem?.fullUri || item.fullUri || '';
                 return {
                     itemIndex,
                     status: item.ok ? 'completed' : 'failed',
                     uri: item.uri || '',
                     previewUri: item.previewUri || '',
+                    fullUri,
                     path: item.path || '',
-                    result: item.ok ? item : null,
+                    result: item.ok ? { ...item, fullUri } : null,
                     error: item.error || '',
                     revealFrames: Array.isArray(previousItem?.revealFrames) ? previousItem.revealFrames : [],
+                    originalLoadAttempted: previousItem?.originalLoadAttempted === true,
                     partialIndex: Number(previousItem?.partialIndex) || 0,
                     partialTotal: Number(previousItem?.partialTotal) || 3
                 };
@@ -4121,20 +4279,9 @@
             document.getElementById('imageEditStatus').textContent = `第 ${window.imageEditState.editSession.roundNumber} 轮已完成，可继续追加需求`;
         }
 
-        function deleteImageGenerationSet(setId) {
-            const set = imageGenerationSetById(setId);
-            if (!set || set.status === 'running') return;
-            window.imageEditState.pendingDeleteSetId = setId;
-            const modal = document.getElementById('imageSetDeleteModal');
-            const appMain = document.getElementById('appMain');
-            if (modal.parentElement !== appMain) appMain.append(modal);
-            openAnimatedModal(modal);
-            renderLucideIcons();
-            requestAnimationFrame(() => document.getElementById('cancelImageSetDeleteButton').focus());
-        }
-
         async function closeImageSetDeleteModal() {
             window.imageEditState.pendingDeleteSetId = '';
+            window.imageEditState.pendingDeleteSetIds = [];
             await closeAnimatedModal(document.getElementById('imageSetDeleteModal'));
         }
 
@@ -4143,22 +4290,38 @@
         }
 
         async function confirmDeleteImageGenerationSet() {
-            const setId = window.imageEditState.pendingDeleteSetId;
-            const set = imageGenerationSetById(setId);
-            if (!set || set.status === 'running') return void closeImageSetDeleteModal();
+            const pendingIds = window.imageEditState.pendingDeleteSetIds.length
+                ? [...window.imageEditState.pendingDeleteSetIds]
+                : [window.imageEditState.pendingDeleteSetId];
+            const pendingSets = pendingIds
+                .map(setId => imageGenerationSetById(setId))
+                .filter(set => set && set.status !== 'running')
+                .sort((left, right) => Number(right.roundNumber || 0) - Number(left.roundNumber || 0));
+            if (!pendingSets.length) return void closeImageSetDeleteModal();
             const confirmButton = document.getElementById('confirmImageSetDeleteButton');
             confirmButton.disabled = true;
             setIconLabel(confirmButton, 'loader-circle', '删除中');
             confirmButton.querySelector('[data-lucide], svg')?.classList.add('is-spinning');
+            const deletedSetIds = [];
+            const failures = [];
             try {
-                const result = await window.pywebview.api.delete_image_set(set.sessionId || set.setId, set.setId);
-                if (!result.ok) throw new Error(result.error || '删除图片集失败');
-                window.imageEditState.resultSets = window.imageEditState.resultSets.filter(item => item.setId !== setId);
-                if (window.imageEditState.editSession?.setId === setId) exitImageEditSession();
-                if (window.imageEditState.viewer.setId === setId) await closeImageResultModal();
+                for (const set of pendingSets) {
+                    try {
+                        const result = await window.pywebview.api.delete_image_set(set.sessionId || set.setId, set.setId);
+                        if (!result.ok) throw new Error(result.error || '删除图片集失败');
+                        deletedSetIds.push(set.setId);
+                        if (window.imageEditState.editSession?.setId === set.setId) exitImageEditSession();
+                        if (window.imageEditState.viewer.setId === set.setId) await closeImageResultModal();
+                    } catch (error) {
+                        failures.push(`${set.originalPrompt || set.prompt || set.setId}：${error.message || String(error)}`);
+                    }
+                }
+                window.imageEditState.resultSets = window.imageEditState.resultSets.filter(item => !deletedSetIds.includes(item.setId));
+                deletedSetIds.forEach(setId => window.imageEditState.selectedSetIds.delete(setId));
                 renderImageGenerationSets();
                 await closeImageSetDeleteModal();
-                showToast('图片集已删除');
+                if (failures.length) showToast(`已删除 ${deletedSetIds.length} 个，${failures.length} 个失败`, 'error');
+                else showToast(deletedSetIds.length > 1 ? `已删除 ${deletedSetIds.length} 个图片集` : '图片集已删除');
             } catch (error) {
                 showToast(error.message || String(error), 'error');
             } finally {
@@ -4187,13 +4350,20 @@
                             expanded: false,
                             history: true,
                             previewsLoaded: false,
-                            loadingPreviews: false
+                            loadingPreviews: false,
+                            originalsLoaded: false,
+                            loadingOriginals: false
                         });
                     }
                 });
                 window.imageEditState.resultSets = [...existing.values()].sort((left, right) =>
                     String(right.createdAt || '').localeCompare(String(left.createdAt || ''))
                 );
+                window.imageEditState.resultSets.forEach((set, setIndex) => {
+                    set.history = setIndex !== 0;
+                    set.originalsLoaded = set.history || set.originalsLoaded === true;
+                    if (set.history) set.loadingOriginals = false;
+                });
                 renderImageGenerationSets();
             } catch (error) {
                 console.warn('图片集历史加载失败:', error);

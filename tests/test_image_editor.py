@@ -726,7 +726,7 @@ class ImageEditorTests(unittest.TestCase):
                 },
                 parent_set_id="set-1",
             )
-            store.persist_result(
+            second_result = store.persist_result(
                 "session-1",
                 "set-2",
                 0,
@@ -775,6 +775,10 @@ class ImageEditorTests(unittest.TestCase):
             self.assertTrue(Path(persisted_references[0]["previewPath"]).is_file())
             self.assertTrue(Path(first_result["path"]).is_file())
             self.assertTrue(Path(first_result["previewPath"]).is_file())
+            originals = store.original_paths_for_set("session-1", "set-2")
+            self.assertEqual(len(originals), 1)
+            self.assertEqual(Path(originals[0]["path"]).resolve(), Path(second_result["path"]).resolve())
+            self.assertNotIn("preview", originals[0]["path"])
             self.assertTrue(first_result["assetId"].startswith("asset-"))
             self.assertEqual(manifest["rounds"][0]["items"][0]["assetId"], first_result["assetId"])
             self.assertEqual(manifest["assets"][0]["assetId"], first_result["assetId"])

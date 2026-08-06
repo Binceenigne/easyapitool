@@ -961,6 +961,39 @@ class ImageSessionStore:
         restored.sort(key=lambda item: (item["createdAt"], item["roundNumber"]), reverse=True)
         return restored
 
+    def original_paths_for_set(self, session_id: str, set_id: str) -> list[dict[str, Any]]:
+        clean_session_id = self._safe_id(session_id)
+        clean_set_id = self._safe_id(set_id)
+        with self._manifest_lock:
+            manifest = self._read_manifest(clean_session_id)
+            if manifest is None:
+                return []
+            round_data = next(
+                (item for item in manifest.get("rounds") or [] if item.get("setId") == clean_set_id),
+                None,
+            )
+            if round_data is None:
+                return []
+            session_dir = self._session_dir(clean_session_id).resolve()
+            round_dir = (session_dir / str(round_data.get("directory") or "")).resolve()
+            if not round_dir.is_relative_to(session_dir) or not round_dir.is_dir():
+                return []
+            originals: list[dict[str, Any]] = []
+            for item_data in round_data.get("items") or []:
+                if item_data.get("status") != "completed":
+                    continue
+                original_path = (session_dir / str(item_data.get("original") or "")).resolve()
+                if not original_path.is_file() or not original_path.is_relative_to(round_dir):
+                    continue
+                originals.append(
+                    {
+                        "itemIndex": int(item_data.get("itemIndex") or 0),
+                        "path": str(original_path),
+                        "suffix": original_path.suffix.lower(),
+                    }
+                )
+            return originals
+
     def _prune_assets_locked(
         self,
         manifest: dict[str, Any],

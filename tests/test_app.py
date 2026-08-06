@@ -1367,7 +1367,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=33">', page)
+        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=34">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -1385,6 +1385,10 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="imagePromptModal"', page)
         self.assertIn('id="imagePromptModalTextarea"', page)
         self.assertIn("function resizeImagePrompt()", page)
+        self.assertIn("const pageZoom = Math.max(0.01, Number(getPageZoom()) || 1)", page)
+        self.assertIn("(textareaRect.top - formRect.top) / pageZoom", page)
+        self.assertIn("(footerRect?.height || 0) / pageZoom", page)
+        self.assertIn("formRect.height / pageZoom", page)
         self.assertIn("expandThreshold: Math.max(minimum, Math.floor(maximum * 0.75))", page)
         self.assertIn("contentHeight > metrics.maximum + 1", page)
         self.assertIn("appMain.append(modal)", page)
@@ -1459,6 +1463,18 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('data-ratio="21:9"', page)
         self.assertIn("'16:9': '1280x720'", page)
         self.assertIn('id="imageGenerationSets"', page)
+        self.assertIn('id="exportSelectedImageSetsButton"', page)
+        self.assertIn('id="deleteSelectedImageSetsButton"', page)
+        self.assertIn("function loadImageGenerationSetOriginals", page)
+        self.assertIn("function updateImageSetSelectionActions", page)
+        self.assertIn("function toggleImageSetSelection", page)
+        self.assertIn("function exportSelectedImageSets", page)
+        self.assertIn("function deleteSelectedImageSets", page)
+        self.assertIn("originalLoadAttempted", page)
+        self.assertIn("item.fullUri || item.result?.fullUri", page)
+        self.assertIn(".image-generation-set-checkbox", scss_source)
+        self.assertIn(".image-results-actions", scss_source)
+        self.assertIn("export_image_sets", page)
         self.assertIn("window.applyImageGenerationEvent", page)
         self.assertIn("enterImageEditSession", page)
         self.assertIn("exitImageEditSession", page)
@@ -1990,7 +2006,11 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("function browserImageSource(...candidates)", page)
         self.assertIn("!candidate.toLowerCase().startsWith('file:')", page)
         self.assertIn("browserImageSource(item.previewUri, item.uri)", page)
-        self.assertIn("browserImageSource(item.result?.previewUri, item.previewUri, item.result?.uri, item.uri)", page)
+        self.assertIn("set.history ? item.result?.previewUri : item.fullUri || item.result?.fullUri", page)
+        self.assertIn("item.result?.previewUri", page)
+        self.assertIn("item.previewUri", page)
+        self.assertIn("item.result?.uri", page)
+        self.assertIn("item.uri", page)
         self.assertIn("image.src = browserImageSource(result.previewUri, result.uri)", page)
         self.assertIn("preview.src = browserImageSource(file.previewUri, file.uri)", page)
         self.assertIn("image.src = browserImageSource(reference.previewUri, reference.uri)", page)
@@ -4612,6 +4632,7 @@ class ControllerTests(unittest.TestCase):
                 "copy_generated_image",
                 "delete_key",
                 "delete_image_set",
+                "export_image_sets",
                 "defer_update_restart",
                 "dismiss_update_prompt",
                 "download_update",
@@ -4757,6 +4778,57 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(blocked["ok"])
         self.assertIn("最终图片", blocked["error"])
         copy_to_clipboard.assert_called_once_with(final_image.resolve())
+
+    def test_controller_exports_original_image_sets_and_reports_missing_sets(self):
+        controller = app.AppController.__new__(app.AppController)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pictures_root = root / "Pictures" / app.APP_NAME
+            export_root = root / "exports"
+            source = root / "source.png"
+            Image.new("RGB", (12, 8), "teal").save(source)
+            store = image_editor.ImageSessionStore(pictures_root)
+            store.begin_round("session-1", "set-1", "导出原图", 1, 0, {})
+            store.persist_result(
+                "session-1",
+                "set-1",
+                0,
+                source,
+                {"width": 12, "height": 8, "format": "png", "actualSize": "12x8"},
+            )
+            store.complete_round("session-1", "set-1")
+            controller.window = SimpleNamespace(
+                create_file_dialog=Mock(return_value=[str(export_root)])
+            )
+
+            with patch("app.generated_pictures_dir", return_value=pictures_root):
+                result = controller.export_image_sets(
+                    [
+                        {"sessionId": "session-1", "setId": "set-1", "prompt": "导出原图"},
+                        {"sessionId": "session-1", "setId": "missing", "prompt": "缺失图片"},
+                    ]
+                )
+
+            exported_path = Path(result["files"][0])
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["exported"], 1)
+            self.assertEqual(result["skippedSets"], ["missing"])
+            self.assertEqual(exported_path.suffix, ".png")
+            with Image.open(exported_path) as exported_image:
+                self.assertEqual(exported_image.size, (12, 8))
+            self.assertTrue(exported_path.is_relative_to(export_root))
+
+    def test_controller_export_image_sets_reports_folder_dialog_cancellation(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.window = SimpleNamespace(create_file_dialog=Mock(return_value=[]))
+
+        result = controller.export_image_sets(
+            [{"sessionId": "session-1", "setId": "set-1", "prompt": "取消导出"}]
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["cancelled"])
+        self.assertEqual(result["exported"], 0)
 
     def test_controller_lists_and_deletes_persisted_image_sets(self):
         controller = app.AppController.__new__(app.AppController)
@@ -4983,6 +5055,9 @@ class ControllerTests(unittest.TestCase):
         polished = api.polish_prompt("key-1", "rough")
         listed = api.list_image_sets()
         deleted_set = api.delete_image_set("session-1", "set-1")
+        exported_sets = api.export_image_sets(
+            [{"sessionId": "session-1", "setId": "set-1", "prompt": "导出"}]
+        )
         choose = api.choose_edit_images()
         save = api.save_edited_image("result.png")
         copied = api.copy_generated_image("result.png")
@@ -5010,6 +5085,13 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(
             deleted_set,
             {"method": "delete_image_set", "args": ("session-1", "set-1")},
+        )
+        self.assertEqual(
+            exported_sets,
+            {
+                "method": "export_image_sets",
+                "args": ([{"sessionId": "session-1", "setId": "set-1", "prompt": "导出"}],),
+            },
         )
         self.assertEqual(save, {"local": "result.png"})
         self.assertEqual(copied, {"copied": "result.png"})
