@@ -3566,9 +3566,6 @@
             const container = document.getElementById('imageGenerationSets');
             const sets = window.imageEditState.resultSets;
             container.classList.toggle('is-empty', sets.length === 0);
-            container.querySelectorAll('.image-generation-item:is(.is-queued, .is-running)').forEach(card => {
-                imageGenerationAnimationObserver?.unobserve(card);
-            });
             container.replaceChildren();
             if (!sets.length) {
                 const empty = document.createElement('div');

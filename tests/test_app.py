@@ -2031,6 +2031,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("label.style.willChange = 'auto'", page)
         self.assertNotIn("function cloneImageReasoningBackground(mode)", page)
         self.assertNotIn("card.append(reasoningLayer)", page)
+        self.assertNotIn("imageGenerationAnimationObserver", page)
         self.assertNotIn(".image-generation-item.is-animation-active", stylesheet)
         self.assertRegex(
             stylesheet,
