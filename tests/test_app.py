@@ -2627,10 +2627,10 @@ class ControllerTests(unittest.TestCase):
             },
             {
                 "flash": ("gpt-5.6-luna", "medium"),
-                "medium": ("gpt-5.6-terra", "medium"),
-                "high": ("gpt-5.6-terra", "high"),
-                "extra": ("gpt-5.6-terra", "xhigh"),
-                "max": ("gpt-5.6-sol", "xhigh"),
+                "medium": ("gpt-5.6-luna", "high"),
+                "high": ("gpt-5.6-terra", "xhigh"),
+                "extra": ("gpt-5.6-sol", "xhigh"),
+                "max": ("gpt-5.6-sol", "max"),
             },
         )
         self.assertEqual(app.PROMPT_POLISH_MODEL, "gpt-5.6-terra")
@@ -2722,6 +2722,14 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("callCountBasis", page)
         self.assertIn("finalPrompt", page)
         self.assertIn("webReferences", page)
+        self.assertIn('id="imageViewer"', page)
+        self.assertIn("data-open-image", page)
+        self.assertIn("data-load-original", page)
+        self.assertIn("load_generated_image", page)
+        self.assertIn("openImageViewer(result.dataUrl", page)
+        self.assertIn("imageViewerZoomIn", page)
+        self.assertIn("imageViewerDownload", page)
+        self.assertIn("event.key === 'Escape'", page)
         self.assertIn("window.benchmark", main_page)
         self.assertIn("open_benchmark", main_page)
 
@@ -2796,12 +2804,12 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["prompt"], "A clean professional chart")
         self.assertEqual(result["originalPrompt"], "make this clearer")
-        self.assertEqual(result["reasoningModel"], "gpt-5.6-terra")
-        self.assertEqual(result["reasoningEffort"], "medium")
+        self.assertEqual(result["reasoningModel"], "gpt-5.6-luna")
+        self.assertEqual(result["reasoningEffort"], "high")
         self.assertEqual(service.generate.call_args.args[2].prompt, "A clean professional chart")
         response_call = controller.client.stream_response.call_args
-        self.assertEqual(response_call.args[2], "gpt-5.6-terra")
-        self.assertEqual(response_call.kwargs["reasoning_effort"], "medium")
+        self.assertEqual(response_call.args[2], "gpt-5.6-luna")
+        self.assertEqual(response_call.kwargs["reasoning_effort"], "high")
         self.assertEqual(
             [tool["name"] for tool in response_call.kwargs["tools"]],
             ["search_web", "search_visual_references", "select_visual_references"],
@@ -2939,7 +2947,7 @@ class ControllerTests(unittest.TestCase):
             lambda *_args, **_kwargs: None,
         )
 
-        self.assertEqual(captured["model"], "gpt-5.6-terra")
+        self.assertEqual(captured["model"], "gpt-5.6-sol")
         self.assertEqual(captured["reasoning_effort"], "xhigh")
         self.assertIn(app.IMAGE_REASONING_MODES["max"]["depth"], captured["instructions"])
         self.assertEqual(result["prompt"], "Extra final prompt")

@@ -288,7 +288,7 @@
             background-position: 0 0, 9px 9px;
         }
 
-        .image-stage img { display: block; width: 100%; height: 100%; object-fit: contain; }
+        .image-stage img { display: block; width: 100%; height: 100%; cursor: zoom-in; object-fit: contain; }
         .image-placeholder { padding: 18px; color: var(--subtle); font-size: 12px; text-align: center; }
         .image-caption {
             position: absolute;
@@ -362,7 +362,15 @@
         .reference-list figcaption { overflow: hidden; margin-top: 3px; color: var(--subtle); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
         .image-actions { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 6px; }
         .image-actions button { border: 1px solid rgba(255,255,255,0.25); border-radius: 3px; padding: 4px 7px; color: var(--ink); background: rgba(3,12,19,0.78); font-size: 10px; }
-
+        .image-stage img, .reference-list img { cursor: zoom-in; }
+        .image-viewer[hidden] { display: none; }
+        .image-viewer { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 72px 32px 54px; background: rgba(1, 7, 12, 0.94); }
+        .image-viewer img { display: block; max-width: min(94vw, 1600px); max-height: 82vh; object-fit: contain; box-shadow: 0 20px 80px rgba(0, 0, 0, 0.5); transform: scale(1); transform-origin: center; transition: transform 140ms ease; }
+        .image-viewer-toolbar { position: fixed; top: 18px; left: 50%; display: flex; align-items: center; gap: 6px; transform: translateX(-50%); }
+        .image-viewer-toolbar button, .image-viewer-close { border: 1px solid rgba(255,255,255,0.35); border-radius: 4px; min-width: 34px; padding: 7px 10px; color: var(--ink); background: rgba(3,12,19,0.9); cursor: pointer; }
+        .image-viewer-close { position: fixed; top: 18px; right: 22px; }
+        .image-viewer-toolbar button:hover, .image-viewer-close:hover { border-color: var(--cyan); background: rgba(12, 35, 49, 0.96); }
+        .image-viewer-caption { position: fixed; left: 24px; bottom: 18px; max-width: calc(100vw - 48px); color: var(--muted); font-size: 12px; }
         @media (max-width: 1180px) {
             .control-panel { grid-template-columns: 1fr; }
             .benchmark-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -450,6 +458,17 @@
         </div>
         <section class="benchmark-grid" id="benchmarkGrid" aria-live="polite"></section>
     </main>
+    <div class="image-viewer" id="imageViewer" hidden role="dialog" aria-modal="true" aria-label="原图预览">
+        <div class="image-viewer-toolbar" role="toolbar" aria-label="图片操作">
+            <button id="imageViewerZoomOut" type="button" title="缩小">−</button>
+            <button id="imageViewerZoomReset" type="button" title="重置缩放">100%</button>
+            <button id="imageViewerZoomIn" type="button" title="放大">+</button>
+            <button id="imageViewerDownload" type="button" title="下载原图">下载</button>
+        </div>
+        <button class="image-viewer-close" id="imageViewerClose" type="button">关闭</button>
+        <img id="imageViewerImage" alt="原图预览">
+        <div class="image-viewer-caption" id="imageViewerCaption"></div>
+    </div>
 
     <script>
         const MODES = [
@@ -651,7 +670,7 @@
             if (!card.image?.uri) return '<div class="image-placeholder">等待图片事件</div>';
             const caption = card.image.label ? `<span class="image-caption">${escapeText(card.image.label)}</span>` : '';
             const action = card.image.path ? '<div class="image-actions"><button type="button" data-load-original="' + encodeURIComponent(card.image.path) + '">加载原图</button></div>' : '';
-            return `<img src="${card.image.uri}" alt="${escapeText(card.label)} 输出"><span class="image-caption">${card.partials ? `过程 ${card.partials}` : escapeText(card.image.label || '预览')}</span>${action}`;
+            return `<img src="${card.image.uri}" data-open-image="${encodeURIComponent(card.image.uri)}" alt="${escapeText(card.label)} 输出"><span class="image-caption">${card.partials ? `过程 ${card.partials}` : escapeText(card.image.label || '预览')}</span>${action}`;
         }
 
         function renderTurns(card) {
@@ -665,7 +684,10 @@
 
         function renderReferences(card) {
             if (!card.references?.length) return '<div class="summary-text">本轮未采用网络参考图。</div>';
-            return `<div class="reference-list">${card.references.map(reference => `<figure><img src="${reference.previewUri || reference.uri || ''}" alt="${escapeText(reference.title || '参考图')}"><figcaption>${escapeText(reference.title || reference.provider || '参考图')}</figcaption></figure>`).join('')}</div>`;
+            return `<div class="reference-list">${card.references.map(reference => {
+                const uri = reference.previewUri || reference.uri || '';
+                return `<figure><img src="${uri}" data-open-image="${encodeURIComponent(uri)}" alt="${escapeText(reference.title || '参考图')}"><figcaption>${escapeText(reference.title || reference.provider || '参考图')}</figcaption></figure>`;
+            }).join('')}</div>`;
         }
 
         function renderCard(card) {
@@ -686,6 +708,9 @@
 
         function renderCards() {
             $('benchmarkGrid').innerHTML = MODES.map(([mode]) => renderCard(cardFor(mode))).join('');
+            $('benchmarkGrid').querySelectorAll('[data-open-image]').forEach(image => {
+                image.addEventListener('click', () => openImageViewer(decodeURIComponent(image.dataset.openImage || ''), image.alt));
+            });
             $('benchmarkGrid').querySelectorAll('[data-load-original]').forEach(button => {
                 button.addEventListener('click', async () => {
                     const path = decodeURIComponent(button.dataset.loadOriginal || '');
@@ -694,12 +719,52 @@
                         if (result?.ok && result.dataUrl) {
                             const image = button.closest('.image-stage')?.querySelector('img');
                             if (image) image.src = result.dataUrl;
+                            openImageViewer(result.dataUrl, '原图预览');
+                        } else {
+                            setStatus(result?.error || '原图加载失败', 'error');
                         }
                     } catch (error) {
                         setStatus(error.message || String(error), 'error');
                     }
                 });
             });
+        }
+
+        let imageViewerSource = '';
+        let imageViewerZoom = 1;
+
+        function renderImageViewerZoom() {
+            $('imageViewerImage').style.transform = `scale(${imageViewerZoom})`;
+            $('imageViewerZoomReset').textContent = `${Math.round(imageViewerZoom * 100)}%`;
+        }
+
+        function openImageViewer(source, caption = '') {
+            if (!source) return;
+            imageViewerSource = source;
+            imageViewerZoom = 1;
+            $('imageViewerImage').src = source;
+            $('imageViewerCaption').textContent = caption;
+            $('imageViewer').hidden = false;
+            renderImageViewerZoom();
+        }
+
+        function closeImageViewer() {
+            $('imageViewer').hidden = true;
+            $('imageViewerImage').removeAttribute('src');
+            imageViewerSource = '';
+        }
+
+        function changeImageViewerZoom(delta) {
+            imageViewerZoom = Math.max(0.5, Math.min(3, imageViewerZoom + delta));
+            renderImageViewerZoom();
+        }
+
+        function downloadImageViewerSource() {
+            if (!imageViewerSource) return;
+            const link = document.createElement('a');
+            link.href = imageViewerSource;
+            link.download = 'api-tools-original.png';
+            link.click();
         }
 
         async function loadKeys() {
@@ -757,6 +822,21 @@
 
         $('promptInput').addEventListener('input', () => { $('promptCount').textContent = `${$('promptInput').value.length.toLocaleString('en-US')} / 32000`; });
         $('runButton').addEventListener('click', runBenchmark);
+        $('imageViewerClose').addEventListener('click', closeImageViewer);
+        $('imageViewerZoomOut').addEventListener('click', () => changeImageViewerZoom(-0.25));
+        $('imageViewerZoomIn').addEventListener('click', () => changeImageViewerZoom(0.25));
+        $('imageViewerZoomReset').addEventListener('click', () => { imageViewerZoom = 1; renderImageViewerZoom(); });
+        $('imageViewerDownload').addEventListener('click', downloadImageViewerSource);
+        $('imageViewer').addEventListener('click', event => {
+            if (event.target === $('imageViewer')) closeImageViewer();
+        });
+        document.addEventListener('keydown', event => {
+            if ($('imageViewer').hidden) return;
+            if (event.key === 'Escape') closeImageViewer();
+            if (event.key === '+' || event.key === '=') changeImageViewerZoom(0.25);
+            if (event.key === '-') changeImageViewerZoom(-0.25);
+            if (event.key === '0') { imageViewerZoom = 1; renderImageViewerZoom(); }
+        });
         $('clearButton').addEventListener('click', () => { $('promptInput').value = ''; $('referencePaths').value = ''; $('promptCount').textContent = '0 / 32000'; resetCards(); setStatus('已清空。'); });
         window.applyBenchmarkEvent = applyEvent;
         resetCards();
