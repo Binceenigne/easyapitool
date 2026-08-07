@@ -3801,7 +3801,7 @@ class AppController:
                 source = Path(original["path"]).resolve()
                 if not source.is_file():
                     continue
-                destination = set_directory / f"image-{int(original['itemIndex']) + 1:02d}{source.suffix.lower()}"
+                destination = set_directory / f"{safe_set_id}-{int(original['itemIndex']) + 1:02d}{source.suffix.lower()}"
                 shutil.copy2(source, destination)
                 exported_files.append(str(destination))
         return {
