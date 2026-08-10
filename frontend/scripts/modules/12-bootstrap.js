@@ -4,4 +4,7 @@
             initializePage();
         }
 
-        window.addEventListener('load', () => reportFrontendStartup('frontend_load'));
+        window.addEventListener('load', () => {
+            renderLucideIcons();
+            reportFrontendStartup('frontend_load');
+        });

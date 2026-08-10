@@ -650,7 +650,7 @@ class StaticAssetCache:
         self.main_page = self.release_dir / MAIN_PAGE_NAME
         self.expected_hashes = {
             **self.source_hashes,
-            "vendor/lucide/lucide.min.js": LUCIDE_SHA256,
+            "frontend/vendor/lucide/lucide.min.js": LUCIDE_SHA256,
         }
         ready = self.is_ready()
         self._state: dict[str, Any] = {
@@ -816,7 +816,7 @@ class StaticAssetCache:
                 message="正在校验并写入 Lucide",
                 item=f"SHA-256 {LUCIDE_SHA256[:12]}…",
             )
-            lucide_path = staging / "vendor" / "lucide" / "lucide.min.js"
+            lucide_path = staging / "frontend" / "vendor" / "lucide" / "lucide.min.js"
             lucide_path.parent.mkdir(parents=True)
             lucide_path.write_bytes(script)
 

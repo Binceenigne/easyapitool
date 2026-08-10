@@ -1400,13 +1400,13 @@ class StaticAssetCacheTests(unittest.TestCase):
     def test_install_uses_validated_lucide_and_creates_ready_release(self):
         script = b"lucide-test-script"
         with patch.object(backend_platform, "LUCIDE_SHA256", app.sha256_bytes(script)):
-            self.cache.expected_hashes["vendor/lucide/lucide.min.js"] = app.sha256_bytes(script)
+            self.cache.expected_hashes["frontend/vendor/lucide/lucide.min.js"] = app.sha256_bytes(script)
             with patch.object(self.cache, "_download_lucide", return_value=script):
                 self.cache.install()
 
         self.assertTrue(self.cache.is_ready())
         self.assertEqual(self.cache.status()["status"], "ready")
-        self.assertTrue((self.cache.release_dir / "vendor/lucide/lucide.min.js").is_file())
+        self.assertTrue((self.cache.release_dir / "frontend/vendor/lucide/lucide.min.js").is_file())
 
     def test_replace_release_path_retries_transient_permission_errors(self):
         source = self.data / "staging"
@@ -1436,11 +1436,11 @@ class StaticAssetCacheTests(unittest.TestCase):
         script = b"lucide-test-script"
         digest = app.sha256_bytes(script)
         with patch.object(backend_platform, "LUCIDE_SHA256", digest):
-            self.cache.expected_hashes["vendor/lucide/lucide.min.js"] = digest
+            self.cache.expected_hashes["frontend/vendor/lucide/lucide.min.js"] = digest
             with patch.object(self.cache, "_download_lucide", return_value=script):
                 self.cache.install()
 
-        (self.cache.release_dir / "vendor/lucide/lucide.min.js").write_bytes(b"damaged")
+        (self.cache.release_dir / "frontend/vendor/lucide/lucide.min.js").write_bytes(b"damaged")
 
         self.assertFalse(self.cache.is_ready())
 
@@ -1754,6 +1754,13 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("--progress-color: #a855f7", scss_source)
         self.assertNotIn("app.min.css", page)
         self.assertNotIn("tailwind", build_script.lower())
+        self.assertNotIn('<script defer src="../vendor/lucide/lucide.min.js"></script>', page)
+        self.assertIn(
+            '<script src="vendor/lucide/lucide.min.js"></script>\n'
+            '    <script src="scripts/modules/00-core-ui.js?v=1"></script>',
+            page,
+        )
+        self.assertIn("window.addEventListener('load', () => {\n            renderLucideIcons();", page)
         self.assertIn("npm.cmd", build_script.lower())
         self.assertIn("run build:css", build_script.lower())
         self.assertIn("frontend\\styles\\app.scss", build_script)
