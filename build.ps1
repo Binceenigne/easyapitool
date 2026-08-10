@@ -1,12 +1,11 @@
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Python = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
-$MainHtmlCandidates = @(Get-ChildItem -LiteralPath $ProjectRoot -Filter 'API_TOOLS_*_v3.html' -File)
-$MainHtml = if ($MainHtmlCandidates.Count -eq 1) { $MainHtmlCandidates[0].FullName } else { $null }
-$InitializeHtml = Join-Path $ProjectRoot 'initialize.html'
+$MainHtml = Join-Path $ProjectRoot 'frontend\index.html'
+$InitializeHtml = Join-Path $ProjectRoot 'frontend\initialize.html'
 $Changelog = Join-Path $ProjectRoot 'CHANGELOG.md'
-$AppScss = Join-Path $ProjectRoot 'assets\app.scss'
-$AppCss = Join-Path $ProjectRoot 'assets\app.css'
+$AppScss = Join-Path $ProjectRoot 'frontend\styles\app.scss'
+$AppCss = Join-Path $ProjectRoot 'frontend\styles\app.css'
 $Npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
 
 if (-not (Test-Path $Python)) {
@@ -14,11 +13,11 @@ if (-not (Test-Path $Python)) {
 }
 
 if (-not (Test-Path $MainHtml) -or -not (Test-Path $InitializeHtml) -or -not (Test-Path $Changelog) -or -not (Test-Path $AppScss)) {
-    throw 'Main HTML, initialization HTML, CHANGELOG.md, or assets\app.scss not found.'
+    throw 'Frontend entry, initialization page, CHANGELOG.md, or frontend\styles\app.scss not found.'
 }
 
 if (-not $Npm) {
-    throw 'npm.cmd is required to compile assets\app.scss with Dart Sass.'
+    throw 'npm.cmd is required to compile frontend styles with Dart Sass.'
 }
 
 Push-Location $ProjectRoot

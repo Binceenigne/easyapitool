@@ -1,0 +1,250 @@
+#dashboardGrid {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 66px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#dashboardPrimary {
+    display: grid;
+    grid-column: 1;
+    grid-row: 1;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    container-type: size;
+}
+
+#speedPanel {
+    display: none;
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--surface) 40%, transparent);
+    container-type: size;
+}
+
+#dashboardMetrics { grid-column: 1; grid-row: 2; }
+
+/* Quota summary */
+#dashboardPrimary > div:first-child {
+    flex: 0 0 auto;
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-soft);
+}
+
+#dashboardPrimary > div:first-child > div:first-child,
+#dashboardPrimary > div:first-child > div:nth-child(3),
+#dashboardPrimary > div:first-child > div:nth-child(4) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+#dashboardPrimary > div:first-child > div:first-child { margin-bottom: 2px; }
+#dashboardPrimary > div:first-child > div:nth-child(2) { display: flex; align-items: baseline; gap: 4px; }
+#dashboardPrimary > div:first-child > div:nth-child(3) { margin-top: 4px; color: var(--muted); font-size: var(--fs-9, 9px); }
+#dashboardPrimary > div:first-child > div:first-child > span:first-child,
+#dashboardPrimary > div:nth-child(2) > h3,
+#speedPanel h3,
+#usageAnalysisPanel h4 {
+    color: var(--muted);
+    font-size: var(--fs-9, 9px);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+#bigRemainingVal {
+    color: var(--text);
+    font: 900 var(--fs-2xl, 24px)/1.15 var(--font-mono);
+    letter-spacing: 0;
+}
+#bigRemainingVal + span { color: var(--muted); font-size: var(--fs-10, 10px); font-weight: 700; }
+#bigTotalVal { color: var(--text-soft); font-family: var(--font-mono); }
+#bigPercentVal, #microPercentVal { color: var(--brand); font-family: var(--font-mono); font-weight: 700; }
+
+.key-status,
+.load-status,
+.refresh-state {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 4px;
+    border: 1px solid transparent;
+    font: 700 var(--fs-8, 8px)/1.2 var(--font-mono);
+    white-space: nowrap;
+}
+.status-neutral { border-color: rgba(100, 116, 139, 0.25); background: rgba(100, 116, 139, 0.08); color: var(--muted); }
+.status-active, .status-low { border-color: rgba(16, 185, 129, 0.25); background: rgba(16, 185, 129, 0.1); color: var(--good); }
+.status-disabled, .status-critical { border-color: rgba(244, 63, 94, 0.25); background: rgba(244, 63, 94, 0.1); color: var(--critical); }
+.status-medium { border-color: rgba(245, 158, 11, 0.25); background: rgba(245, 158, 11, 0.1); color: var(--warn); }
+.status-high { border-color: rgba(249, 115, 22, 0.25); background: rgba(249, 115, 22, 0.1); color: var(--danger); }
+
+/* Progress components */
+#dashboardPrimary div:has(> #bigProgressBar),
+#microSummary div:has(> #microProgressBar),
+#microSummary div:has(> [id^="micro"][id$="Progress"]),
+#dashboardPrimary div:has(> [id$="Progress"]) {
+    width: 100%;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--border-soft) 78%, transparent);
+}
+#dashboardPrimary div:has(> #bigProgressBar) { height: 17px; margin-top: 6px; }
+#quotaSummary > div:has(> #bigProgressBar) { display: block; }
+#microSummary div:has(> #microProgressBar) { height: 7px; }
+#microSummary div:has(> [id^="micro"][id$="Progress"]) { height: 7px; }
+#dashboardPrimary div:has(> [id$="Progress"]) { height: 13px; }
+#dashboardPrimary div:has(> .matrix-progress),
+#microSummary div:has(> .matrix-progress) {
+    overflow: hidden;
+    border-color: transparent;
+    background: transparent;
+}
+#dashboardPrimary div:has(> #bigProgressBar.matrix-progress),
+#microSummary div:has(> #microProgressBar.matrix-progress),
+#microSummary div:has(> [id^="micro"][id$="Progress"].matrix-progress),
+#dashboardPrimary div:has(> [id$="Progress"].matrix-progress) {
+    overflow: hidden;
+    border-color: transparent;
+    background: transparent;
+}
+#bigProgressBar, #microProgressBar, [id^="micro"][id$="Progress"], [id$="Progress"] {
+    height: 100%;
+}
+.bar-good { --progress-color: var(--good); --progress-rgb: 16, 185, 129; }
+.bar-warn { --progress-color: var(--warn); --progress-rgb: 245, 158, 11; }
+.bar-danger { --progress-color: var(--danger); --progress-rgb: 249, 115, 22; }
+.bar-critical { --progress-color: var(--critical); --progress-rgb: 244, 63, 94; }
+.bar-unlimited { --progress-color: #a855f7; --progress-rgb: 168, 85, 247; }
+.linear-progress {
+    background: var(--progress-color);
+    transform: translateZ(0) scaleX(var(--linear-progress, 0));
+    transform-origin: left center;
+    backface-visibility: hidden;
+    will-change: transform;
+    transition: transform 0.35s ease;
+}
+.linear-progress.bar-critical { animation: pulse 1.2s ease-in-out infinite; }
+.matrix-progress {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    max-width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
+    gap: var(--matrix-block-gap);
+    padding: 0 2px;
+    overflow: hidden;
+    background: transparent;
+    contain: layout paint style;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    transition: none !important;
+}
+.matrix-block {
+    display: grid;
+    flex: 0 0 auto;
+    grid-template-columns: repeat(var(--matrix-size), var(--matrix-dot-size));
+    grid-template-rows: repeat(var(--matrix-size), var(--matrix-dot-size));
+    gap: var(--matrix-dot-gap);
+}
+.matrix-dot {
+    width: var(--matrix-dot-size);
+    height: var(--matrix-dot-size);
+    border: 1px solid rgba(var(--progress-rgb), 0.08);
+    background: transparent;
+    box-shadow: none;
+    transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.matrix-dot.is-filled {
+    border-color: rgba(var(--progress-rgb), 0.9);
+    background: var(--progress-color);
+    box-shadow: 0 0 2px rgba(var(--progress-rgb), 0.5), 0 0 5px rgba(var(--progress-rgb), 0.16);
+}
+.matrix-block.is-active .matrix-dot.is-filled {
+    box-shadow: 0 0 3px rgba(var(--progress-rgb), 0.7), 0 0 7px rgba(var(--progress-rgb), 0.28);
+}
+.matrix-progress.bar-critical .matrix-block.is-active {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    will-change: opacity, filter;
+    animation: matrixPulse 1.2s ease-in-out infinite;
+}
+html.dark {
+    .matrix-dot { border-color: rgba(var(--progress-rgb), 0.12); background: transparent; box-shadow: none; }
+    .matrix-dot.is-filled {
+        border-color: color-mix(in srgb, var(--progress-color) 72%, white 28%);
+        background: color-mix(in srgb, var(--progress-color) 78%, white 22%);
+        box-shadow: 0 0 3px rgba(var(--progress-rgb), 1), 0 0 9px rgba(var(--progress-rgb), 0.62), 0 0 14px rgba(var(--progress-rgb), 0.3);
+    }
+    .matrix-block.is-active .matrix-dot.is-filled {
+        box-shadow: 0 0 4px rgba(var(--progress-rgb), 1), 0 0 12px rgba(var(--progress-rgb), 0.82), 0 0 18px rgba(var(--progress-rgb), 0.42);
+    }
+}
+@keyframes pulse { 50% { opacity: 0.5; } }
+@keyframes matrixPulse { 50% { opacity: 0.55; filter: brightness(1.2); } }
+
+/* Limit cards */
+#dashboardPrimary > div:nth-child(2) {
+    display: grid;
+    grid-template-rows: auto repeat(3, minmax(0, 1fr));
+    min-height: 0;
+    padding: 12px;
+    gap: 8px;
+    overflow: hidden;
+}
+
+#dashboardPrimary > div:nth-child(2) > h3 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 12px;
+}
+
+#limitModeLabel {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    color: var(--muted);
+    font-size: var(--fs-8, 8px);
+    font-weight: 400;
+    text-transform: none;
+}
+
+#dashboardPrimary > div:nth-child(2) > div {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 0;
+    padding: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border-soft);
+    background: var(--surface-soft);
+}
+
+#dashboardPrimary > div:nth-child(2) > div > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-width: 0;
+    gap: 6px;
+}
+
+#dashboardPrimary > div:nth-child(2) > div > div:first-child {
+    color: var(--text-soft);
+    font-size: var(--fs-9, 9px);
+    font-weight: 700;
+}
+#dashboardPrimary > div:nth-child(2) > div > div:first-child span:last-child,
+#dashboardPrimary > div:nth-child(2) > div > div:last-child { color: var(--muted); font-size: var(--fs-8, 8px); }
+[id$="Remaining"] { color: var(--text); font: 900 var(--fs-11, 11px)/1.1 var(--font-mono); }
+[id$="Total"], [id$="Used"] { color: var(--muted); font: var(--fs-8, 8px)/1.1 var(--font-mono); }
+[id$="Countdown"] { display: flex; align-items: center; gap: 2px; color: var(--brand); font: 700 var(--fs-8, 8px)/1 var(--font-mono); }
+.limit-unit { color: var(--muted); font: 400 var(--fs-8, 8px)/1.1 var(--font-sans); }

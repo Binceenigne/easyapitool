@@ -4,15 +4,9 @@ from pathlib import Path
 
 project_root = Path(SPECPATH)
 datas = [
-    (str(project_root / 'API_TOOLS_响应式悬浮窗完整版_v3.html'), '.'),
-    (str(project_root / 'benchmark.html'), '.'),
-    (str(project_root / 'initialize.html'), '.'),
+    (str(project_root / 'frontend'), 'frontend'),
+    (str(project_root / 'resources'), 'resources'),
     (str(project_root / 'CHANGELOG.md'), '.'),
-    (str(project_root / 'assets' / 'app.css'), 'assets'),
-    (str(project_root / 'assets' / 'title_logo.png'), 'assets'),
-    (str(project_root / 'assets' / 'api_tools_icon.ico'), 'assets'),
-    (str(project_root / 'assets' / 'api_tools_icon.png'), 'assets'),
-    (str(project_root / 'assets' / 'icons'), 'assets/icons'),
 ]
 binaries = []
 hiddenimports = ['pystray._win32', 'winotify']
@@ -54,5 +48,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=[str(project_root / 'assets' / 'api_tools_icon.ico')],
+    icon=[str(project_root / 'resources' / 'api_tools_icon.ico')],
 )

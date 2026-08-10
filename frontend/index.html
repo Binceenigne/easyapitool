@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DJYX_APITOOL</title>
+    <link rel="stylesheet" href="styles/app.css?v=34">
+    <script defer src="../vendor/lucide/lucide.min.js"></script>
+    <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
+</head>
+<body>
+
+    <div id="widget-root" class="image-edit-mode">
+        <!-- Windows 风格顶部窗口外框 -->
+        <header id="windowTitleBar">
+            <div id="windowTitleIdentity">
+                <img id="windowTitleLogo" src="assets/title_logo.png" alt="">
+                <span id="windowTitleText">DJYX_APITOOL</span>
+            </div>
+
+            <div class="window-controls">
+                <button type="button" id="titlebarPinButton" class="window-control always-on-top-button titlebar-pin-button" onclick="toggleAlwaysOnTop()" title="置顶窗口" aria-label="置顶窗口" aria-pressed="false">
+                    <i data-lucide="pin" class="titlebar-icon" aria-hidden="true"></i>
+                </button>
+                <button type="button" onclick="requestWindowAction('minimize')" class="window-control" title="最小化" aria-label="最小化">
+                    <i data-lucide="minus" class="titlebar-icon" aria-hidden="true"></i>
+                </button>
+                <button type="button" id="maximizeButton" onclick="requestWindowAction('maximize')" class="window-control" title="最大化" aria-label="最大化">
+                    <i id="maximizeIcon" data-lucide="square" class="titlebar-icon" aria-hidden="true"></i>
+                </button>
+                <button type="button" onclick="requestWindowAction('close')" class="window-control window-control-close" title="关闭" aria-label="关闭">
+                    <i data-lucide="x" class="titlebar-icon" aria-hidden="true"></i>
+                </button>
+            </div>
+        </header>
+
+        <span class="native-resize-handle resize-left" data-resize="left"></span>
+        <span class="native-resize-handle resize-right" data-resize="right"></span>
+        <span class="native-resize-handle resize-top" data-resize="top"></span>
+        <span class="native-resize-handle resize-bottom" data-resize="bottom"></span>
+        <span class="native-resize-handle resize-top-left" data-resize="top-left"></span>
+        <span class="native-resize-handle resize-top-right" data-resize="top-right"></span>
+        <span class="native-resize-handle resize-bottom-left" data-resize="bottom-left"></span>
+        <span class="native-resize-handle resize-bottom-right" data-resize="bottom-right"></span>
+
+        <div id="pageZoomViewport">
+        <div id="pageZoomLayer">
+        <div id="keyToolbar">
+            <div>
+                <span class="toolbar-label">密钥:</span>
+                <div id="keySwitcher">
+                    <button type="button" id="keySwitcherButton" aria-haspopup="listbox" aria-expanded="false" aria-controls="keySwitcherMenu" onclick="toggleKeySwitcher()" onkeydown="handleKeySwitcherButtonKeydown(event)" title="切换密钥">
+                        <span class="key-switcher-status" aria-hidden="true"></span>
+                        <span id="keySwitcherLabel">暂无密钥</span>
+                        <i id="keySwitcherChevron" data-lucide="chevron-down" class="icon-10" aria-hidden="true"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="toolbar-actions">
+                <button type="button" id="workspaceModeButton" class="toolbar-action-button workspace-mode-button is-active" onclick="toggleWorkspaceMode()" title="切换到额度监控" aria-label="切换到额度监控" aria-pressed="true">
+                    <i data-lucide="image" aria-hidden="true"></i>
+                </button>
+                <button type="button" id="manualRefreshButton" class="toolbar-action-button" title="立即刷新" aria-label="立即刷新">
+                    <i id="manualRefreshIcon" data-lucide="refresh-cw" aria-hidden="true"></i>
+                    <span id="manualRefreshCountdown" aria-hidden="true" hidden></span>
+                </button>
+                <button onclick="toggleFormPanel()" class="toolbar-action-button" title="添加密钥">
+                    <i data-lucide="plus" aria-hidden="true"></i>
+                    <span class="toolbar-button-text">添加</span>
+                </button>
+                <button onclick="deleteActiveKey()" class="toolbar-action-button" title="删除当前密钥">
+                    <i data-lucide="trash-2" aria-hidden="true"></i>
+                </button>
+                <button onclick="toggleSettingsPanel()" class="toolbar-action-button" title="小工具设置">
+                    <i data-lucide="sliders-horizontal" aria-hidden="true"></i>
+                    <span class="toolbar-button-text">设置</span>
+                </button>
+                <button type="button" id="toolbarPinButton" class="toolbar-action-button always-on-top-button toolbar-pin-button" onclick="toggleAlwaysOnTop()" title="置顶窗口" aria-label="置顶窗口" aria-pressed="false">
+                    <i data-lucide="pin" aria-hidden="true"></i>
+                </button>
+            </div>
+        </div>
+
+        <div id="keySwitcherMenu" role="listbox" aria-label="选择密钥" hidden></div>
+
+        <!-- 添加密钥面板 (在小窗口高度下自适应收纳) -->
+        <div id="keyFormPanel" class="is-hidden">
+            <div>
+                <span>
+                    <i data-lucide="code-2" aria-hidden="true"></i> 配置输入
+                </span>
+                <button onclick="toggleFormPanel()">
+                    <i data-lucide="x" aria-hidden="true"></i>
+                </button>
+            </div>
+
+            <form id="keyForm" onsubmit="saveKey(event)">
+                <div>
+                    <div>
+                        <label>昵称 / 标签 *</label>
+                        <input type="text" id="keyNickname" required placeholder="例如：我的主 Key">
+                    </div>
+                    <div>
+                        <label>密钥值 *</label>
+                        <input type="text" id="keyValue" required placeholder="sk-...">
+                    </div>
+                </div>
+
+                <div>
+                    <div>
+                        <label>总额度 (USD)</label>
+                        <input type="number" step="any" id="keyTotal" required value="0">
+                    </div>
+                    <div>
+                        <label>已用 (USD)</label>
+                        <input type="number" step="any" id="keyUsed" required value="0">
+                    </div>
+                    <div>
+                        <label>今日已用 (USD)</label>
+                        <input type="number" step="any" id="keyTodayUsed" required value="0">
+                    </div>
+                </div>
+
+                <button type="submit">
+                    确认并保存密钥
+                </button>
+            </form>
+        </div>
+
+        <div id="appMain">
+            <section id="imageEditWorkspace" aria-labelledby="imageEditHeading">
+                <form id="imageEditForm" novalidate onsubmit="submitImageEdit(event)">
+                    <div class="image-edit-header">
+                        <div>
+                            <button type="button" id="exitImageEditSessionButton" hidden onclick="exitImageEditSession()" title="返回普通生图" aria-label="返回普通生图">
+                                <i data-lucide="arrow-left" aria-hidden="true"></i><span>返回</span>
+                            </button>
+                            <i data-lucide="wand-sparkles" class="icon-14 color-brand" aria-hidden="true"></i>
+                            <div>
+                                <h2 id="imageEditHeading">GPT Image 2 生图</h2>
+                                <p id="imageGenerationKeyLabel">使用顶部当前密钥</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="editImageSelection" class="image-edit-selection is-empty" tabindex="0" aria-label="参考图，可点击添加、粘贴或拖入图片">
+                        <div class="image-edit-selection-heading">
+                            <strong>参考图 <span>（可选）</span></strong>
+                            <small id="editImageCount">0/16</small>
+                        </div>
+                        <div class="image-edit-track">
+                            <div id="editImageList">
+                                <button type="button" id="editImageAddTile" onclick="chooseEditImages()" title="添加参考图" aria-label="添加参考图">
+                                    <i data-lucide="image-plus" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                            <div id="editImageScrollbar" class="image-edit-scrollbar" hidden aria-hidden="true">
+                                <span id="editImageScrollbarThumb"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <label class="image-edit-prompt">
+                        <span>提示词</span>
+                        <div class="image-edit-prompt-shell">
+                            <textarea id="imageEditPrompt" rows="7" maxlength="32000" placeholder="描述要生成的图片；也可以粘贴或拖入参考图片"></textarea>
+                            <button type="button" id="polishImagePromptButton" onclick="polishImagePrompt()" title="一键润色提示词" aria-label="一键润色提示词">
+                                <i data-lucide="sparkles" aria-hidden="true"></i>
+                            </button>
+                            <button type="button" id="expandImagePromptButton" hidden onclick="openImagePromptModal()" title="全屏编辑提示词" aria-label="全屏编辑提示词">
+                                <i data-lucide="maximize-2" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                    </label>
+
+                    <div class="image-generation-footer">
+                        <span id="imageEditStatus" role="status">填写提示词即可生成，参考图可选</span>
+                        <div class="image-generation-command-bar">
+                            <div class="image-generation-controls-wrap">
+                                <button type="button" id="imageGenerationControlsButton" aria-expanded="false" onclick="toggleImageGenerationControls()">
+                                    <i data-lucide="settings-2" aria-hidden="true"></i>
+                                    <span id="imageGenerationControlSummary">
+                                        <strong id="imageGenerationQualitySummary" data-quality="auto">自动细节</strong>
+                                        <span aria-hidden="true">·</span>
+                                        <strong id="imageGenerationOutputSummary" data-preset="lossless">无损</strong>
+                                        <span aria-hidden="true">·</span>
+                                        <span id="imageGenerationRatioSummary">智能</span>
+                                        <span aria-hidden="true">·</span>
+                                        <span id="imageGenerationCountSummary">1 张</span>
+                                    </span>
+                                    <i data-lucide="chevron-up" aria-hidden="true"></i>
+                                </button>
+                                <div id="imageGenerationControlPanel" class="image-generation-popover" hidden>
+                                    <div class="image-quality-controls">
+                                        <section class="image-control-section">
+                                            <span>生成细节</span>
+                                            <div id="imageQualityButtons" class="image-control-segmented" role="radiogroup" aria-label="生成细节">
+                                                <button type="button" class="is-active" data-quality="auto" aria-pressed="true" onclick="setImageQuality('auto')">自动</button>
+                                                <button type="button" data-quality="low" aria-pressed="false" onclick="setImageQuality('low')">低</button>
+                                                <button type="button" data-quality="medium" aria-pressed="false" onclick="setImageQuality('medium')">中</button>
+                                                <button type="button" data-quality="high" aria-pressed="false" onclick="setImageQuality('high')">高</button>
+                                            </div>
+                                        </section>
+                                        <section class="image-control-section">
+                                            <span>保存质量</span>
+                                            <div id="imageOutputPresetButtons" class="image-control-segmented" role="radiogroup" aria-label="保存质量">
+                                                <button type="button" data-preset="small" aria-pressed="false" onclick="setImageOutputPreset('small')">小</button>
+                                                <button type="button" data-preset="medium" aria-pressed="false" onclick="setImageOutputPreset('medium')">中</button>
+                                                <button type="button" data-preset="large" aria-pressed="false" onclick="setImageOutputPreset('large')">大</button>
+                                                <button type="button" class="is-active" data-preset="lossless" aria-pressed="true" onclick="setImageOutputPreset('lossless')">无损</button>
+                                            </div>
+                                        </section>
+                                    </div>
+                                    <section class="image-control-section">
+                                        <span>比例</span>
+                                        <div id="imageAspectRatioButtons" class="image-aspect-options" role="radiogroup" aria-label="图片比例">
+                                            <button type="button" class="is-active" data-ratio="auto" aria-pressed="true" onclick="setImageAspectRatio('auto')"><i data-lucide="scan" aria-hidden="true"></i><span>智能</span></button>
+                                            <button type="button" data-ratio="9:16" aria-pressed="false" onclick="setImageAspectRatio('9:16')"><i data-lucide="rectangle-vertical" aria-hidden="true"></i><span>9:16</span></button>
+                                            <button type="button" data-ratio="2:3" aria-pressed="false" onclick="setImageAspectRatio('2:3')"><i data-lucide="rectangle-vertical" aria-hidden="true"></i><span>2:3</span></button>
+                                            <button type="button" data-ratio="3:4" aria-pressed="false" onclick="setImageAspectRatio('3:4')"><i data-lucide="rectangle-vertical" aria-hidden="true"></i><span>3:4</span></button>
+                                            <button type="button" data-ratio="1:1" aria-pressed="false" onclick="setImageAspectRatio('1:1')"><i data-lucide="square" aria-hidden="true"></i><span>1:1</span></button>
+                                            <button type="button" data-ratio="4:3" aria-pressed="false" onclick="setImageAspectRatio('4:3')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>4:3</span></button>
+                                            <button type="button" data-ratio="3:2" aria-pressed="false" onclick="setImageAspectRatio('3:2')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>3:2</span></button>
+                                            <button type="button" data-ratio="16:9" aria-pressed="false" onclick="setImageAspectRatio('16:9')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>16:9</span></button>
+                                            <button type="button" data-ratio="21:9" aria-pressed="false" onclick="setImageAspectRatio('21:9')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>21:9</span></button>
+                                        </div>
+                                    </section>
+                                    <section class="image-control-section image-count-control">
+                                        <span>生成数量</span>
+                                        <div id="imageGenerationCountButtons" class="image-control-segmented" role="radiogroup" aria-label="图片数量">
+                                            <button type="button" class="is-active" data-count="1" aria-pressed="true" onclick="setImageGenerationCount(1)">1</button>
+                                            <button type="button" data-count="2" aria-pressed="false" onclick="setImageGenerationCount(2)">2</button>
+                                            <button type="button" data-count="3" aria-pressed="false" onclick="setImageGenerationCount(3)">3</button>
+                                            <button type="button" data-count="4" aria-pressed="false" onclick="setImageGenerationCount(4)">4</button>
+                                            <button type="button" data-count="5" aria-pressed="false" onclick="setImageGenerationCount(5)">5</button>
+                                            <button type="button" data-count="6" aria-pressed="false" onclick="setImageGenerationCount(6)">6</button>
+                                            <button type="button" data-count="7" aria-pressed="false" onclick="setImageGenerationCount(7)">7</button>
+                                            <button type="button" data-count="8" aria-pressed="false" onclick="setImageGenerationCount(8)">8</button>
+                                            <button type="button" data-count="9" aria-pressed="false" onclick="setImageGenerationCount(9)">9</button>
+                                        </div>
+                                    </section>
+                                    <input id="imageEditSize" type="hidden" value="auto">
+                                    <input id="imageEditQuality" type="hidden" value="auto">
+                                    <input id="imageEditOutputPreset" type="hidden" value="lossless">
+                                </div>
+                            </div>
+                            <div id="imageReasoningControl" class="image-reasoning-control" data-mode="instant">
+                                <span class="reasoning-bg-layer is-visible" data-layer-mode="instant" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <span class="reasoning-bg-layer" data-layer-mode="flash" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <span class="reasoning-bg-layer" data-layer-mode="medium" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <span class="reasoning-bg-layer" data-layer-mode="high" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <span class="reasoning-bg-layer" data-layer-mode="extra" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <span class="reasoning-bg-layer" data-layer-mode="max" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <button type="submit" id="generateEditedImageButton" data-reasoning-mode="instant"><span>生成 1 张</span></button>
+                                <button type="button" id="imageReasoningMenuButton" aria-expanded="false" aria-controls="imageReasoningMenu" onclick="toggleImageReasoningMenu()" title="选择思维深度" aria-label="选择思维深度"><i data-lucide="chevron-up" aria-hidden="true"></i></button>
+                                <div id="imageReasoningMenu" class="image-reasoning-menu" hidden aria-label="思维深度设置">
+                                    <div class="web-search-row">
+                                        <label for="imageWebSearchEnabled" class="web-search-label">
+                                            <i data-lucide="globe" aria-hidden="true"></i>
+                                            <span>网络搜索</span>
+                                        </label>
+                                        <label class="toggle-switch">
+                                            <input id="imageWebSearchEnabled" type="checkbox" checked onchange="setImageWebSearchEnabled(this.checked)">
+                                            <span class="toggle-slider"></span>
+                                        </label>
+                                    </div>
+                                    <div class="reasoning-slider-section">
+                                        <div class="reasoning-slider-header">
+                                            <span class="reasoning-slider-title">
+                                                <span>思维深度</span>
+                                                <i data-lucide="chevron-right" aria-hidden="true"></i>
+                                            </span>
+                                            <span id="reasoningBadge" class="reasoning-current-badge">Instant</span>
+                                        </div>
+                                        <div id="reasoningSliderTrack" class="horizontal-slider-container" role="slider" tabindex="0" aria-label="思维深度" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" aria-valuetext="Instant">
+                                            <div class="slider-track-bg">
+                                                <div id="sliderTrackFill" class="slider-track-fill" style="transform: translate3d(0, 0, 0) scaleX(0);">
+                                                    <span id="sliderGradientCurrent" class="slider-gradient-layer slider-gradient-current"></span>
+                                                    <span id="sliderGradientNext" class="slider-gradient-layer slider-gradient-next"></span>
+                                                </div>
+                                            </div>
+                                            <div class="slider-dots" aria-hidden="true">
+                                                <span class="slider-dot"></span>
+                                                <span class="slider-dot inactive"></span>
+                                                <span class="slider-dot inactive"></span>
+                                                <span class="slider-dot inactive"></span>
+                                                <span class="slider-dot inactive"></span>
+                                                <span class="slider-dot inactive"></span>
+                                            </div>
+                                            <div id="sliderThumb" class="slider-thumb" style="left: 0%;" aria-hidden="true"></div>
+                                        </div>
+                                        <div id="reasoningSliderDesc" class="slider-desc">直接生成</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+
+                <section id="imageEditResult" aria-labelledby="imageEditResultHeading">
+                    <div class="image-results-header">
+                        <div><i data-lucide="images" aria-hidden="true"></i><span id="imageEditResultHeading">图片生成</span></div>
+                        <div class="image-results-actions">
+                            <button type="button" id="exportSelectedImageSetsButton" onclick="exportSelectedImageSets()" disabled title="导出选中的图片集" aria-label="导出选中的图片集"><i data-lucide="download" aria-hidden="true"></i><small>导出所选</small></button>
+                            <button type="button" id="deleteSelectedImageSetsButton" onclick="deleteSelectedImageSets()" disabled title="删除选中的图片集" aria-label="删除选中的图片集"><i data-lucide="trash-2" aria-hidden="true"></i><small>删除所选</small></button>
+                            <button type="button" onclick="openGeneratedPictures()" title="打开 Windows 图片文件夹" aria-label="打开 Windows 图片文件夹"><i data-lucide="folder-open" aria-hidden="true"></i><small>Windows 图片文件夹</small></button>
+                        </div>
+                    </div>
+                    <div id="imageGenerationSets" class="is-empty">
+                        <div id="imageEditResultEmpty"><i data-lucide="scan-line" aria-hidden="true"></i><span>每次生成都会在这里创建一个图片集</span></div>
+                    </div>
+                </section>
+            </section>
+
+            <!-- 1. 微型视图专用面板 (仅在高度极小时激活) -->
+            <div id="microSummary" class="micro-only">
+                <!-- 条一：可用额度 -->
+                <div id="microTotalRow">
+                    <div>
+                        <span>剩余: <span id="microRemainVal">—</span> USD</span>
+                        <span id="microPercentVal">—</span>
+                    </div>
+                    <div>
+                        <div id="microProgressBar" style="width: 0%"></div>
+                    </div>
+                </div>
+                <!-- 5h / 1d / 7d 简化进度；最小高度只显示其中最紧张的一条 -->
+                <div id="microLimitRows">
+                    <div id="micro5hRow" class="micro-limit-row is-tightest" data-window="5h">
+                        <div><span>5h 限制: <b id="micro5hRemain">—</b><span id="micro5hSuffix"> USD 可用</span></span><span id="micro5hPercent">—</span></div>
+                        <div><div id="micro5hProgress" style="width: 0%"></div></div>
+                    </div>
+                    <div id="micro1dRow" class="micro-limit-row" data-window="1d">
+                        <div><span>1d 限制: <b id="micro1dRemain">—</b><span id="micro1dSuffix"> USD 可用</span></span><span id="micro1dPercent">—</span></div>
+                        <div><div id="micro1dProgress" style="width: 0%"></div></div>
+                    </div>
+                    <div id="micro7dRow" class="micro-limit-row" data-window="7d">
+                        <div><span>7d 限制: <b id="micro7dRemain">—</b><span id="micro7dSuffix"> USD 可用</span></span><span id="micro7dPercent">—</span></div>
+                        <div><div id="micro7dProgress" style="width: 0%"></div></div>
+                    </div>
+                </div>
+                <div id="microCountdownRow">
+                    <span id="microCountdownLabel">最紧张窗口重置</span>
+                    <span id="microCountdownValue">—</span>
+                </div>
+            </div>
+
+            <!-- 2. 标准与中度视图融合布局 -->
+            <div id="dashboardGrid" class="micro-hide">
+
+                <div id="dashboardPrimary">
+                    <!-- 置顶首要可用额度卡片 -->
+                    <div id="quotaSummary">
+                        <div>
+                            <span>可用剩余额度 (REMAINING)</span>
+                            <span id="topKeyStatus" class="key-status status-neutral">
+                                未选择 NO KEY
+                            </span>
+                        </div>
+
+                        <div>
+                            <span id="bigRemainingVal">—</span>
+                            <span>USD</span>
+                        </div>
+
+                        <div>
+                            <span>总额度: <b id="bigTotalVal">—</b></span>
+                            <span id="bigPercentVal">未选择密钥</span>
+                        </div>
+
+                        <!-- 主进度条 -->
+                        <div>
+                            <div id="bigProgressBar" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- 三大限额进度组件 (高度 < 520px 时最核心) -->
+                    <div id="limitCards">
+                        <h3>
+                            <span>频率限制窗口 (RATE LIMITS)</span>
+                            <span id="limitModeLabel">
+                                <i data-lucide="shield" class="icon-10 color-brand" aria-hidden="true"></i>
+                                <span data-icon-label>等待密钥</span>
+                            </span>
+                        </h3>
+
+                        <!-- 5小时 -->
+                        <div id="limit5hCard" class="limit-card">
+                            <div>
+                                <span>5小时窗口 (5h)</span>
+                                <span id="win5hPercent">—</span>
+                            </div>
+                            <div>
+                                <span id="win5hRemaining">—</span>
+                                <span id="win5hTotal">—</span>
+                            </div>
+                            <div>
+                                <div id="win5hProgress" style="width: 0%"></div>
+                            </div>
+                            <div class="limit-meta">
+                                <span>已用: <b id="win5hUsed">—</b></span>
+                                <span id="win5hCountdown">
+                                    <i data-lucide="clock" class="icon-10" aria-hidden="true"></i>
+                                    <span data-icon-label>—</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- 1天 -->
+                        <div id="limit1dCard" class="limit-card">
+                            <div>
+                                <span>1天窗口 (1d)</span>
+                                <span id="win1dPercent">—</span>
+                            </div>
+                            <div>
+                                <span id="win1dRemaining">—</span>
+                                <span id="win1dTotal">—</span>
+                            </div>
+                            <div>
+                                <div id="win1dProgress" style="width: 0%"></div>
+                            </div>
+                            <div class="limit-meta">
+                                <span>已用: <b id="win1dUsed">—</b></span>
+                                <span id="win1dCountdown">
+                                    <i data-lucide="clock" class="icon-10" aria-hidden="true"></i>
+                                    <span data-icon-label>—</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- 7天 -->
+                        <div id="limit7dCard" class="limit-card">
+                            <div>
+                                <span>7天窗口 (7d)</span>
+                                <span id="win7dPercent">—</span>
+                            </div>
+                            <div>
+                                <span id="win7dRemaining">—</span>
+                                <span id="win7dTotal">—</span>
+                            </div>
+                            <div>
+                                <div id="win7dProgress" style="width: 0%"></div>
+                            </div>
+                            <div class="limit-meta">
+                                <span>已用: <b id="win7dUsed">—</b></span>
+                                <span id="win7dCountdown">
+                                    <i data-lucide="clock" class="icon-10" aria-hidden="true"></i>
+                                    <span data-icon-label>—</span>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div id="speedPanel">
+                    <div id="intervalUsageSection">
+                        <h3>
+                            <span>区间用量 (USAGE STATS)</span>
+                            <span>滚动区间统计</span>
+                        </h3>
+                        <p>根据本地用量采样，展示最近区间累计消费：</p>
+
+                        <!-- 区间用量卡片组 -->
+                        <div>
+                            <!-- 10分钟用量 -->
+                            <div id="interval10mCard">
+                                <div>
+                                    <span>最近 10min 用量</span>
+                                    <span id="speed10mVal">—</span>
+                                    <span>滚动 10 分钟累计</span>
+                                </div>
+                                <span class="load-status status-neutral" id="speed10mStatus">
+                                    等待采样
+                                </span>
+                            </div>
+
+                            <!-- 1小时用量 -->
+                            <div id="interval1hCard">
+                                <div>
+                                    <span>最近 1h 用量</span>
+                                    <span id="speed1hVal">—</span>
+                                    <span>滚动 1 小时累计</span>
+                                </div>
+                                <span class="load-status status-neutral" id="speed1hStatus">
+                                    等待采样
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 自然周期平均与 12 小时逐小时用量 -->
+                    <div id="usageAnalysisPanel">
+                        <div id="averageHeader">
+                            <div>
+                                <h4>自然周期平均用量</h4>
+                                <span id="averagePeriodLabel">UTC+8 自然日</span>
+                            </div>
+                            <div role="group" aria-label="平均用量周期">
+                                <button id="averageTodayButton" type="button" onclick="setAveragePeriod('today')" class="period-button is-active">今日</button>
+                                <button id="averageWeekButton" type="button" onclick="setAveragePeriod('week')" class="period-button">本周</button>
+                            </div>
+                        </div>
+
+                        <div id="averageSummary">
+                            <div>
+                                <span>平均每分钟</span>
+                                <span id="avgMinVal">—</span>
+                            </div>
+                            <div>
+                                <span>平均每小时</span>
+                                <span id="avgHourVal">—</span>
+                            </div>
+                        </div>
+
+                        <div id="usageTrendSection">
+                            <div class="trend-header">
+                                <span id="usageTrendTitle">最近 12h · 每 1h 用量</span>
+                                <div role="group" aria-label="趋势图用量区间">
+                                    <button id="trend1hButton" type="button" onclick="setTrendPeriod('1h')" class="period-button is-active">1h</button>
+                                    <button id="trend10mButton" type="button" onclick="setTrendPeriod('10m')" class="period-button">10min</button>
+                                </div>
+                            </div>
+                            <div id="usageTrendWrap">
+                                <div id="usageTrendPlot">
+                                    <svg id="usageTrendChart" viewBox="0 0 600 120" preserveAspectRatio="none" aria-label="最近 12 小时逐小时用量曲线"></svg>
+                                    <div id="trendNodeLayer" aria-hidden="true"></div>
+                                    <div id="trendTooltip" class="hidden"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- 全宽状态指标：统一五列宽度、标签和值基线 -->
+                <div id="dashboardMetrics" class="tiny-hide">
+                    <div class="metric-cell metric-secondary">
+                        <span class="metric-label">监控密钥</span>
+                        <span id="maskedKeyText" class="metric-value">尚未选择</span>
+                        <span class="metric-detail invisible" aria-hidden="true">占位</span>
+                    </div>
+                    <button type="button" onclick="openModelModal()" class="metric-cell metric-secondary model-access-button" title="查看可访问模型">
+                        <span class="metric-label">模型访问权限</span>
+                        <span class="metric-value">
+                            <i data-lucide="boxes" class="icon-10 color-brand" aria-hidden="true"></i>
+                            <span id="modelsCount">—</span>
+                        </span>
+                        <span class="metric-detail invisible" aria-hidden="true">占位</span>
+                    </button>
+                    <div class="metric-cell metric-primary metric-today">
+                        <span class="metric-label">今日累计用量</span>
+                        <span class="metric-value" id="todayUsageVal">—</span>
+                        <span class="metric-detail" id="todayRequestsVal">—</span>
+                    </div>
+                    <div class="metric-cell metric-primary metric-expiry">
+                        <span class="metric-label">距到期日</span>
+                        <span id="expireDaysLeft" class="metric-value">—</span>
+                        <span class="metric-detail invisible" aria-hidden="true">占位</span>
+                    </div>
+                    <div class="metric-cell metric-secondary">
+                        <span class="metric-label">总累计消耗 (TOTAL)</span>
+                        <span class="metric-value" id="totalUsageVal">—</span>
+                        <span class="metric-detail invisible" aria-hidden="true">占位</span>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <div id="settingsPanel">
+            <!-- 设置页顶部 -->
+            <div id="settingsHeader">
+                <span>小工具个性化设置</span>
+                <button onclick="toggleSettingsPanel()">
+                    <i data-lucide="arrow-left" class="icon-11" aria-hidden="true"></i><span>返回</span>
+                </button>
+            </div>
+
+            <!-- 设置核心选项 -->
+            <div id="settingsContent">
+                <!-- 1. 独立主题设置 -->
+                <div class="settings-group settings-theme">
+                    <label>界面色彩主题 (THEME)</label>
+                    <div>
+                        <button onclick="changeThemeMode('light')" id="themeBtnLight">
+                            <i data-lucide="sun" aria-hidden="true"></i> 浅色模式
+                        </button>
+                        <button onclick="changeThemeMode('dark')" id="themeBtnDark">
+                            <i data-lucide="moon" aria-hidden="true"></i> 深色模式
+                        </button>
+                    </div>
+                </div>
+
+                <div class="settings-group settings-progress-mode">
+                    <label>频率窗口进度逻辑 (RATE LIMIT DISPLAY)</label>
+                    <div role="group" aria-label="频率窗口进度逻辑">
+                        <button type="button" onclick="changeRateLimitProgressMode('remaining')" id="rateModeRemaining">
+                            <i data-lucide="battery-medium" aria-hidden="true"></i> 血条 · 剩余
+                        </button>
+                        <button type="button" onclick="changeRateLimitProgressMode('used')" id="rateModeUsed">
+                            <i data-lucide="chart-no-axes-column-increasing" aria-hidden="true"></i> 用量 · 已用
+                        </button>
+                    </div>
+                    <span class="settings-help">仅改变 5h / 1d / 7d 的填充方向；预警颜色始终由实际可用余量决定。</span>
+                </div>
+
+                <!-- 2. 三段提示预警阈值 -->
+                <div class="settings-group settings-thresholds">
+                    <label>余量警报限额阈值 (TRIGGER ALERT)</label>
+                    <div>
+                        <div>
+                            <span>一级预警 (黄色)</span>
+                            <div>
+                                <input type="number" id="thWarn" onchange="updateThresholds()" value="50">
+                                <span>%</span>
+                            </div>
+                        </div>
+                        <div>
+                            <span>二级预警 (橙色)</span>
+                            <div>
+                                <input type="number" id="thDanger" onchange="updateThresholds()" value="25">
+                                <span>%</span>
+                            </div>
+                        </div>
+                        <div>
+                            <span>极端预警 (红/闪)</span>
+                            <div>
+                                <input type="number" id="thCritical" onchange="updateThresholds()" value="10">
+                                <span>%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <span class="settings-help">当剩余比例小于阈值时，进度条自动切换为黄色、橙色或红色闪烁预警。</span>
+                </div>
+
+                <!-- 3. 自定义自动刷新速度 -->
+                <div class="settings-group settings-refresh">
+                    <label>自适应后台刷新机制 (AUTO REFRESH)</label>
+                    <div class="refresh-cards">
+                        <div>
+                            <span>前台活跃模式</span>
+                            <div>
+                                <span>每</span>
+                                <input type="number" id="foregroundRefreshMinutes" min="1" step="1" value="1" onchange="updateRefreshIntervals()">
+                                <span>分钟</span>
+                            </div>
+                        </div>
+                        <div>
+                            <span>后台闲置模式</span>
+                            <div>
+                                <span>每</span>
+                                <input type="number" id="backgroundRefreshMinutes" min="5" step="1" value="5" onchange="updateRefreshIntervals()">
+                                <span>分钟</span>
+                            </div>
+                        </div>
+                    </div>
+                    <span class="settings-help">允许延长周期；前台不得短于 1 分钟，后台不得短于 5 分钟。</span>
+                    <div>
+                        <span>下一次检测预计在：<span id="refreshTimerVal">60s</span> 后</span>
+                        <span id="tabStatusBadge" class="refresh-state is-foreground">前台监控中</span>
+                    </div>
+                </div>
+
+                <div class="settings-group settings-title-bar">
+                    <label>标题栏样式 (TITLE BAR)</label>
+                    <div role="group" aria-label="标题栏样式">
+                        <button type="button" onclick="changeTitleBarMode('default')" id="titleBarDefault">
+                            <i data-lucide="panel-top" aria-hidden="true"></i> 默认
+                        </button>
+                        <button type="button" onclick="changeTitleBarMode('minimal')" id="titleBarMinimal">
+                            <i data-lucide="minus" aria-hidden="true"></i> 极简
+                        </button>
+                        <button type="button" onclick="changeTitleBarMode('original')" id="titleBarOriginal">
+                            <i data-lucide="app-window" aria-hidden="true"></i> 原生
+                        </button>
+                    </div>
+                    <span class="settings-help">默认使用完整自绘标题栏；极简将密钥操作收纳到缩小约 33% 的标题栏；原生使用 Windows 标题栏。</span>
+                    <div id="titleBarRestartRow" hidden>
+                        <span>标题栏将在重启后切换</span>
+                        <button type="button" onclick="restartApp()" id="restartAppButton">
+                            <i data-lucide="rotate-cw" aria-hidden="true"></i> 重启应用
+                        </button>
+                    </div>
+                </div>
+
+                <div class="settings-group settings-app-behavior">
+                    <label>应用行为 (APP BEHAVIOR)</label>
+                    <div class="settings-fields">
+                        <label>
+                            <span>点击关闭按钮时</span>
+                            <select id="closeAction" onchange="updateAppPreferences()">
+                                <option value="ask">每次询问</option>
+                                <option value="tray">最小化到托盘</option>
+                                <option value="exit">关闭应用</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>后台运行时</span>
+                            <select id="backgroundUiMode" onchange="updateAppPreferences()">
+                                <option value="delayed">5 分钟后进入低开销模式（默认）</option>
+                                <option value="active">始终保持活跃（启动更快）</option>
+                                <option value="low_power">立刻进入低消耗模式（内存占用更少）</option>
+                            </select>
+                        </label>
+                    </div>
+                    <label class="settings-toggle">
+                        <input type="checkbox" id="startupEnabled" onchange="updateAppPreferences()">
+                        <span>随 Windows 开机自动启动</span>
+                    </label>
+                </div>
+
+                <div class="settings-group settings-update">
+                    <label>应用更新 (APPLICATION UPDATE)</label>
+                    <button type="button" onclick="checkForUpdates()" id="checkUpdateButton">
+                        <i data-lucide="refresh-cw" aria-hidden="true"></i> 检查更新
+                    </button>
+                </div>
+            </div>
+
+            <div id="settingsFooter">
+                <i data-lucide="info" class="icon-11 color-brand" aria-hidden="true"></i>
+                <span>设置会自动保存 · <span id="settingsVersionValue">v—</span></span>
+            </div>
+        </div>
+
+        <div id="modelModal" class="animated-modal" hidden role="dialog" aria-modal="true" aria-labelledby="modelModalTitle" onclick="handleModelModalBackdrop(event)">
+            <div id="modelModalPanel">
+                <div>
+                    <div>
+                        <i data-lucide="boxes" class="icon-14 color-brand" aria-hidden="true"></i>
+                        <div>
+                            <h2 id="modelModalTitle">可访问模型</h2>
+                            <p id="modelModalSubtitle">当前密钥</p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closeModelModal()" title="关闭模型列表" aria-label="关闭模型列表">
+                        <i data-lucide="x" class="icon-14" aria-hidden="true"></i>
+                    </button>
+                </div>
+                <div id="modelModalList"></div>
+                <div>
+                    <i data-lucide="info" class="icon-11" aria-hidden="true"></i>
+                    模型列表来自上游 /models 接口
+                </div>
+            </div>
+        </div>
+
+        <div id="imagePromptModal" class="app-modal animated-modal image-prompt-modal" hidden role="dialog" aria-modal="true" aria-labelledby="imagePromptModalTitle" onclick="handleImagePromptModalBackdrop(event)">
+            <div class="app-modal-panel image-prompt-modal-panel">
+                <div class="app-modal-header">
+                    <div>
+                        <i data-lucide="text-cursor-input" class="icon-14 color-brand" aria-hidden="true"></i>
+                        <div>
+                            <h2 id="imagePromptModalTitle">编辑提示词</h2>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closeImagePromptModal()" title="关闭提示词编辑器" aria-label="关闭提示词编辑器">
+                        <i data-lucide="x" class="icon-14" aria-hidden="true"></i>
+                    </button>
+                </div>
+                <textarea id="imagePromptModalTextarea" maxlength="32000" placeholder="描述要生成的图片；也可以粘贴或拖入参考图片"></textarea>
+            </div>
+        </div>
+
+        <div id="imageResultModal" class="app-modal animated-modal image-result-modal" hidden role="dialog" aria-modal="true" aria-labelledby="imageResultModalTitle" onclick="handleImageResultModalBackdrop(event)">
+            <div class="app-modal-panel image-result-modal-panel">
+                <div class="app-modal-header image-result-modal-header">
+                    <div><i data-lucide="image" class="icon-14 color-brand" aria-hidden="true"></i><div><h2 id="imageResultModalTitle">生成图片</h2><p id="imageResultModalMeta">已自动保存</p></div></div>
+                    <div class="image-result-modal-actions">
+                        <div class="image-viewer-zoom-controls" role="group" aria-label="缩放控制">
+                            <button type="button" onclick="zoomImageViewer(-1)" title="缩小" aria-label="缩小"><i data-lucide="zoom-out" aria-hidden="true"></i></button>
+                            <button type="button" id="imageViewerZoomLabel" onclick="resetImageViewer()" title="恢复适合窗口" aria-label="恢复适合窗口">100%</button>
+                            <button type="button" onclick="zoomImageViewer(1)" title="放大" aria-label="放大"><i data-lucide="zoom-in" aria-hidden="true"></i></button>
+                        </div>
+                        <button type="button" id="saveEditedImageButton" onclick="saveEditedImage()" title="另存为" aria-label="另存为"><i data-lucide="download" aria-hidden="true"></i></button>
+                        <button type="button" class="image-viewer-close" onclick="closeImageResultModal()" title="关闭图片" aria-label="关闭图片"><i data-lucide="x" aria-hidden="true"></i></button>
+                    </div>
+                </div>
+                <div id="imageResultModalCanvas" class="image-result-modal-canvas" title="拖拽移动，滚轮缩放"><img id="imageResultModalImage" alt="生成图片" draggable="false"></div>
+            </div>
+        </div>
+
+        <div id="imageSetDeleteModal" class="app-modal animated-modal image-set-delete-modal" hidden role="alertdialog" aria-modal="true" aria-labelledby="imageSetDeleteModalTitle" aria-describedby="imageSetDeleteModalMessage" onclick="handleImageSetDeleteModalBackdrop(event)">
+            <div class="app-modal-panel image-set-delete-modal-panel">
+                <div class="app-modal-header">
+                    <div><i data-lucide="trash-2" class="icon-14 color-critical" aria-hidden="true"></i><h2 id="imageSetDeleteModalTitle">删除图片集</h2></div>
+                    <button type="button" onclick="closeImageSetDeleteModal()" title="关闭删除确认" aria-label="关闭删除确认"><i data-lucide="x" class="icon-14" aria-hidden="true"></i></button>
+                </div>
+                <p id="imageSetDeleteModalMessage">将同时删除该轮提示词、原图和压缩预览。此操作无法撤销。</p>
+                <div class="image-set-delete-modal-actions">
+                    <button type="button" id="cancelImageSetDeleteButton" onclick="closeImageSetDeleteModal()">取消</button>
+                    <button type="button" id="confirmImageSetDeleteButton" class="is-danger" onclick="confirmDeleteImageGenerationSet()"><i data-lucide="trash-2" aria-hidden="true"></i><span>确认删除</span></button>
+                </div>
+            </div>
+        </div>
+
+        <div id="updateModal" class="app-modal animated-modal" hidden role="dialog" aria-modal="true" aria-labelledby="updateModalTitle" onclick="handleAppModalBackdrop(event)">
+            <div class="app-modal-panel update-modal-panel">
+                <div class="app-modal-header">
+                    <div>
+                        <i data-lucide="download" class="icon-14 color-brand" aria-hidden="true"></i>
+                        <div>
+                            <h2 id="updateModalTitle">正在检查更新</h2>
+                            <p id="updateModalVersion">当前版本 v—</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="update-modal-status">
+                    <span id="updateStatusText">正在检查更新</span>
+                    <div class="update-progress-track"><div id="updateProgress"></div></div>
+                </div>
+                <div class="update-notes-heading">更新日志</div>
+                <div id="updateChangelogContent" class="markdown-content">正在获取更新日志。</div>
+                <button type="button" id="toggleFullChangelogButton" class="full-changelog-toggle" onclick="toggleFullChangelog()">
+                    查看完整更新日志
+                </button>
+                <div class="update-modal-footer">
+                    <div class="update-decision-actions">
+                        <button type="button" onclick="downloadUpdate()" id="downloadUpdateButton" disabled>是</button>
+                        <button type="button" id="declineUpdateButton" onclick="closeUpdateModal()">否</button>
+                        <button type="button" id="restartLaterButton" onclick="deferUpdateRestart()" hidden>稍后重启</button>
+                        <button type="button" id="restartNowButton" class="primary-action" onclick="restartUpdate()" hidden>立刻重启</button>
+                    </div>
+                    <button type="button" id="ignoreUpdateButton" class="ignore-update-button" onclick="ignoreCurrentUpdate()" disabled>忽略此版本</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="closeActionModal" class="app-modal animated-modal" hidden role="dialog" aria-modal="true" aria-labelledby="closeActionModalTitle" onclick="handleAppModalBackdrop(event)">
+            <div class="app-modal-panel close-action-panel">
+                <div class="app-modal-header">
+                    <div>
+                        <i data-lucide="power" class="icon-14 color-brand" aria-hidden="true"></i>
+                        <div>
+                            <h2 id="closeActionModalTitle">关闭 DJYX_APITOOL</h2>
+                            <p>选择本次关闭按钮的操作</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="close-action-buttons">
+                    <button type="button" onclick="resolveCloseAction('tray')">
+                        <i data-lucide="panel-bottom-close" aria-hidden="true"></i>
+                        <span>最小化到托盘</span>
+                    </button>
+                    <button type="button" class="danger-action" onclick="resolveCloseAction('exit')">
+                        <i data-lucide="power" aria-hidden="true"></i>
+                        <span>关闭应用</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 极简底页脚 (高度不足时隐藏) -->
+        <footer id="appFooter" class="micro-hide tiny-hide">
+            <span>API_TOOLS (直角便携版)</span>
+            <span id="liveClock">—</span>
+        </footer>
+        </div>
+            </div>
+        <!-- 自定义轻量吐司通知保持在缩放层外，避免 fixed 定位参与页面缩放。 -->
+        <div id="toast">
+            <i id="toastIcon" data-lucide="circle-check" class="icon-14 color-good" aria-hidden="true"></i>
+            <span id="toastMessage">保存成功</span>
+        </div>
+    </div>
+
+    <script src="scripts/modules/00-core-ui.js?v=1"></script>
+    <script src="scripts/modules/01-app-state.js?v=1"></script>
+    <script src="scripts/modules/02-image-controls.js?v=1"></script>
+    <script src="scripts/modules/03-image-reasoning.js?v=1"></script>
+    <script src="scripts/modules/04-image-stream-rendering.js?v=1"></script>
+    <script src="scripts/modules/05-image-events-sessions.js?v=1"></script>
+    <script src="scripts/modules/06-backend-bridge.js?v=1"></script>
+    <script src="scripts/modules/07-page-initializer.js?v=1"></script>
+    <script src="scripts/modules/08-window-settings-updates.js?v=1"></script>
+    <script src="scripts/modules/09-modals-input-refresh.js?v=1"></script>
+    <script src="scripts/modules/10-dashboard-rendering.js?v=1"></script>
+    <script src="scripts/modules/11-theme-bootstrap.js?v=1"></script>
+    <script src="scripts/modules/12-bootstrap.js?v=1"></script>
+
+
+</body>
+</html>

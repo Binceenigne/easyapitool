@@ -2,7 +2,7 @@
 
 Windows API 密钥额度监控工具。桌面壳使用 Python 3.12、pywebview（Edge WebView2）、SQLite、系统托盘和 Windows 通知。
 
-当前 `imagen` 分支在主监控器之外额外提供图片生成功能；`main` 分支仅维护额度监控器。图片请求校验、JSON/multipart 传输、流式响应解析和结果落盘集中在 `image_editor.py`，`app.py` 只负责凭据、窗口和 RPC 适配。
+当前 `imagen` 分支在主监控器之外额外提供图片生成功能；`main` 分支仅维护额度监控器。前端源码位于 `frontend`，按页面、SCSS partial 和经典 JavaScript 模块组织。后端源码位于 `backend`，按平台能力、服务、控制器职责、Web API 和运行时拆分；根目录 `app.py` 与 `image_editor.py` 仅保留兼容入口。
 
 ## 功能
 
@@ -43,7 +43,9 @@ EasyClin 会把图片请求转换到内部图片工具，并非所有 Images API
 
 ## 开发运行
 
-在项目虚拟环境安装 `requirements.txt` 后运行 `app.py`。页面样式只维护 `assets/app.scss`，通过固定版本的 Dart Sass 编译为 `assets/app.css`；开发时可运行 `npm run build:css` 单次编译，或运行 `npm run watch:css` 持续编译。图标首次运行时从国内镜像校验并缓存。
+在项目虚拟环境安装 `requirements.txt` 后运行 `app.py`。页面结构维护在 `frontend/index.html`，脚本按职责放在 `frontend/scripts/modules`，样式 partial 放在 `frontend/styles/modules`，由 `frontend/styles/app.scss` 汇总编译。开发时可运行 `npm run build:css` 单次编译，或运行 `npm run watch:css` 持续编译。图标首次运行时从国内镜像校验并缓存。
+
+后端的基础常量、平台能力、RPC、存储、网络客户端和搜索服务分别位于 `backend` 的同名模块。`AppController` 由 `backend/controller.py` 装配，其窗口、图像、更新、额度和设置行为位于 `backend/controller_mixins`。桌面进程入口和 pywebview 装配位于 `backend/runtime.py`。
 
 ## 构建
 

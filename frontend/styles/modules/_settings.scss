@@ -1,0 +1,11 @@
+/* Source: frontend/styles/app.scss. Generated output: frontend/styles/app.css. */
+$trend-node-size: 6.5px;
+$model-single-column-breakpoint: 520px;
+
+@mixin fixed-square($size) {
+    flex-basis: $size;
+    width: $size;
+    height: $size;
+    min-width: $size;
+    min-height: $size;
+}

@@ -1,0 +1,54 @@
+/* Footer and toast */
+#appFooter {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--surface-strong);
+    color: var(--muted);
+    font-size: 8px;
+}
+#liveClock { color: var(--brand); font-family: var(--font-mono); }
+#toast {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    max-width: calc(100vw - 24px);
+    padding: 6px 12px;
+    gap: 6px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #fff;
+    box-shadow: var(--shadow);
+    font-size: 9px;
+    font-weight: 700;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate3d(0, 24px, 0);
+    backface-visibility: hidden;
+    will-change: transform, opacity;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+html.dark #toast { border-color: #e2e8f0; background: #fff; color: #0f172a; }
+#toast.is-visible { opacity: 1; pointer-events: auto; transform: translate3d(0, 0, 0); }
+
+/* Content typography follows its actual container, not viewport utility breakpoints. */
+#dashboardPrimary,
+#speedPanel,
+#settingsContent,
+#modelModalPanel,
+#microSummary {
+    --fs-7: calc(7px * var(--content-scale, 1));
+    --fs-8: calc(8px * var(--content-scale, 1));
+    --fs-9: calc(9px * var(--content-scale, 1));
+    --fs-10: calc(10px * var(--content-scale, 1));
+    --fs-11: calc(11px * var(--content-scale, 1));
+    --fs-14: calc(14px * var(--content-scale, 1));
+    --fs-sm: calc(14px * var(--content-scale, 1));
+    --fs-2xl: calc(24px * var(--content-scale, 1));
+}

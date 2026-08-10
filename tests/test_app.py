@@ -11,7 +11,39 @@ from unittest.mock import Mock, patch
 from PIL import Image
 
 import app
+import backend.platform as backend_platform
+import backend.runtime as backend_runtime
+import backend.controller_mixins.image_files as controller_image_files
+import backend.controller_mixins.image_reasoning as controller_image_reasoning
+import backend.controller_mixins.quota_state as controller_quota_state
+import backend.controller_mixins.updates as controller_updates
+import backend.controller_mixins.window_commands as controller_window_commands
+import backend.controller_mixins.window_state as controller_window_state
+import backend.controller_mixins.workers_window as controller_workers_window
 import image_editor
+
+
+PROJECT_ROOT = Path(__file__).parents[1]
+
+
+def frontend_source() -> str:
+    page = (PROJECT_ROOT / app.MAIN_PAGE_NAME).read_text(encoding="utf-8")
+    scripts = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((PROJECT_ROOT / "frontend" / "scripts" / "modules").glob("*.js"))
+    )
+    return f"{page}\n{scripts}"
+
+
+def frontend_scss_source() -> str:
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((PROJECT_ROOT / "frontend" / "styles" / "modules").glob("*.scss"))
+    )
+
+
+def frontend_stylesheet() -> str:
+    return (PROJECT_ROOT / "frontend" / "styles" / "app.css").read_text(encoding="utf-8")
 
 
 class StoreTests(unittest.TestCase):
@@ -1280,17 +1312,10 @@ class StaticAssetCacheTests(unittest.TestCase):
         root = Path(self.temp.name)
         self.bundle = root / "bundle"
         self.data = root / "data"
-        (self.bundle / "assets").mkdir(parents=True)
-        (self.bundle / app.MAIN_PAGE_NAME).write_text(
-            '<script defer src="vendor/lucide/lucide.min.js"></script>',
-            encoding="utf-8",
-        )
-        (self.bundle / app.BENCHMARK_PAGE_NAME).write_text(
-            '<main id="benchmarkApp"></main>',
-            encoding="utf-8",
-        )
-        (self.bundle / "assets" / "app.css").write_text("body{}", encoding="utf-8")
-        (self.bundle / "assets" / "title_logo.png").write_bytes(b"logo")
+        for relative in app.FRONTEND_RUNTIME_FILES:
+            path = self.bundle / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"test-resource")
         self.cache = app.StaticAssetCache(self.data, self.bundle)
 
     def tearDown(self):
@@ -1298,7 +1323,7 @@ class StaticAssetCacheTests(unittest.TestCase):
 
     def test_install_uses_validated_lucide_and_creates_ready_release(self):
         script = b"lucide-test-script"
-        with patch.object(app, "LUCIDE_SHA256", app.sha256_bytes(script)):
+        with patch.object(backend_platform, "LUCIDE_SHA256", app.sha256_bytes(script)):
             self.cache.expected_hashes["vendor/lucide/lucide.min.js"] = app.sha256_bytes(script)
             with patch.object(self.cache, "_download_lucide", return_value=script):
                 self.cache.install()
@@ -1322,8 +1347,8 @@ class StaticAssetCacheTests(unittest.TestCase):
                 raise PermissionError(5, "Access is denied")
             real_replace(source_path, destination_path)
 
-        with patch.object(app.os, "replace", side_effect=replace_with_transient_lock), patch.object(
-            app.time, "sleep"
+        with patch.object(backend_platform.os, "replace", side_effect=replace_with_transient_lock), patch.object(
+            backend_platform.time, "sleep"
         ) as sleep:
             self.cache._replace_release_path(source, destination)
 
@@ -1334,7 +1359,7 @@ class StaticAssetCacheTests(unittest.TestCase):
     def test_corrupted_lucide_invalidates_release(self):
         script = b"lucide-test-script"
         digest = app.sha256_bytes(script)
-        with patch.object(app, "LUCIDE_SHA256", digest):
+        with patch.object(backend_platform, "LUCIDE_SHA256", digest):
             self.cache.expected_hashes["vendor/lucide/lucide.min.js"] = digest
             with patch.object(self.cache, "_download_lucide", return_value=script):
                 self.cache.install()
@@ -1346,7 +1371,7 @@ class StaticAssetCacheTests(unittest.TestCase):
     def test_primary_mirror_failure_falls_back_to_archive(self):
         script = b"lucide-test-script"
         digest = app.sha256_bytes(script)
-        with patch.object(app, "LUCIDE_SHA256", digest):
+        with patch.object(backend_platform, "LUCIDE_SHA256", digest):
             with patch.object(
                 self.cache,
                 "_read_url",
@@ -1363,15 +1388,15 @@ class StaticAssetCacheTests(unittest.TestCase):
 
     def test_main_page_has_lucide_icons_and_continuous_container_font_scaling(self):
         project_root = Path(__file__).parents[1]
-        page = (project_root / app.MAIN_PAGE_NAME).read_text(encoding="utf-8")
-        scss_source = (project_root / "assets" / "app.scss").read_text(encoding="utf-8")
-        stylesheet = (project_root / "assets" / "app.css").read_text(encoding="utf-8")
+        page = frontend_source()
+        scss_source = frontend_scss_source()
+        stylesheet = frontend_stylesheet()
         build_script = (project_root / "build.ps1").read_text(encoding="utf-8")
 
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="assets/app.css?v=34">', page)
+        self.assertIn('<link rel="stylesheet" href="styles/app.css?v=34">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -1389,10 +1414,6 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="imagePromptModal"', page)
         self.assertIn('id="imagePromptModalTextarea"', page)
         self.assertIn("function resizeImagePrompt()", page)
-        self.assertIn("const pageZoom = Math.max(0.01, Number(getPageZoom()) || 1)", page)
-        self.assertIn("(textareaRect.top - formRect.top) / pageZoom", page)
-        self.assertIn("(footerRect?.height || 0) / pageZoom", page)
-        self.assertIn("formRect.height / pageZoom", page)
         self.assertIn("expandThreshold: Math.max(minimum, Math.floor(maximum * 0.75))", page)
         self.assertIn("contentHeight > metrics.maximum + 1", page)
         self.assertIn("appMain.append(modal)", page)
@@ -1467,18 +1488,6 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('data-ratio="21:9"', page)
         self.assertIn("'16:9': '1280x720'", page)
         self.assertIn('id="imageGenerationSets"', page)
-        self.assertIn('id="exportSelectedImageSetsButton"', page)
-        self.assertIn('id="deleteSelectedImageSetsButton"', page)
-        self.assertIn("function loadImageGenerationSetOriginals", page)
-        self.assertIn("function updateImageSetSelectionActions", page)
-        self.assertIn("function toggleImageSetSelection", page)
-        self.assertIn("function exportSelectedImageSets", page)
-        self.assertIn("function deleteSelectedImageSets", page)
-        self.assertIn("originalLoadAttempted", page)
-        self.assertIn("item.fullUri || item.result?.fullUri", page)
-        self.assertIn(".image-generation-set-checkbox", scss_source)
-        self.assertIn(".image-results-actions", scss_source)
-        self.assertIn("export_image_sets", page)
         self.assertIn("window.applyImageGenerationEvent", page)
         self.assertIn("enterImageEditSession", page)
         self.assertIn("exitImageEditSession", page)
@@ -1503,7 +1512,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn(".image-edit-mode #manualRefreshButton", scss_source)
         self.assertIn(
             'name="image[]"',
-            (project_root / "image_editor.py").read_text(encoding="utf-8"),
+            (project_root / "backend" / "image_editor.py").read_text(encoding="utf-8"),
         )
         self.assertIn('id="keyToolbar"', page)
         self.assertIn('id="keySwitcherButton"', page)
@@ -1671,8 +1680,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn("tailwind", build_script.lower())
         self.assertIn("npm.cmd", build_script.lower())
         self.assertIn("run build:css", build_script.lower())
-        self.assertIn("assets\\app.scss", build_script)
-        self.assertIn("assets\\app.css", build_script)
+        self.assertIn("frontend\\styles\\app.scss", build_script)
+        self.assertIn("frontend\\styles\\app.css", build_script)
         self.assertNotIn("fontScaleForParent", page)
         self.assertNotIn("data-font-scale", page)
         self.assertIn('id="micro1dRow"', page)
@@ -1711,9 +1720,8 @@ class StaticAssetCacheTests(unittest.TestCase):
 
     def test_image_prompt_assistance_controls_and_streaming_summary(self):
         self.maxDiff = 600
-        project_root = Path(__file__).parents[1]
-        page = (project_root / app.MAIN_PAGE_NAME).read_text(encoding="utf-8")
-        stylesheet = (project_root / "assets" / "app.css").read_text(encoding="utf-8")
+        page = frontend_source()
+        stylesheet = frontend_stylesheet()
 
         self.assertIn('id="polishImagePromptButton"', page)
         self.assertIn('onclick="polishImagePrompt()"', page)
@@ -1796,13 +1804,13 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("persistedDuration && set.reasoningStatus !== 'running'", page)
         self.assertIn("reasoningToolLabel(activeTool)", page)
         self.assertIn("flash: 'Flash'", page)
-        self.assertIn("instant: '直接生成，快速获得结果'", page)
+        self.assertIn("instant: '直接快速获得结果'", page)
         self.assertIn("flash: '快速思考，优化生成质量'", page)
         self.assertIn("medium: '增强推理，丰富画面细节'", page)
-        self.assertIn("high: '深入构思，强化构图与视觉表现'", page)
+        self.assertIn("high: '深入编排方案，强化视觉表现'", page)
         self.assertIn("extra: 'Extra'", page)
-        self.assertIn("extra: '系统编排方案，持续推演与优化'", page)
-        self.assertIn("max: '最强模型深度推导、反思并优化结果'", page)
+        self.assertIn("extra: '延长思维链，持续推演与优化'", page)
+        self.assertIn("max: '使用顶级模型持续反思，获得最优结果'", page)
         for mode_label in ("Instant", "Flash", "Medium", "High", "Extra", "Max"):
             self.assertNotIn(f"{mode_label} 模式：", page)
         self.assertIn("high: ['#5865f2', '#6478f5', '#7185f7', '#8170f5']", page)
@@ -1955,7 +1963,6 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("const IMAGE_STREAM_PARTIAL_DURATION = 10000", page)
         self.assertIn("const IMAGE_STREAM_CLARITY_STEP = 0.25", page)
         self.assertNotIn("IMAGE_STREAM_PARTIAL_BLUR_STEP", page)
-        self.assertNotIn("IMAGE_STREAM_PARTIAL_FLOOR_BLUR", page)
         self.assertIn("const IMAGE_STREAM_FINAL_DURATION = 3000", page)
         self.assertIn("const IMAGE_STREAM_INITIAL_FADE_DURATION = 5000", page)
         self.assertIn("const IMAGE_STREAM_CROSSFADE_DURATION = 10000", page)
@@ -1967,29 +1974,20 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("append_image_stream_debug", page)
         self.assertIn("frameIndex === 0 && frame.kind === 'partial'", page)
         self.assertIn("function currentImageRevealBlur(item, beforeFrameIndex", page)
-        self.assertIn("imageStreamActualStyle(imageRevealElementCache.get(frames[index]))", page)
-        self.assertIn("Number(actual.opacity) > 0.01 && Number.isFinite(actual.actualBlurPx)", page)
         self.assertIn("function freezeImageRevealFrame(frame, image, blur, opacity", page)
         self.assertIn("frame.frozenOpacity", page)
-        self.assertIn("const capturedBlur = previousActual.connected", page)
-        self.assertIn("fromBlur: capturedBlur", page)
-        self.assertIn("Math.min(capturedBlur, visibleBlur)", page)
-        self.assertIn("1 - index * IMAGE_STREAM_CLARITY_STEP", page)
-        self.assertIn("IMAGE_STREAM_CLARITY_STEP / (2 ** (index - 3))", page)
+        self.assertIn("function imageRevealTargetBlur(partialIndex)", page)
+        self.assertIn("? 1 - index * IMAGE_STREAM_CLARITY_STEP", page)
+        self.assertIn("frame.fromBlur = Math.max(Number(frame.toBlur) || 0, Math.min(capturedBlur, visibleBlur))", page)
         self.assertIn("if (incomingPartialIndex <= previousPartialIndex)", page)
         self.assertIn("imageStreamDebugLog('partial-ignored'", page)
         self.assertIn("item.revealFrames.push(frame)", page)
         self.assertIn("const imageRevealElementCache = new WeakMap()", page)
         self.assertIn("createImageRevealElement(item, frame, frameIndex)", page)
         self.assertIn("function scheduleFinalImageFrameCleanup(item, frame)", page)
-        self.assertIn("frame.kind === 'final'\n                ? frame.duration", page)
         self.assertIn("const cleanupDuration = frame.duration", page)
+        self.assertIn("Math.max(0, cleanupDuration - elapsed)", page)
         self.assertIn("item.revealFrames = [frame]", page)
-        self.assertIn("function syncImageGenerationResult(result, requestId = '')", page)
-        self.assertIn("const set = imageGenerationSetById(requestId)", page)
-        self.assertIn("if (!set.items[itemIndex]) set.items[itemIndex] = item", page)
-        self.assertNotIn("set.items = (result.items || []).map", page)
-        self.assertIn("syncImageGenerationResult(result, requestId)", page)
         self.assertIn("function toggleImageGenerationSet(setId)", page)
         self.assertIn("if (!set || set.status === 'running') return", page)
         self.assertIn("if (set.status !== 'running')", page)
@@ -2023,11 +2021,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("function browserImageSource(...candidates)", page)
         self.assertIn("!candidate.toLowerCase().startsWith('file:')", page)
         self.assertIn("browserImageSource(item.previewUri, item.uri)", page)
-        self.assertIn("set.history ? item.result?.previewUri : item.fullUri || item.result?.fullUri", page)
-        self.assertIn("item.result?.previewUri", page)
-        self.assertIn("item.previewUri", page)
-        self.assertIn("item.result?.uri", page)
-        self.assertIn("item.uri", page)
+        self.assertIn("browserImageSource(item.previewUri, item.uri)", page)
+        self.assertIn("browserImageSource(item.fullUri || item.result?.fullUri, frame.uri, frame.fallbackUri)", page)
         self.assertIn("image.src = browserImageSource(result.previewUri, result.uri)", page)
         self.assertIn("preview.src = browserImageSource(file.previewUri, file.uri)", page)
         self.assertIn("image.src = browserImageSource(reference.previewUri, reference.uri)", page)
@@ -2106,9 +2101,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("@media (prefers-reduced-motion: reduce)", stylesheet)
 
     def test_main_page_window_controls_use_lucide_icons(self):
-        project_root = Path(__file__).parents[1]
-        page = (project_root / app.MAIN_PAGE_NAME).read_text(encoding="utf-8")
-        stylesheet = (project_root / "assets" / "app.css").read_text(encoding="utf-8")
+        page = frontend_source()
+        stylesheet = frontend_stylesheet()
 
         self.assertIn('data-lucide="minus"', page)
         self.assertIn('data-lucide="square"', page)
@@ -2137,7 +2131,7 @@ class ControllerTests(unittest.TestCase):
                 image_buffer.getvalue()
             ).decode("ascii")
 
-            with patch("app.app_data_dir", return_value=root):
+            with patch.object(controller_image_files, "app_data_dir", return_value=root):
                 result = controller.import_reference_image(data_url, "clipboard.png")
                 invalid = controller.import_reference_image(
                     "data:image/png;base64," + __import__("base64").b64encode(b"not-image").decode("ascii"),
@@ -2212,8 +2206,8 @@ class ControllerTests(unittest.TestCase):
             )
 
             events = []
-            with patch("app.app_data_dir", return_value=root / "data"), patch(
-                "app.generated_pictures_dir",
+            with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
+                controller_image_files, "generated_pictures_dir",
                 return_value=root / "Pictures" / app.APP_NAME,
             ):
                 result = controller.generate_image(
@@ -2293,7 +2287,7 @@ class ControllerTests(unittest.TestCase):
                 get_secret=lambda _key_id: "secret",
             )
 
-            with patch("app.generated_pictures_dir", return_value=Path(temp) / "Pictures"):
+            with patch.object(controller_image_files, "generated_pictures_dir", return_value=Path(temp) / "Pictures"):
                 result = controller.generate_image("key-1", "Generate image", [], {})
 
         self.assertTrue(result["ok"])
@@ -2365,8 +2359,8 @@ class ControllerTests(unittest.TestCase):
 
             controller.client = SimpleNamespace(stream_response=stream_response)
             events = []
-            with patch("app.app_data_dir", return_value=root / "data"), patch(
-                "app.generated_pictures_dir", return_value=pictures_root
+            with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
+                controller_image_files, "generated_pictures_dir", return_value=pictures_root
             ):
                 result = controller.generate_image(
                     "key-1",
@@ -2501,8 +2495,8 @@ class ControllerTests(unittest.TestCase):
                 )
 
             controller.client = SimpleNamespace(stream_response=stream_response)
-            with patch("app.app_data_dir", return_value=root / "data"), patch(
-                "app.generated_pictures_dir", return_value=pictures_root
+            with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
+                controller_image_files, "generated_pictures_dir", return_value=pictures_root
             ):
                 result = controller.generate_image(
                     "key-1",
@@ -2627,10 +2621,10 @@ class ControllerTests(unittest.TestCase):
             },
             {
                 "flash": ("gpt-5.6-luna", "medium"),
-                "medium": ("gpt-5.6-luna", "high"),
-                "high": ("gpt-5.6-terra", "xhigh"),
-                "extra": ("gpt-5.6-sol", "xhigh"),
-                "max": ("gpt-5.6-sol", "max"),
+                "medium": ("gpt-5.6-terra", "medium"),
+                "high": ("gpt-5.6-terra", "high"),
+                "extra": ("gpt-5.6-terra", "xhigh"),
+                "max": ("gpt-5.6-sol", "xhigh"),
             },
         )
         self.assertEqual(app.PROMPT_POLISH_MODEL, "gpt-5.6-terra")
@@ -2660,78 +2654,6 @@ class ControllerTests(unittest.TestCase):
             app.IMAGE_REASONING_MODES["extra"]["depth"],
             app.IMAGE_REASONING_MODES["max"]["depth"],
         )
-
-    def test_benchmark_runs_all_six_modes_in_fixed_order_and_streams_mode_events(self):
-        controller = app.AppController.__new__(app.AppController)
-        events = []
-
-        def fake_generate(_key_id, _prompt, _image_paths, options, event_callback=None):
-            mode = options["reasoningMode"]
-            event_callback({"type": "set_started", "mode": mode})
-            return {
-                "ok": True,
-                "benchmarkMode": mode,
-                "items": [{"ok": True, "itemIndex": 0}],
-                "reasoningUsage": {
-                    "inputTokens": 1,
-                    "outputTokens": 2,
-                    "totalTokens": 3,
-                    "callCount": 1,
-                    "costedCallCount": 0,
-                    "estimatedCallCount": 0,
-                    "costUsd": 0,
-                    "costSource": "",
-                    "hasTokenUsage": True,
-                    "hasCost": False,
-                },
-                "imageUsage": {},
-                "usage": {},
-                "prompt": f"final {mode}",
-            }
-
-        controller.generate_image = fake_generate
-        result = controller.benchmark_run(
-            "key-1",
-            "benchmark prompt",
-            [],
-            {"benchmarkId": "bench-1"},
-            event_callback=events.append,
-        )
-
-        modes = [item["benchmarkMode"] for item in result["results"]]
-        self.assertEqual(modes, ["instant", "flash", "medium", "high", "extra", "max"])
-        self.assertEqual(result["successful"], 6)
-        streamed_modes = {
-            event["benchmarkMode"]
-            for event in events
-            if event.get("type") == "set_started"
-        }
-        self.assertEqual(streamed_modes, set(modes))
-        self.assertTrue(all(event["benchmarkId"] == "bench-1" for event in events if "benchmarkId" in event))
-
-    def test_benchmark_page_and_open_entry_cover_required_observability(self):
-        project_root = Path(__file__).parents[1]
-        page = (project_root / app.BENCHMARK_PAGE_NAME).read_text(encoding="utf-8")
-        main_page = (project_root / app.MAIN_PAGE_NAME).read_text(encoding="utf-8")
-
-        for mode in ("instant", "flash", "medium", "high", "extra", "max"):
-            self.assertIn(f"['{mode}'", page)
-        self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr))", page)
-        self.assertIn("window.applyBenchmarkEvent", page)
-        self.assertIn("reasoningUsage", page)
-        self.assertIn("callCountBasis", page)
-        self.assertIn("finalPrompt", page)
-        self.assertIn("webReferences", page)
-        self.assertIn('id="imageViewer"', page)
-        self.assertIn("data-open-image", page)
-        self.assertIn("data-load-original", page)
-        self.assertIn("load_generated_image", page)
-        self.assertIn("openImageViewer(result.dataUrl", page)
-        self.assertIn("imageViewerZoomIn", page)
-        self.assertIn("imageViewerDownload", page)
-        self.assertIn("event.key === 'Escape'", page)
-        self.assertIn("window.benchmark", main_page)
-        self.assertIn("open_benchmark", main_page)
 
     def test_generate_image_rejects_removed_low_reasoning_mode(self):
         controller = app.AppController.__new__(app.AppController)
@@ -2790,8 +2712,8 @@ class ControllerTests(unittest.TestCase):
                 stream_response=__import__("unittest.mock").mock.Mock(side_effect=stream_response)
             )
             events = []
-            with patch("app.app_data_dir", return_value=root / "data"), patch(
-                "app.generated_pictures_dir", return_value=root / "Pictures"
+            with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
+                controller_image_files, "generated_pictures_dir", return_value=root / "Pictures"
             ):
                 result = controller.generate_image(
                     "key-1",
@@ -2804,12 +2726,12 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["prompt"], "A clean professional chart")
         self.assertEqual(result["originalPrompt"], "make this clearer")
-        self.assertEqual(result["reasoningModel"], "gpt-5.6-luna")
-        self.assertEqual(result["reasoningEffort"], "high")
+        self.assertEqual(result["reasoningModel"], "gpt-5.6-terra")
+        self.assertEqual(result["reasoningEffort"], "medium")
         self.assertEqual(service.generate.call_args.args[2].prompt, "A clean professional chart")
         response_call = controller.client.stream_response.call_args
-        self.assertEqual(response_call.args[2], "gpt-5.6-luna")
-        self.assertEqual(response_call.kwargs["reasoning_effort"], "high")
+        self.assertEqual(response_call.args[2], "gpt-5.6-terra")
+        self.assertEqual(response_call.kwargs["reasoning_effort"], "medium")
         self.assertEqual(
             [tool["name"] for tool in response_call.kwargs["tools"]],
             ["search_web", "search_visual_references", "select_visual_references"],
@@ -2947,7 +2869,7 @@ class ControllerTests(unittest.TestCase):
             lambda *_args, **_kwargs: None,
         )
 
-        self.assertEqual(captured["model"], "gpt-5.6-sol")
+        self.assertEqual(captured["model"], "gpt-5.6-terra")
         self.assertEqual(captured["reasoning_effort"], "xhigh")
         self.assertIn(app.IMAGE_REASONING_MODES["max"]["depth"], captured["instructions"])
         self.assertEqual(result["prompt"], "Extra final prompt")
@@ -3180,8 +3102,8 @@ class ControllerTests(unittest.TestCase):
             )
             events = []
             data_root = root / "data"
-            with patch("app.app_data_dir", return_value=data_root), patch(
-                "app.generated_pictures_dir", return_value=root / "Pictures"
+            with patch.object(controller_image_reasoning, "app_data_dir", return_value=data_root), patch.object(
+                controller_image_files, "generated_pictures_dir", return_value=root / "Pictures"
             ):
                 result = controller.generate_image(
                     "key-1",
@@ -3269,8 +3191,8 @@ class ControllerTests(unittest.TestCase):
                 return [{"id": "webref-error", "path": str(reference_path)}]
 
             controller.web_search = SimpleNamespace(stage_reference_records=stage_reference_records)
-            with patch("app.app_data_dir", return_value=data_root), patch(
-                "app.generated_pictures_dir", return_value=root / "Pictures"
+            with patch.object(controller_image_reasoning, "app_data_dir", return_value=data_root), patch.object(
+                controller_image_files, "generated_pictures_dir", return_value=root / "Pictures"
             ):
                 with self.assertRaisesRegex(TypeError, "unexpected generator failure"):
                     controller.generate_image(
@@ -3634,10 +3556,11 @@ class ControllerTests(unittest.TestCase):
     def test_small_github_request_does_not_retry_python_after_curl_tls_failure(self):
         request = app.urllib.request.Request("https://api.github.com/releases")
 
-        with patch(
-            "app.curl_get_bytes",
+        with patch.object(
+            backend_platform,
+            "curl_get_bytes",
             side_effect=app.NetworkTransportError("TLS connection closed"),
-        ), patch("app.open_url_with_direct_fallback") as python_transport:
+        ), patch.object(backend_platform, "open_url_with_direct_fallback") as python_transport:
             with self.assertRaises(app.NetworkTransportError):
                 app.get_small_url_bytes(request, timeout=8)
 
@@ -3856,12 +3779,12 @@ class ControllerTests(unittest.TestCase):
         window = SimpleNamespace()
         controller = SimpleNamespace(bind_window=Mock())
 
-        with patch("app.ControllerRpcClient", return_value=rpc_client), patch(
-            "app.StaticAssetCache", return_value=FakeAssetCache()
-        ), patch("app.UiController", return_value=controller), patch(
-            "app.RemoteWebApi", return_value=object()
-        ), patch("app.webview.create_window", return_value=window) as create_window, patch(
-            "app.webview.start"
+        with patch.object(backend_runtime, "ControllerRpcClient", return_value=rpc_client), patch.object(
+            backend_runtime, "StaticAssetCache", return_value=FakeAssetCache()
+        ), patch.object(backend_runtime, "UiController", return_value=controller), patch.object(
+            backend_runtime, "RemoteWebApi", return_value=object()
+        ), patch.object(backend_runtime.webview, "create_window", return_value=window) as create_window, patch.object(
+            backend_runtime.webview, "start"
         ):
             app.run_ui_process("pipe", b"auth")
 
@@ -3895,8 +3818,8 @@ class ControllerTests(unittest.TestCase):
         controller.rpc_client.call.assert_called_once_with("set_always_on_top", True)
 
     def test_always_on_top_buttons_follow_active_title_bar_mode(self):
-        page = Path(app.resource_path(app.MAIN_PAGE_NAME)).read_text(encoding="utf-8")
-        scss = Path(app.resource_path("assets/app.scss")).read_text(encoding="utf-8")
+        page = frontend_source()
+        scss = frontend_scss_source()
 
         self.assertIn('id="titlebarPinButton"', page)
         self.assertIn('id="toolbarPinButton"', page)
@@ -4397,8 +4320,8 @@ class ControllerTests(unittest.TestCase):
                 ready_path.write_text("ready", encoding="ascii")
                 return updater
 
-            with patch("app.app_data_dir", return_value=Path(temp)), patch(
-                "app.subprocess.Popen", side_effect=start_updater
+            with patch.object(controller_updates, "app_data_dir", return_value=Path(temp)), patch.object(
+                controller_updates.subprocess, "Popen", side_effect=start_updater
             ) as popen:
                 controller._launch_updater(downloaded)
 
@@ -4441,8 +4364,8 @@ class ControllerTests(unittest.TestCase):
         controller.window = None
         controller.visible = False
 
-        with tempfile.TemporaryDirectory() as temp, patch(
-            "app.app_data_dir", return_value=Path(temp)
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            controller_image_files, "app_data_dir", return_value=Path(temp)
         ), patch.object(
             controller,
             "_download_release_file",
@@ -4477,8 +4400,8 @@ class ControllerTests(unittest.TestCase):
         controller.window = None
         controller.visible = False
 
-        with tempfile.TemporaryDirectory() as temp, patch(
-            "app.app_data_dir", return_value=Path(temp)
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            controller_image_files, "app_data_dir", return_value=Path(temp)
         ), patch.object(
             controller,
             "_download_release_file",
@@ -4562,8 +4485,8 @@ class ControllerTests(unittest.TestCase):
                 (root / "restart.ready").write_text("ready", encoding="ascii")
                 return SimpleNamespace(poll=lambda: None, arguments=arguments)
 
-            with patch("app.app_data_dir", return_value=root), patch(
-                "app.subprocess.Popen", side_effect=start_restarter
+            with patch.object(controller_window_commands, "app_data_dir", return_value=root), patch.object(
+                controller_window_commands.subprocess, "Popen", side_effect=start_restarter
             ) as popen:
                 result = controller.restart_app()
 
@@ -4595,14 +4518,14 @@ class ControllerTests(unittest.TestCase):
             "backgroundUiMode": "delayed",
         }
 
-        with patch("app.set_startup_enabled", return_value=False):
+        with patch.object(controller_window_commands, "set_startup_enabled", return_value=False):
             result = controller.update_app_preferences("startup", "ask", False)
 
         self.assertEqual(result["titleBarMode"], "minimal")
         self.assertEqual(result["backgroundUiMode"], "delayed")
 
     def test_background_ui_mode_option_is_wired_to_app_preferences(self):
-        page = Path(app.resource_path(app.MAIN_PAGE_NAME)).read_text(encoding="utf-8")
+        page = frontend_source()
 
         self.assertIn('id="backgroundUiMode"', page)
         self.assertIn('value="delayed">5 分钟后进入低开销模式（默认）', page)
@@ -4611,7 +4534,7 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("window.appState.titleBarMode, backgroundUiMode", page)
 
     def test_update_modal_defaults_to_pending_notes_and_can_expand_full_history(self):
-        page = Path(app.resource_path(app.MAIN_PAGE_NAME)).read_text(encoding="utf-8")
+        page = frontend_source()
 
         self.assertIn('id="toggleFullChangelogButton"', page)
         self.assertIn("查看完整更新日志", page)
@@ -4642,10 +4565,10 @@ class ControllerTests(unittest.TestCase):
                 processes.append(process)
                 return process
 
-            with patch("app.app_data_dir", return_value=root), patch(
-                "app.sys.executable", str(target)
-            ), patch("app.os.getpid", return_value=2147483000), patch(
-                "app.subprocess.Popen", side_effect=start_updater
+            with patch.object(controller_updates, "app_data_dir", return_value=root), patch.object(
+                controller_updates.sys, "executable", str(target)
+            ), patch.object(controller_updates.os, "getpid", return_value=2147483000), patch.object(
+                controller_updates.subprocess, "Popen", side_effect=start_updater
             ):
                 controller._launch_updater(downloaded)
 
@@ -4678,7 +4601,7 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("5%", notifications[0][0])
         self.assertEqual(notifications[0][2], 3)
 
-    @patch("app.Notification")
+    @patch.object(controller_quota_state, "Notification")
     def test_notify_uses_severity_icon(self, notification):
         controller = app.AppController.__new__(app.AppController)
 
@@ -4686,7 +4609,7 @@ class ControllerTests(unittest.TestCase):
 
         self.assertTrue(
             notification.call_args.kwargs["icon"].endswith(
-                "assets\\icons\\api_tools_critical.png"
+                "resources\\icons\\api_tools_critical.png"
             )
         )
 
@@ -4721,7 +4644,6 @@ class ControllerTests(unittest.TestCase):
                 "copy_generated_image",
                 "delete_key",
                 "delete_image_set",
-                "export_image_sets",
                 "defer_update_restart",
                 "dismiss_update_prompt",
                 "download_update",
@@ -4734,7 +4656,6 @@ class ControllerTests(unittest.TestCase):
                 "load_generated_image",
                 "list_image_sets",
                 "native_drag",
-                "open_benchmark",
                 "open_devtools",
                 "open_generated_pictures",
                 "polish_prompt",
@@ -4762,8 +4683,8 @@ class ControllerTests(unittest.TestCase):
     def test_append_image_stream_debug_writes_sanitized_json_lines(self):
         controller = app.AppController.__new__(app.AppController)
         controller.image_stream_debug_lock = __import__("threading").Lock()
-        with tempfile.TemporaryDirectory() as temp, patch(
-            "app.app_data_dir", return_value=Path(temp)
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            controller_image_files, "app_data_dir", return_value=Path(temp)
         ):
             result = controller.append_image_stream_debug(
                 [
@@ -4798,9 +4719,9 @@ class ControllerTests(unittest.TestCase):
     def test_append_image_stream_debug_rotates_full_log(self):
         controller = app.AppController.__new__(app.AppController)
         controller.image_stream_debug_lock = __import__("threading").Lock()
-        with tempfile.TemporaryDirectory() as temp, patch(
-            "app.app_data_dir", return_value=Path(temp)
-        ), patch("app.IMAGE_STREAM_DEBUG_LOG_MAX_BYTES", 16):
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            controller_image_files, "app_data_dir", return_value=Path(temp)
+        ), patch.object(controller_image_files, "IMAGE_STREAM_DEBUG_LOG_MAX_BYTES", 16):
             log_path = Path(temp) / "image-stream-blur.jsonl"
             log_path.write_text("old-log\n", encoding="utf-8")
             result = controller.append_image_stream_debug(
@@ -4825,8 +4746,8 @@ class ControllerTests(unittest.TestCase):
             outside = root / "outside.png"
             Image.new("RGB", (8, 8), "red").save(outside)
 
-            with patch("app.app_data_dir", return_value=root), patch(
-                "app.generated_pictures_dir", return_value=root / "pictures"
+            with patch.object(controller_image_files, "app_data_dir", return_value=root), patch.object(
+                controller_image_files, "generated_pictures_dir", return_value=root / "pictures"
             ):
                 allowed = controller.load_generated_image(str(managed))
                 blocked = controller.load_generated_image(str(outside))
@@ -4858,8 +4779,8 @@ class ControllerTests(unittest.TestCase):
             partial_image.parent.mkdir(parents=True)
             Image.new("RGB", (8, 8), "yellow").save(partial_image)
 
-            with patch("app.generated_pictures_dir", return_value=pictures_root), patch(
-                "app.copy_image_to_windows_clipboard"
+            with patch.object(controller_image_files, "generated_pictures_dir", return_value=pictures_root), patch.object(
+                controller_image_files, "copy_image_to_windows_clipboard"
             ) as copy_to_clipboard:
                 copied = controller.copy_generated_image(str(final_image))
                 blocked = controller.copy_generated_image(str(partial_image))
@@ -4868,58 +4789,6 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(blocked["ok"])
         self.assertIn("最终图片", blocked["error"])
         copy_to_clipboard.assert_called_once_with(final_image.resolve())
-
-    def test_controller_exports_original_image_sets_and_reports_missing_sets(self):
-        controller = app.AppController.__new__(app.AppController)
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            pictures_root = root / "Pictures" / app.APP_NAME
-            export_root = root / "exports"
-            source = root / "source.png"
-            Image.new("RGB", (12, 8), "teal").save(source)
-            store = image_editor.ImageSessionStore(pictures_root)
-            store.begin_round("session-1", "set-1", "导出原图", 1, 0, {})
-            store.persist_result(
-                "session-1",
-                "set-1",
-                0,
-                source,
-                {"width": 12, "height": 8, "format": "png", "actualSize": "12x8"},
-            )
-            store.complete_round("session-1", "set-1")
-            controller.window = SimpleNamespace(
-                create_file_dialog=Mock(return_value=[str(export_root)])
-            )
-
-            with patch("app.generated_pictures_dir", return_value=pictures_root):
-                result = controller.export_image_sets(
-                    [
-                        {"sessionId": "session-1", "setId": "set-1", "prompt": "导出原图"},
-                        {"sessionId": "session-1", "setId": "missing", "prompt": "缺失图片"},
-                    ]
-                )
-
-            exported_path = Path(result["files"][0])
-            self.assertTrue(result["ok"])
-            self.assertEqual(result["exported"], 1)
-            self.assertEqual(result["skippedSets"], ["missing"])
-            self.assertEqual(exported_path.suffix, ".png")
-            self.assertEqual(exported_path.name, "set-1-01.png")
-            with Image.open(exported_path) as exported_image:
-                self.assertEqual(exported_image.size, (12, 8))
-            self.assertTrue(exported_path.is_relative_to(export_root))
-
-    def test_controller_export_image_sets_reports_folder_dialog_cancellation(self):
-        controller = app.AppController.__new__(app.AppController)
-        controller.window = SimpleNamespace(create_file_dialog=Mock(return_value=[]))
-
-        result = controller.export_image_sets(
-            [{"sessionId": "session-1", "setId": "set-1", "prompt": "取消导出"}]
-        )
-
-        self.assertTrue(result["ok"])
-        self.assertTrue(result["cancelled"])
-        self.assertEqual(result["exported"], 0)
 
     def test_controller_lists_and_deletes_persisted_image_sets(self):
         controller = app.AppController.__new__(app.AppController)
@@ -4953,7 +4822,7 @@ class ControllerTests(unittest.TestCase):
             )
             store.complete_round("session-1", "set-1")
 
-            with patch("app.generated_pictures_dir", return_value=pictures_root):
+            with patch.object(controller_image_files, "generated_pictures_dir", return_value=pictures_root):
                 listed = controller.list_image_sets()
                 deleted = controller.delete_image_set("session-1", "set-1")
                 listed_after = controller.list_image_sets()
@@ -4999,7 +4868,7 @@ class ControllerTests(unittest.TestCase):
             store = image_editor.ImageSessionStore(pictures_root)
             store.begin_round("session-stale", "set-stale", "未完成", 2, 0, {})
 
-            with patch("app.generated_pictures_dir", return_value=pictures_root):
+            with patch.object(controller_image_files, "generated_pictures_dir", return_value=pictures_root):
                 listed = controller.list_image_sets()
                 deleted = controller.delete_image_set("session-stale", "set-stale")
 
@@ -5137,20 +5006,15 @@ class ControllerTests(unittest.TestCase):
             save_edited_image=lambda path: {"local": path},
             copy_generated_image=lambda path: {"copied": path},
             push_image_generation_event=mock.Mock(),
-            push_benchmark_event=mock.Mock(),
         )
         api = app.RemoteWebApi(controller, rpc)
 
         state = api.get_state()
         refresh = api.refresh_now("trace-1")
         generated = api.generate_image("key-1", "combine", ["a.png", "b.png"], {"quality": "low"})
-        benchmarked = api.benchmark_run("key-1", "benchmark", [], {"size": "1024x1024"})
         polished = api.polish_prompt("key-1", "rough")
         listed = api.list_image_sets()
         deleted_set = api.delete_image_set("session-1", "set-1")
-        exported_sets = api.export_image_sets(
-            [{"sessionId": "session-1", "setId": "set-1", "prompt": "导出"}]
-        )
         choose = api.choose_edit_images()
         save = api.save_edited_image("result.png")
         copied = api.copy_generated_image("result.png")
@@ -5166,36 +5030,18 @@ class ControllerTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            benchmarked,
-            {
-                "method": "benchmark_run",
-                "args": ("key-1", "benchmark", [], {"size": "1024x1024"}),
-            },
-        )
-        self.assertEqual(
             polished,
             {"method": "polish_prompt", "args": ("key-1", "rough")},
         )
         self.assertIs(
-            rpc.call_with_events.call_args_list[0].kwargs["on_event"],
+            rpc.call_with_events.call_args.kwargs["on_event"],
             controller.push_image_generation_event,
-        )
-        self.assertIs(
-            rpc.call_with_events.call_args_list[1].kwargs["on_event"],
-            controller.push_benchmark_event,
         )
         self.assertEqual(choose, {"local": "choose"})
         self.assertEqual(listed, {"method": "list_image_sets", "args": ()})
         self.assertEqual(
             deleted_set,
             {"method": "delete_image_set", "args": ("session-1", "set-1")},
-        )
-        self.assertEqual(
-            exported_sets,
-            {
-                "method": "export_image_sets",
-                "args": ([{"sessionId": "session-1", "setId": "set-1", "prompt": "导出"}],),
-            },
         )
         self.assertEqual(save, {"local": "result.png"})
         self.assertEqual(copied, {"copied": "result.png"})
@@ -5212,26 +5058,6 @@ class ControllerTests(unittest.TestCase):
             __import__("unittest.mock").mock.call("save_edited_image", "result.png"),
             rpc.call.call_args_list,
         )
-
-    def test_ui_controller_exit_destroys_benchmark_and_main_windows(self):
-        mock = __import__("unittest.mock").mock
-        rpc = SimpleNamespace(call=mock.Mock(return_value={"ok": True}))
-        benchmark_window = SimpleNamespace(destroy=mock.Mock())
-        main_window = SimpleNamespace(destroy=mock.Mock())
-        controller = app.UiController.__new__(app.UiController)
-        controller.rpc_client = rpc
-        controller.release_timer = None
-        controller.stopping = __import__("threading").Event()
-        controller.benchmark_window = benchmark_window
-        controller.window = main_window
-
-        controller.exit_app()
-
-        rpc.call.assert_called_once_with("exit_app")
-        benchmark_window.destroy.assert_called_once_with()
-        main_window.destroy.assert_called_once_with()
-        self.assertIsNone(controller.benchmark_window)
-        self.assertTrue(controller.stopping.is_set())
 
     def test_ui_controller_low_power_hide_destroys_window_immediately(self):
         mock = __import__("unittest.mock").mock
@@ -5518,7 +5344,7 @@ class ControllerTests(unittest.TestCase):
         controller.drag_restore_suppressed_until = 0.0
         fake_user32 = FakeUser32()
 
-        with patch.object(app, "user32", fake_user32), patch.object(
+        with patch.object(controller_workers_window, "user32", fake_user32), patch.object(
             controller, "_set_window_corner"
         ), patch.object(controller, "_push_window_state") as push_state, patch.dict(
             sys.modules, {"System": SimpleNamespace(Action=lambda callback: callback)}

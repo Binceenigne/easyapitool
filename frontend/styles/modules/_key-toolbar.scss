@@ -1,0 +1,389 @@
+/* Key toolbar */
+#keyToolbar {
+    z-index: 5;
+  display: flex;
+  flex: 0 0 31px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  height: 31px;
+  padding: 4px 12px;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+#keyToolbar > div:first-child {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    min-width: 0;
+    gap: 6px;
+}
+
+#keyToolbar > div:first-child > div {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.toolbar-label {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+#keySwitcher {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+#keySwitcherButton {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    height: 22px;
+    min-height: 22px;
+    padding: 0 6px;
+    gap: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-soft);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 20px;
+    text-align: left;
+    transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+
+#keySwitcherButton:hover,
+#keySwitcherButton.is-open {
+    border-color: color-mix(in srgb, var(--brand) 54%, var(--border));
+    background: var(--surface-strong);
+}
+
+#keySwitcherButton:focus-visible {
+    outline: 1px solid var(--brand);
+    outline-offset: 1px;
+}
+
+#keySwitcherButton:disabled { cursor: default; opacity: 0.6; }
+
+#keySwitcherLabel {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#keySwitcherChevron {
+    flex: 0 0 10px;
+    color: var(--muted);
+}
+
+.key-switcher-status {
+    flex: 0 0 5px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--muted);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--muted) 12%, transparent);
+}
+
+.key-switcher-status.is-active {
+    background: var(--good);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--good) 14%, transparent);
+}
+
+.key-switcher-status.is-error {
+    background: var(--critical);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--critical) 14%, transparent);
+}
+
+#keySwitcherMenu {
+    position: fixed;
+    z-index: 120;
+    max-height: min(264px, calc(100vh - 42px));
+    padding: 4px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.1);
+}
+
+#keySwitcherMenu[hidden] { display: none; }
+
+.key-switcher-option {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 28px;
+    padding: 0 8px;
+    gap: 7px;
+    border: 0;
+    border-radius: 2px;
+    background: transparent;
+    color: var(--text-soft);
+    font-size: 11px;
+    font-weight: 650;
+    text-align: left;
+}
+
+.key-switcher-option:hover,
+.key-switcher-option:focus-visible {
+    outline: 0;
+    background: var(--surface-strong);
+    color: var(--text);
+}
+
+.key-switcher-option[aria-selected="true"] {
+    background: color-mix(in srgb, var(--brand) 13%, var(--surface));
+    color: var(--brand-strong);
+}
+
+.key-switcher-option-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.key-switcher-option > [data-lucide] { width: 11px; height: 11px; color: var(--muted); }
+.key-switcher-option[aria-selected="true"] > [data-lucide] { color: var(--brand); }
+
+html.dark #keySwitcherMenu {
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.42), 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
+.toolbar-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+}
+
+.workspace-mode-button {
+    width: 22px;
+    min-width: 22px;
+    padding: 0;
+    color: var(--muted);
+}
+
+.workspace-mode-button.is-active {
+    border-color: color-mix(in srgb, var(--brand) 52%, var(--border));
+    background: color-mix(in srgb, var(--brand) 9%, var(--bg));
+    color: var(--brand);
+}
+
+.workspace-mode-button [data-lucide],
+.workspace-mode-button svg { width: 12px; height: 12px; }
+
+.toolbar-action-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 22px;
+    min-height: 22px;
+    padding: 0 8px;
+    gap: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-soft);
+    font-size: 10px;
+    line-height: 1;
+    transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.toolbar-action-button#manualRefreshButton,
+.toolbar-action-button[title="删除当前密钥"] { width: 22px; padding: 0; }
+.toolbar-action-button#manualRefreshButton { color: var(--brand); }
+#manualRefreshButton { position: relative; overflow: hidden; }
+#manualRefreshButton:disabled { cursor: default; }
+#manualRefreshCountdown {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 800 9px/1 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+#manualRefreshCountdown[hidden] { display: none !important; }
+#manualRefreshButton.is-refreshing { border-color: var(--muted); background: var(--surface-strong); color: var(--muted) !important; }
+#manualRefreshButton.is-refreshing [data-lucide] { animation: manualRefreshSpin 0.72s linear infinite; }
+#manualRefreshButton.is-refresh-success { color: var(--good) !important; animation: manualRefreshSuccess 0.7s ease-out; }
+#manualRefreshButton.is-refresh-error { color: var(--critical) !important; animation: manualRefreshError 0.7s ease-out; }
+#manualRefreshButton.is-refresh-cooldown { cursor: default; border-color: var(--border-soft); background: var(--surface-soft); color: var(--muted) !important; }
+#manualRefreshButton.is-refresh-cooldown [data-lucide] { display: none !important; }
+#manualRefreshButton.is-refresh-cooldown.is-refresh-success { color: var(--good) !important; }
+#manualRefreshButton.is-refresh-cooldown.is-refresh-error { color: var(--critical) !important; }
+.toolbar-action-button[title="添加密钥"] { border-color: var(--brand); background: var(--brand); color: #fff; }
+.toolbar-action-button[title="添加密钥"]:hover { background: var(--brand-strong); }
+.toolbar-action-button[title="删除当前密钥"] { color: var(--muted); }
+.toolbar-action-button[title="删除当前密钥"]:hover { background: rgba(244, 63, 94, 0.08); color: var(--critical); }
+.toolbar-action-button:hover { background: var(--surface-strong); }
+.toolbar-button-text { font-size: 10px; }
+
+@keyframes manualRefreshSpin { to { transform: rotate(360deg); } }
+@keyframes manualRefreshSuccess {
+    0%, 100% { background-color: var(--bg); box-shadow: none; }
+    35% { background-color: color-mix(in srgb, var(--good) 18%, var(--bg)); box-shadow: 0 0 9px color-mix(in srgb, var(--good) 70%, transparent); }
+}
+@keyframes manualRefreshError {
+    0%, 100% { background-color: var(--bg); box-shadow: none; }
+    25%, 70% { background-color: color-mix(in srgb, var(--critical) 16%, var(--bg)); box-shadow: 0 0 8px color-mix(in srgb, var(--critical) 58%, transparent); }
+}
+
+#widget-root.titlebar-minimal {
+    --fixed-titlebar-height: 24px;
+
+    #windowTitleBar {
+        flex-basis: 24px !important;
+        height: 24px !important;
+        min-height: 24px !important;
+        max-height: 24px !important;
+        padding-left: 2px !important;
+    }
+
+    #windowTitleIdentity { display: none; }
+
+    #keyToolbar {
+        display: flex;
+        flex: 1 1 auto;
+        justify-content: flex-start;
+        width: auto;
+        height: 23px;
+        min-height: 23px;
+        padding: 0 !important;
+        gap: 1px;
+        overflow: hidden;
+        border: 0;
+        background: transparent;
+    }
+
+    #keyToolbar > div:first-child {
+        position: relative;
+        z-index: 101;
+        flex: 0 0 20px;
+        width: 20px;
+        height: 20px;
+        gap: 0;
+    }
+
+    #keyToolbar > div:first-child > div {
+        flex: 0 0 20px;
+        width: 20px;
+        height: 20px;
+    }
+
+    .toolbar-label,
+    .toolbar-button-text { display: none; }
+
+    #keySwitcherButton {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        min-height: 20px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--brand);
+    }
+
+    #keySwitcherButton:hover,
+    #keySwitcherButton.is-open { background: var(--surface-strong); }
+
+    #keySwitcherLabel,
+    #keySwitcherButton .key-switcher-status { display: none; }
+
+    #keySwitcherChevron { color: var(--brand); }
+
+    .toolbar-actions { position: relative; z-index: 101; gap: 1px; }
+
+    .toolbar-action-button,
+    .toolbar-action-button:first-child,
+    .toolbar-action-button:nth-child(3) {
+        flex: 0 0 20px;
+        width: 20px;
+        height: 20px;
+        min-height: 20px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--text-soft);
+    }
+
+    .toolbar-action-button:nth-child(2) {
+        border: 0;
+        background: transparent;
+        color: var(--brand);
+    }
+
+    .toolbar-action-button [data-lucide] {
+        flex-basis: 10px;
+        width: 10px;
+        height: 10px;
+        min-width: 10px;
+        min-height: 10px;
+    }
+
+    .window-controls {
+        height: 23px !important;
+        min-height: 23px !important;
+        max-height: 23px !important;
+    }
+
+    .window-control {
+        flex-basis: 30px !important;
+        width: 30px !important;
+        min-width: 30px !important;
+        max-width: 30px !important;
+        height: 23px !important;
+        min-height: 23px !important;
+        max-height: 23px !important;
+    }
+
+    .window-controls .titlebar-pin-button {
+        flex-basis: 20px !important;
+        width: 20px !important;
+        min-width: 20px !important;
+        max-width: 20px !important;
+    }
+
+    .window-control .titlebar-icon,
+    .window-control [data-lucide] {
+        flex-basis: 10px;
+        width: 10px;
+        height: 10px;
+        min-width: 10px;
+        min-height: 10px;
+        max-width: 10px;
+        max-height: 10px;
+    }
+
+    #settingsPanel { top: 0; }
+}
+
+#widget-root.titlebar-original {
+    --fixed-titlebar-height: 0px;
+
+    #windowTitleBar,
+    .native-resize-handle { display: none !important; }
+
+    #keyToolbar .toolbar-pin-button {
+        display: inline-flex;
+        width: 22px;
+        padding: 0;
+    }
+
+    #settingsPanel { top: 0; }
+}
