@@ -253,25 +253,70 @@
             return frame;
         }
 
+        function imageRevealDuration(frame) {
+            return Number.isFinite(frame.resumeDuration)
+                ? Math.max(1, frame.resumeDuration)
+                : Math.max(1, Number(frame.duration) || 1);
+        }
+
+        function imageRevealCrossfadeDuration(frame, frameIndex) {
+            if (Number.isFinite(frame.resumeCrossfadeDuration)) {
+                return Math.max(1, frame.resumeCrossfadeDuration);
+            }
+            if (frame.kind === 'final') return frame.duration;
+            return frameIndex === 0 ? IMAGE_STREAM_INITIAL_FADE_DURATION : IMAGE_STREAM_CROSSFADE_DURATION;
+        }
+
+        function captureImageRevealFramesForRender() {
+            const timestamp = Date.now();
+            document.querySelectorAll('.image-generation-frame.is-image-reveal').forEach(image => {
+                const context = imageRevealElementContext.get(image);
+                const frame = context?.frame;
+                if (!frame?.startedAt || Number.isFinite(Number(frame.frozenBlur))) return;
+                const actual = imageStreamActualStyle(image);
+                if (!actual.connected || !Number.isFinite(actual.actualBlurPx) || !Number.isFinite(actual.opacity)) return;
+                const elapsed = Math.max(0, timestamp - Number(frame.startedAt));
+                const blurRemaining = Math.max(0, imageRevealDuration(frame) - elapsed);
+                const fadeRemaining = Math.max(0, imageRevealCrossfadeDuration(frame, context.frameIndex) - elapsed);
+                if (blurRemaining <= 0 && fadeRemaining <= 0) {
+                    freezeImageRevealFrame(frame, image, frame.toBlur, 1);
+                    return;
+                }
+                frame.fromBlur = Math.max(Number(frame.toBlur) || 0, actual.actualBlurPx);
+                frame.fromOpacity = Math.max(0, Math.min(1, actual.opacity));
+                frame.resumeDuration = Math.max(1, blurRemaining);
+                frame.resumeCrossfadeDuration = Math.max(1, fadeRemaining);
+                frame.startedAt = timestamp;
+                imageStreamDebugLog('frame-captured-for-render', {
+                    ...imageStreamDebugContext(context.item, frame, context.frameIndex),
+                    capturedOpacity: frame.fromOpacity,
+                    blurRemainingMs: frame.resumeDuration,
+                    crossfadeRemainingMs: frame.resumeCrossfadeDuration
+                }, image);
+            });
+        }
+
         function applyImageRevealAnimation(image, frame, frameIndex) {
             const elapsed = Math.max(0, Date.now() - Number(frame.startedAt || 0));
             const initialPartial = frameIndex === 0 && frame.kind === 'partial';
-            const crossfadeDuration = frame.kind === 'final'
-                ? frame.duration
-                : initialPartial
-                    ? IMAGE_STREAM_INITIAL_FADE_DURATION
-                    : IMAGE_STREAM_CROSSFADE_DURATION;
+            const crossfadeDuration = imageRevealCrossfadeDuration(frame, frameIndex);
             image.classList.remove('is-reveal-pending');
             image.classList.add('is-image-reveal', `is-${frame.kind}-reveal`);
             image.style.removeProperty('animation');
             image.style.removeProperty('filter');
             image.style.removeProperty('opacity');
             image.style.removeProperty('will-change');
-            image.style.setProperty('--image-reveal-duration', `${frame.duration}ms`);
-            image.style.setProperty('--image-reveal-delay', `${-Math.min(elapsed, frame.duration)}ms`);
+            const revealDuration = imageRevealDuration(frame);
+            image.style.setProperty('--image-reveal-duration', `${revealDuration}ms`);
+            image.style.setProperty('--image-reveal-delay', `${-Math.min(elapsed, revealDuration)}ms`);
             image.style.setProperty('--image-reveal-from-blur', `${frame.fromBlur}px`);
             image.style.setProperty('--image-reveal-to-blur', `${frame.toBlur}px`);
-            image.style.setProperty('--image-reveal-from-opacity', initialPartial || frameIndex > 0 ? '0' : '1');
+            image.style.setProperty(
+                '--image-reveal-from-opacity',
+                Number.isFinite(frame.fromOpacity)
+                    ? String(frame.fromOpacity)
+                    : initialPartial || frameIndex > 0 ? '0' : '1'
+            );
             image.style.setProperty('--image-reveal-crossfade-duration', `${crossfadeDuration}ms`);
             image.style.setProperty('--image-reveal-crossfade-delay', `${-Math.min(elapsed, crossfadeDuration)}ms`);
             const context = imageRevealElementContext.get(image);
@@ -643,6 +688,7 @@
             );
             container.classList.toggle('is-empty', sets.length === 0);
             updateImageSetSelectionActions();
+            captureImageRevealFramesForRender();
             container.replaceChildren();
             if (!sets.length) {
                 const empty = document.createElement('div');

@@ -436,7 +436,11 @@
         }
 
         function imageGenerationSetById(setId) {
-            return window.imageEditState.resultSets.find(item => item.setId === setId);
+            const cleanSetId = String(setId || '');
+            if (!cleanSetId) return null;
+            return window.imageEditState.resultSets.find(item =>
+                item.setId === cleanSetId || item.requestId === cleanSetId
+            ) || null;
         }
 
         function reasoningTurnsForSet(set) {
@@ -655,7 +659,6 @@
                     currentItem.fullUri = loaded.dataUrl;
                     currentItem.originalLoadAttempted = true;
                     if (currentItem.result) currentItem.result.fullUri = loaded.dataUrl;
-                    currentItem.revealFrames = [];
                     return true;
                 } catch (error) {
                     console.warn('最近一轮原图加载失败，继续使用缩略图:', error);

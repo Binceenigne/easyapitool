@@ -108,11 +108,41 @@ class EasyClinClient:
                 "Authorization": f"Bearer {secret}",
                 "Accept": "text/event-stream",
                 "Content-Type": "application/json",
+                "User-Agent": f"{APP_NAME}/{APP_VERSION}",
             },
             method="POST",
         )
+        for attempt in range(2):
+            try:
+                response_context = urllib.request.urlopen(request, timeout=timeout)
+                break
+            except urllib.error.HTTPError as exc:
+                response_body = exc.read().decode("utf-8", "replace")
+                clean_body = response_body.strip()
+                generic_forbidden = exc.code == 403 and (
+                    not clean_body
+                    or clean_body.lower() == "forbidden"
+                    or clean_body.lower().startswith("<html")
+                    or clean_body.lower().startswith("<!doctype html")
+                )
+                if generic_forbidden and attempt == 0:
+                    continue
+                if generic_forbidden:
+                    raise RuntimeError(
+                        "HTTP 403: 思维服务暂时拒绝请求，请稍后重试"
+                    ) from None
+                try:
+                    error_payload = json.loads(response_body)
+                    error = error_payload.get("error") or {}
+                    message = error.get("message") if isinstance(error, dict) else str(error)
+                except json.JSONDecodeError:
+                    message = response_body[:300]
+                raise RuntimeError(f"HTTP {exc.code}: {message or exc.reason}") from None
+            except (urllib.error.URLError, TimeoutError) as exc:
+                reason = exc.reason if hasattr(exc, "reason") else exc
+                raise RuntimeError(f"Responses 网络请求失败: {reason}") from None
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with response_context as response:
                 content_type = str(response.headers.get("Content-Type") or "").lower()
                 if "text/event-stream" not in content_type:
                     payload = json.loads(response.read().decode("utf-8"))
@@ -179,15 +209,6 @@ class EasyClinClient:
                 if not text and not allow_empty_text:
                     raise RuntimeError("Responses 接口未返回文本")
                 return text
-        except urllib.error.HTTPError as exc:
-            response_body = exc.read().decode("utf-8", "replace")
-            try:
-                payload = json.loads(response_body)
-                error = payload.get("error") or {}
-                message = error.get("message") if isinstance(error, dict) else str(error)
-            except json.JSONDecodeError:
-                message = response_body[:300]
-            raise RuntimeError(f"HTTP {exc.code}: {message or exc.reason}") from None
         except (urllib.error.URLError, TimeoutError) as exc:
             reason = exc.reason if hasattr(exc, "reason") else exc
             raise RuntimeError(f"Responses 网络请求失败: {reason}") from None

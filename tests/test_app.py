@@ -996,6 +996,7 @@ class UtilityTests(unittest.TestCase):
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(request.full_url, "https://example.test/v1/responses")
         self.assertEqual(request.headers["Authorization"], "Bearer secret")
+        self.assertEqual(request.headers["User-agent"], f"{app.APP_NAME}/{app.APP_VERSION}")
         self.assertEqual(payload["model"], "gpt-test")
         self.assertEqual(payload["reasoning"], {"effort": "high"})
         self.assertEqual(
@@ -1042,6 +1043,81 @@ class UtilityTests(unittest.TestCase):
             )
 
         self.assertEqual(text, "Polished prompt")
+
+    def test_client_retries_generic_forbidden_response_once(self):
+        class FakeHeaders:
+            @staticmethod
+            def get(_name):
+                return "application/json"
+
+        class FakeResponse:
+            headers = FakeHeaders()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def read():
+                return json.dumps({"output_text": "Recovered"}).encode("utf-8")
+
+        forbidden = app.urllib.error.HTTPError(
+            "https://example.test/v1/responses",
+            403,
+            "Forbidden",
+            {},
+            app.io.BytesIO(b"Forbidden"),
+        )
+        with patch(
+            "app.urllib.request.urlopen",
+            side_effect=[forbidden, FakeResponse()],
+        ) as urlopen:
+            text = app.EasyClinClient.stream_response(
+                "https://example.test/v1", "secret", "model", "instructions", "input"
+            )
+
+        self.assertEqual(text, "Recovered")
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_client_reports_actionable_error_after_repeated_generic_forbidden(self):
+        forbidden_responses = [
+            app.urllib.error.HTTPError(
+                "https://example.test/v1/responses",
+                403,
+                "Forbidden",
+                {},
+                app.io.BytesIO(b"Forbidden"),
+            )
+            for _ in range(2)
+        ]
+        with patch(
+            "app.urllib.request.urlopen",
+            side_effect=forbidden_responses,
+        ) as urlopen:
+            with self.assertRaisesRegex(RuntimeError, "思维服务暂时拒绝请求"):
+                app.EasyClinClient.stream_response(
+                    "https://example.test/v1", "secret", "model", "instructions", "input"
+                )
+
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_client_does_not_retry_structured_forbidden_response(self):
+        forbidden = app.urllib.error.HTTPError(
+            "https://example.test/v1/responses",
+            403,
+            "Forbidden",
+            {},
+            app.io.BytesIO(b'{"error":{"message":"model access denied"}}'),
+        )
+        with patch("app.urllib.request.urlopen", side_effect=forbidden) as urlopen:
+            with self.assertRaisesRegex(RuntimeError, "HTTP 403: model access denied"):
+                app.EasyClinClient.stream_response(
+                    "https://example.test/v1", "secret", "model", "instructions", "input"
+                )
+
+        urlopen.assert_called_once()
 
     def test_client_allows_tool_only_response_without_text(self):
         class FakeHeaders:
@@ -1984,6 +2060,18 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("item.revealFrames.push(frame)", page)
         self.assertIn("const imageRevealElementCache = new WeakMap()", page)
         self.assertIn("createImageRevealElement(item, frame, frameIndex)", page)
+        load_originals_block = re.search(
+            r"async function loadImageGenerationSetOriginals\(set\)\s*\{(.+?)\n        \}",
+            page,
+            re.DOTALL,
+        ).group(1)
+        self.assertNotIn("currentItem.revealFrames = []", load_originals_block)
+        self.assertIn("function captureImageRevealFramesForRender()", page)
+        self.assertIn("imageStreamDebugLog('frame-captured-for-render'", page)
+        self.assertIn("frame.fromOpacity = Math.max(0, Math.min(1, actual.opacity))", page)
+        self.assertIn("frame.resumeDuration = Math.max(1, blurRemaining)", page)
+        self.assertIn("Number.isFinite(frame.resumeCrossfadeDuration)", page)
+        self.assertIn("captureImageRevealFramesForRender();\n            container.replaceChildren()", page)
         self.assertIn("function scheduleFinalImageFrameCleanup(item, frame)", page)
         self.assertIn("const cleanupDuration = frame.duration", page)
         self.assertIn("Math.max(0, cleanupDuration - elapsed)", page)
@@ -1999,6 +2087,9 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("function loadImageGenerationSetPreviews(set)", page)
         self.assertIn("previewPath = item.previewPath || item.result?.previewPath", page)
         self.assertIn("setImageReasoningMode(normalizeImageReasoningMode(set.reasoningMode), false)", page)
+        self.assertIn("item.setId === cleanSetId || item.requestId === cleanSetId", page)
+        self.assertIn("const existingFinalFrame = Array.isArray(item.revealFrames)", page)
+        self.assertIn("if (existingFinalFrame) return", page)
         self.assertIn("setImageWebSearchEnabled(set.webSearchEnabled === true, false)", page)
         self.assertIn("previousPrompt: set.originalPrompt || set.prompt || ''", page)
         self.assertIn("reasoningMode: window.imageEditState.reasoningMode", page)

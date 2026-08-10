@@ -14,12 +14,16 @@
                 return;
             }
             if (!event?.setId) return;
-            const set = createImageGenerationSet(
-                event.setId,
-                Number(event.requestedCount) || 1,
-                event.prompt || '',
-                event
-            );
+            const eventRequestId = String(event.requestId || '');
+            const set = imageGenerationSetById(event.setId)
+                || imageGenerationSetById(eventRequestId)
+                || createImageGenerationSet(
+                    event.setId,
+                    Number(event.requestedCount) || 1,
+                    event.prompt || '',
+                    event
+                );
+            if (eventRequestId) set.requestId = eventRequestId;
             if (event.type === 'set_started') {
                 set.requestedCount = Number(event.requestedCount) || set.requestedCount;
                 set.prompt = event.prompt || set.prompt;
@@ -259,8 +263,10 @@
             const resultSetId = String(result?.setId || result?.requestId || requestId || '');
             if (!resultSetId) return;
             const set = imageGenerationSetById(requestId)
+                || imageGenerationSetById(result?.requestId)
                 || imageGenerationSetById(resultSetId)
                 || createImageGenerationSet(resultSetId, result.requestedCount || 1, result.prompt || '', result);
+            set.requestId ||= String(result?.requestId || requestId || resultSetId);
             set.status = 'completed';
             set.sessionId = result.sessionId || set.sessionId;
             set.parentSetId = result.parentSetId || set.parentSetId;
@@ -312,6 +318,10 @@
             });
             set.items.forEach(item => {
                 if (item.status !== 'completed') return;
+                const existingFinalFrame = Array.isArray(item.revealFrames)
+                    ? item.revealFrames.find(frame => frame.kind === 'final')
+                    : null;
+                if (existingFinalFrame) return;
                 appendImageRevealFrame(item, item.uri || item.previewUri, 'final', {
                     fallbackUri: item.previewUri,
                     path: item.path
