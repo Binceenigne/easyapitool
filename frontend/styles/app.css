@@ -2482,9 +2482,19 @@ html.dark #keySwitcherMenu {
   color: var(--brand);
 }
 
+.image-results-actions button.is-active {
+  border-color: color-mix(in srgb, var(--brand) 55%, var(--border));
+  background: color-mix(in srgb, var(--brand) 9%, var(--bg));
+  color: var(--brand);
+}
+
 .image-results-actions button:disabled {
   cursor: default;
   opacity: 0.38;
+}
+
+.image-results-actions button[hidden] {
+  display: none !important;
 }
 
 .image-results-actions button svg {
@@ -2531,6 +2541,7 @@ html.dark #keySwitcherMenu {
 
 .image-generation-set {
   border-bottom: 1px solid var(--border);
+  transition: background 140ms ease, border-color 140ms ease;
 }
 
 .image-generation-set-header {
@@ -2539,6 +2550,24 @@ html.dark #keySwitcherMenu {
   padding: 7px 10px;
   gap: 10px;
   background: var(--surface-soft);
+  transition: background 140ms ease;
+}
+
+.image-generation-set.is-batch-selectable {
+  cursor: pointer;
+}
+
+.image-generation-set.is-batch-selectable:hover .image-generation-set-header {
+  background: color-mix(in srgb, #8b5cf6 5%, var(--surface-soft));
+}
+
+.image-generation-set.is-batch-selected {
+  border-color: color-mix(in srgb, #8b5cf6 38%, var(--border));
+  background: color-mix(in srgb, #8b5cf6 9%, var(--bg));
+}
+
+.image-generation-set.is-batch-selected .image-generation-set-header {
+  background: color-mix(in srgb, #8b5cf6 13%, var(--surface-soft));
 }
 
 .image-generation-set-header > div {
@@ -3142,56 +3171,6 @@ html.dark #keySwitcherMenu {
 .image-generation-set-actions svg {
   width: 12px;
   height: 12px;
-}
-
-.image-generation-set-checkbox {
-  position: relative;
-  flex: 0 0 28px;
-  width: 28px;
-  height: 28px;
-  margin: 0;
-  appearance: none;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  cursor: pointer;
-}
-
-.image-generation-set-checkbox::after {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 6px;
-  height: 11px;
-  border: solid var(--brand);
-  border-width: 0 2px 2px 0;
-  content: "";
-  opacity: 0;
-  transform: translate(-50%, -58%) rotate(45deg) scale(0.7);
-  transition: opacity 120ms ease, transform 120ms ease;
-}
-
-.image-generation-set-checkbox:checked {
-  border-color: var(--brand);
-  background: color-mix(in srgb, var(--brand) 9%, var(--bg));
-}
-
-.image-generation-set-checkbox:checked::after {
-  opacity: 1;
-  transform: translate(-50%, -58%) rotate(45deg) scale(1);
-}
-
-.image-generation-set-checkbox:disabled {
-  cursor: default;
-  opacity: 0.38;
-}
-
-.image-generation-set-checkbox:hover:not(:disabled) {
-  border-color: var(--brand);
-}
-
-.image-generation-set-checkbox:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--brand) 65%, transparent);
-  outline-offset: 2px;
 }
 
 .image-generation-set-grid {

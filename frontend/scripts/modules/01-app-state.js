@@ -40,6 +40,7 @@
             pendingDeleteSetId: '',
             pendingDeleteSetIds: [],
             selectedSetIds: new Set(),
+            batchSelectionMode: false,
             aspectRatio: 'auto',
             quality: 'auto',
             outputPreset: 'lossless',

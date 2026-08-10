@@ -687,6 +687,7 @@
                 [...window.imageEditState.selectedSetIds].filter(setId => availableSetIds.has(setId))
             );
             container.classList.toggle('is-empty', sets.length === 0);
+            container.classList.toggle('is-batch-selecting', window.imageEditState.batchSelectionMode === true);
             updateImageSetSelectionActions();
             captureImageRevealFramesForRender();
             container.replaceChildren();
@@ -701,8 +702,26 @@
             sets.forEach(set => {
                 const expanded = set.status === 'running' || set.expanded === true;
                 const section = document.createElement('article');
-                section.className = `image-generation-set is-${set.status}${expanded ? ' is-expanded' : ' is-collapsed'}`;
+                const batchSelectable = window.imageEditState.batchSelectionMode === true && set.status !== 'running';
+                const batchSelected = batchSelectable && window.imageEditState.selectedSetIds.has(set.setId);
+                section.className = `image-generation-set is-${set.status}${expanded ? ' is-expanded' : ' is-collapsed'}${batchSelectable ? ' is-batch-selectable' : ''}${batchSelected ? ' is-batch-selected' : ''}`;
                 section.dataset.setId = set.setId;
+                section.setAttribute('aria-selected', String(batchSelected));
+                if (batchSelectable) {
+                    section.title = batchSelected ? '单击取消选择' : '单击选择图片集';
+                    section.tabIndex = 0;
+                    section.addEventListener('click', event => {
+                        if (event.target.closest('.image-generation-set-actions, .image-prompt-copy, .image-reasoning-panel')) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        toggleImageSetSelection(set.setId);
+                    }, true);
+                    section.addEventListener('keydown', event => {
+                        if (event.target !== section || (event.key !== 'Enter' && event.key !== ' ')) return;
+                        event.preventDefault();
+                        toggleImageSetSelection(set.setId);
+                    });
+                }
 
                 const header = document.createElement('div');
                 header.className = 'image-generation-set-header';
@@ -729,15 +748,6 @@
                 heading.append(titleRow, meta);
                 const actions = document.createElement('div');
                 actions.className = 'image-generation-set-actions';
-                const selectCheckbox = document.createElement('input');
-                selectCheckbox.type = 'checkbox';
-                selectCheckbox.className = 'image-generation-set-checkbox';
-                selectCheckbox.checked = window.imageEditState.selectedSetIds.has(set.setId);
-                selectCheckbox.disabled = set.status === 'running';
-                selectCheckbox.title = selectCheckbox.disabled ? '生成完成后可选择' : '选择图片集';
-                selectCheckbox.setAttribute('aria-label', `选择图片集：${title.textContent}`);
-                selectCheckbox.addEventListener('click', event => event.stopPropagation());
-                selectCheckbox.addEventListener('change', () => toggleImageSetSelection(set.setId, selectCheckbox.checked));
                 const continueButton = document.createElement('button');
                 continueButton.type = 'button';
                 continueButton.title = '基于此轮继续创作';
@@ -753,7 +763,7 @@
                 deleteButton.disabled = set.status === 'running';
                 deleteButton.innerHTML = iconMarkup('trash-2', 'icon-12');
                 deleteButton.addEventListener('click', () => deleteImageGenerationSet(set.setId));
-                actions.append(selectCheckbox, continueButton, deleteButton);
+                actions.append(continueButton, deleteButton);
                 if (set.status !== 'running') {
                     const toggleButton = document.createElement('button');
                     toggleButton.type = 'button';

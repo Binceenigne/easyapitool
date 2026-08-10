@@ -301,8 +301,9 @@
                     <div class="image-results-header">
                         <div><i data-lucide="images" aria-hidden="true"></i><span id="imageEditResultHeading">图片生成</span></div>
                         <div class="image-results-actions">
-                            <button type="button" id="exportSelectedImageSetsButton" onclick="exportSelectedImageSets()" disabled title="导出选中的图片集" aria-label="导出选中的图片集"><i data-lucide="download" aria-hidden="true"></i><small>导出所选</small></button>
-                            <button type="button" id="deleteSelectedImageSetsButton" onclick="deleteSelectedImageSets()" disabled title="删除选中的图片集" aria-label="删除选中的图片集"><i data-lucide="trash-2" aria-hidden="true"></i><small>删除所选</small></button>
+                            <button type="button" id="toggleImageSetBatchModeButton" onclick="toggleImageSetBatchMode()" title="进入批量操作" aria-label="进入批量操作" aria-pressed="false"><i data-lucide="list-checks" aria-hidden="true"></i><small>批量操作</small></button>
+                            <button type="button" id="exportSelectedImageSetsButton" onclick="exportSelectedImageSets()" hidden disabled title="导出选中的图片集" aria-label="导出选中的图片集"><i data-lucide="download" aria-hidden="true"></i><small>导出所选</small></button>
+                            <button type="button" id="deleteSelectedImageSetsButton" onclick="deleteSelectedImageSets()" hidden disabled title="删除选中的图片集" aria-label="删除选中的图片集"><i data-lucide="trash-2" aria-hidden="true"></i><small>删除所选</small></button>
                             <button type="button" onclick="openGeneratedPictures()" title="打开 Windows 图片文件夹" aria-label="打开 Windows 图片文件夹"><i data-lucide="folder-open" aria-hidden="true"></i><small>Windows 图片文件夹</small></button>
                         </div>
                     </div>

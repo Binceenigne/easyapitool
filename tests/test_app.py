@@ -1801,6 +1801,25 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn("--ui-scale", page)
         self.assertNotIn("∞", page)
 
+    def test_image_set_batch_mode_uses_item_clicks_without_checkboxes(self):
+        page = frontend_source()
+        stylesheet = frontend_stylesheet()
+
+        self.assertIn('id="toggleImageSetBatchModeButton"', page)
+        self.assertIn('onclick="toggleImageSetBatchMode()"', page)
+        self.assertIn('id="exportSelectedImageSetsButton" onclick="exportSelectedImageSets()" hidden disabled', page)
+        self.assertIn('id="deleteSelectedImageSetsButton" onclick="deleteSelectedImageSets()" hidden disabled', page)
+        self.assertIn('batchSelectionMode: false', page)
+        self.assertIn('function toggleImageSetBatchMode()', page)
+        self.assertIn("section.addEventListener('click', event => {", page)
+        self.assertIn("section.addEventListener('keydown', event => {", page)
+        self.assertIn("section.className = `image-generation-set is-${set.status}", page)
+        self.assertIn("' is-batch-selected'", page)
+        self.assertNotIn('image-generation-set-checkbox', page)
+        self.assertNotIn('.image-generation-set-checkbox', stylesheet)
+        self.assertIn('.image-generation-set.is-batch-selected {', stylesheet)
+        self.assertIn('background: color-mix(in srgb, #8b5cf6 9%, var(--bg));', stylesheet)
+
     def test_image_prompt_assistance_controls_and_streaming_summary(self):
         self.maxDiff = 600
         page = frontend_source()

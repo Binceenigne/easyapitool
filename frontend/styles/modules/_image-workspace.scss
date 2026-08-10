@@ -884,7 +884,9 @@
 .image-results-actions { display: flex !important; flex: 0 0 auto; align-items: center; gap: 4px !important; }
 .image-results-actions button { display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 5px 7px; gap: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); }
 .image-results-actions button:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
+.image-results-actions button.is-active { border-color: color-mix(in srgb, var(--brand) 55%, var(--border)); background: color-mix(in srgb, var(--brand) 9%, var(--bg)); color: var(--brand); }
 .image-results-actions button:disabled { cursor: default; opacity: 0.38; }
+.image-results-actions button[hidden] { display: none !important; }
 .image-results-actions button svg { width: 12px; height: 12px; }
 .image-results-actions button small { color: inherit; font-size: 8px; font-weight: 700; }
 #imageEditResultHeading { font-weight: 700; }
@@ -893,8 +895,12 @@
 #imageEditResultEmpty [data-lucide],
 #imageEditResultEmpty svg { width: 28px; height: 28px; }
 #imageGenerationSets.is-empty #imageEditResultEmpty { display: flex; }
-.image-generation-set { border-bottom: 1px solid var(--border); }
-.image-generation-set-header { justify-content: space-between; min-height: 48px; padding: 7px 10px; gap: 10px; background: var(--surface-soft); }
+.image-generation-set { border-bottom: 1px solid var(--border); transition: background 140ms ease, border-color 140ms ease; }
+.image-generation-set-header { justify-content: space-between; min-height: 48px; padding: 7px 10px; gap: 10px; background: var(--surface-soft); transition: background 140ms ease; }
+.image-generation-set.is-batch-selectable { cursor: pointer; }
+.image-generation-set.is-batch-selectable:hover .image-generation-set-header { background: color-mix(in srgb, #8b5cf6 5%, var(--surface-soft)); }
+.image-generation-set.is-batch-selected { border-color: color-mix(in srgb, #8b5cf6 38%, var(--border)); background: color-mix(in srgb, #8b5cf6 9%, var(--bg)); }
+.image-generation-set.is-batch-selected .image-generation-set-header { background: color-mix(in srgb, #8b5cf6 13%, var(--surface-soft)); }
 .image-generation-set-header > div { display: grid; min-width: 0; gap: 2px; }
 .image-generation-set-title-row { display: flex !important; align-items: center; width: 100%; min-width: 0; gap: 4px !important; }
 .image-generation-set-title-row strong { flex: 1 1 auto; min-width: 0; }
@@ -1089,35 +1095,6 @@
 .image-generation-set-actions button:disabled { cursor: default; opacity: 0.38; }
 .image-generation-set-actions button span { font-size: 8px; font-weight: 700; }
 .image-generation-set-actions svg { width: 12px; height: 12px; }
-.image-generation-set-checkbox {
-    position: relative;
-    flex: 0 0 28px;
-    width: 28px;
-    height: 28px;
-    margin: 0;
-    appearance: none;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    cursor: pointer;
-}
-.image-generation-set-checkbox::after {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 6px;
-    height: 11px;
-    border: solid var(--brand);
-    border-width: 0 2px 2px 0;
-    content: "";
-    opacity: 0;
-    transform: translate(-50%, -58%) rotate(45deg) scale(0.7);
-    transition: opacity 120ms ease, transform 120ms ease;
-}
-.image-generation-set-checkbox:checked { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 9%, var(--bg)); }
-.image-generation-set-checkbox:checked::after { opacity: 1; transform: translate(-50%, -58%) rotate(45deg) scale(1); }
-.image-generation-set-checkbox:disabled { cursor: default; opacity: 0.38; }
-.image-generation-set-checkbox:hover:not(:disabled) { border-color: var(--brand); }
-.image-generation-set-checkbox:focus-visible { outline: 2px solid color-mix(in srgb, var(--brand) 65%, transparent); outline-offset: 2px; }
 .image-generation-set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--border); }
 .image-generation-set-loading { display: flex; grid-column: 1 / -1; align-items: center; justify-content: center; min-height: 120px; gap: 6px; background: var(--bg); color: var(--muted); font-size: 9px; }
 .image-generation-item {

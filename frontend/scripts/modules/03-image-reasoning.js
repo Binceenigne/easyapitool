@@ -678,15 +678,42 @@
 
         function updateImageSetSelectionActions() {
             const selected = selectedImageGenerationSets();
+            const batchMode = window.imageEditState.batchSelectionMode === true;
+            const batchButton = document.getElementById('toggleImageSetBatchModeButton');
             const exportButton = document.getElementById('exportSelectedImageSetsButton');
             const deleteButton = document.getElementById('deleteSelectedImageSetsButton');
+            if (batchButton) {
+                batchButton.disabled = !batchMode && !window.imageEditState.resultSets.some(set => set.status !== 'running');
+                batchButton.classList.toggle('is-active', batchMode);
+                batchButton.setAttribute('aria-pressed', String(batchMode));
+                batchButton.title = batchMode ? '完成批量操作' : '进入批量操作';
+                batchButton.setAttribute('aria-label', batchButton.title);
+                const label = batchButton.querySelector('small');
+                if (label) label.textContent = batchMode ? '完成' : '批量操作';
+            }
+            if (exportButton) exportButton.hidden = !batchMode;
+            if (deleteButton) deleteButton.hidden = !batchMode;
             if (exportButton) exportButton.disabled = !selected.some(set => set.items.some(item => item.status === 'completed'));
             if (deleteButton) deleteButton.disabled = !selected.some(set => set.status !== 'running');
         }
 
-        function toggleImageSetSelection(setId, checked) {
-            if (checked) window.imageEditState.selectedSetIds.add(setId);
-            else window.imageEditState.selectedSetIds.delete(setId);
+        function toggleImageSetBatchMode() {
+            window.imageEditState.batchSelectionMode = !window.imageEditState.batchSelectionMode;
+            window.imageEditState.selectedSetIds.clear();
+            renderImageGenerationSets();
+        }
+
+        function toggleImageSetSelection(setId) {
+            if (!window.imageEditState.batchSelectionMode) return;
+            const set = imageGenerationSetById(setId);
+            if (!set || set.status === 'running') return;
+            const selected = window.imageEditState.selectedSetIds;
+            if (selected.has(setId)) selected.delete(setId);
+            else selected.add(setId);
+            const section = document.querySelector(`.image-generation-set[data-set-id="${CSS.escape(setId)}"]`);
+            section?.classList.toggle('is-batch-selected', selected.has(setId));
+            section?.setAttribute('aria-selected', String(selected.has(setId)));
+            if (section) section.title = selected.has(setId) ? '单击取消选择' : '单击选择图片集';
             updateImageSetSelectionActions();
         }
 
