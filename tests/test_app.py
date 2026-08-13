@@ -1294,6 +1294,63 @@ class UtilityTests(unittest.TestCase):
         )
         self.assertTrue(all(isinstance(item["_previewBytes"], bytes) for item in result["results"]))
 
+    def test_visual_search_runs_providers_concurrently(self):
+        service = app.WebSearchService()
+        barrier = __import__("threading").Barrier(2, timeout=2)
+        provider_threads = []
+
+        def provider(*_args):
+            provider_threads.append(__import__("threading").get_ident())
+            barrier.wait()
+            return []
+
+        with patch.object(service, "_bing_images", side_effect=provider), patch.object(
+            service, "_commons_images", side_effect=provider
+        ):
+            result = service.search_visual_references("parallel providers", max_results=12)
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(len(set(provider_threads)), 2)
+
+    def test_advanced_reasoning_modes_increase_search_budgets(self):
+        modes = ["flash", "medium", "high", "extra", "max"]
+        for field in (
+            "search_workers",
+            "search_parallel_queries",
+            "web_search_results",
+            "visual_search_results",
+        ):
+            values = [app.IMAGE_REASONING_MODES[mode][field] for mode in modes]
+            self.assertEqual(values, sorted(values))
+            self.assertGreater(values[-1], values[0])
+
+        self.assertGreater(app.IMAGE_REASONING_MODES["high"]["search_workers"], 4)
+        self.assertGreater(app.IMAGE_REASONING_MODES["high"]["web_search_results"], 8)
+        self.assertGreater(app.IMAGE_REASONING_MODES["max"]["visual_search_results"], 8)
+        for tool in app.IMAGE_AGENT_WEB_TOOLS[:2]:
+            self.assertEqual(
+                tool["parameters"]["properties"]["max_results"]["maximum"],
+                app.WEB_SEARCH_MAX_RESULTS,
+            )
+
+    def test_web_search_can_return_more_than_legacy_eight_result_limit(self):
+        service = app.WebSearchService()
+        items = "".join(
+            "<item>"
+            f"<title>Result {index}</title>"
+            f"<link>https://example.test/{index}</link>"
+            f"<description>Snippet {index}</description>"
+            "</item>"
+            for index in range(12)
+        )
+        payload = f"<rss><channel>{items}</channel></rss>".encode()
+
+        with patch.object(service, "_fixed_get", return_value=payload):
+            result = service.search_web("expanded search", max_results=12)
+
+        self.assertEqual(len(result["results"]), 12)
+        self.assertEqual(result["results"][-1]["title"], "Result 11")
+
     def test_public_image_url_rejects_private_and_non_https_hosts(self):
         with self.assertRaisesRegex(ValueError, "HTTPS"):
             app.require_public_https_url("http://example.com/image.jpg")
@@ -3723,7 +3780,8 @@ class ControllerTests(unittest.TestCase):
 
     def test_image_agent_runs_same_turn_visual_searches_concurrently(self):
         controller = app.AppController.__new__(app.AppController)
-        barrier = __import__("threading").Barrier(2, timeout=2)
+        query_count = app.IMAGE_REASONING_MODES["high"]["search_parallel_queries"]
+        barrier = __import__("threading").Barrier(query_count, timeout=2)
         search_threads = []
 
         def search_visual_references(query, _max_results):
@@ -3758,15 +3816,10 @@ class ControllerTests(unittest.TestCase):
                         {
                             "type": "function_call",
                             "name": "search_visual_references",
-                            "call_id": "call-a",
-                            "arguments": '{"query":"alpha"}',
-                        },
-                        {
-                            "type": "function_call",
-                            "name": "search_visual_references",
-                            "call_id": "call-b",
-                            "arguments": '{"query":"beta"}',
-                        },
+                            "call_id": f"call-{query_index}",
+                            "arguments": json.dumps({"query": f"query-{query_index}"}),
+                        }
+                        for query_index in range(query_count)
                     ]
                 })
                 return ""
@@ -3776,7 +3829,13 @@ class ControllerTests(unittest.TestCase):
                         "type": "function_call",
                         "name": "select_visual_references",
                         "call_id": "call-select",
-                        "arguments": '{"reference_ids":["webref-alpha","webref-beta"]}',
+                            "arguments": json.dumps({
+                                "reference_ids": [
+                                    f"webref-query-{query_index}"
+                                    for query_index in range(query_count)
+                                ],
+                                "rationale": "Compared all concurrent candidates.",
+                            }),
                     }]
                 })
                 return ""
@@ -3796,16 +3855,19 @@ class ControllerTests(unittest.TestCase):
             lambda *_args, **_kwargs: None,
         )
 
-        self.assertEqual(len(set(search_threads)), 2)
-        self.assertEqual(result["webSearchResultCount"], 2)
+        self.assertEqual(len(set(search_threads)), query_count)
+        self.assertEqual(result["webSearchResultCount"], query_count)
         self.assertEqual(
             [candidate["id"] for candidate in result["webCandidates"]],
-            ["webref-alpha", "webref-beta"],
+            [f"webref-query-{query_index}" for query_index in range(query_count)],
         )
         first_round_outputs = [
             item for item in response_inputs[1] if item.get("type") == "function_call_output"
         ]
-        self.assertEqual([item["call_id"] for item in first_round_outputs], ["call-a", "call-b"])
+        self.assertEqual(
+            [item["call_id"] for item in first_round_outputs],
+            [f"call-{query_index}" for query_index in range(query_count)],
+        )
 
     def test_github_request_retries_without_system_proxy_when_proxy_refuses(self):
         request = app.urllib.request.Request("https://api.github.com/test")

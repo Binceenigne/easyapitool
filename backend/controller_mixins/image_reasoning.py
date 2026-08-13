@@ -235,6 +235,10 @@ class ImageReasoningMixin:
         reasoning_effort = str(config["effort"])
         max_agent_turns = int(config["max_turns"])
         max_reference_count = int(config["max_references"])
+        search_workers = int(config["search_workers"])
+        search_parallel_queries = int(config["search_parallel_queries"])
+        web_search_results = int(config["web_search_results"])
+        visual_search_results = int(config["visual_search_results"])
         complete_text = ""
         published_length = 0
         current_turn = 0
@@ -322,6 +326,9 @@ class ImageReasoningMixin:
                 "的候选才通过 select_visual_references 选择；不合适时选择空列表。不要仅凭标题纳入图片。"
                 "你可以在同一轮并行发起多个不同检索，也可以根据首轮结果在后续轮次继续搜索；在完成"
                 "必要检索并比较全部候选后，再统一调用 select_visual_references 提交最终采用列表。"
+                f"当前模式每轮最多建议并行发起 {search_parallel_queries} 个互补查询；每个网页查询将返回"
+                f"最多 {web_search_results} 条结果，每个视觉查询将返回最多 {visual_search_results} 个"
+                "已验证缩略图。高级模式应充分利用并行查询覆盖不同关键词、语言和信息源。"
                 f"当前模式最多采用 {max_reference_count} 张真正有帮助的视觉参考；宁缺毋滥。"
             )
         if continuation_enabled:
@@ -449,7 +456,7 @@ class ImageReasoningMixin:
             ]
             if search_indexes:
                 with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=min(4, len(search_indexes)),
+                    max_workers=min(search_workers, len(search_indexes)),
                     thread_name_prefix="image-web-search",
                 ) as executor:
                     for index in search_indexes:
@@ -461,7 +468,7 @@ class ImageReasoningMixin:
                                 self._call_with_task_context,
                                 self.web_search.search_web,
                                 arguments.get("query"),
-                                arguments.get("max_results", 5),
+                                web_search_results,
                                 task_context=task_context,
                             )
                         else:
@@ -469,7 +476,7 @@ class ImageReasoningMixin:
                                 self._call_with_task_context,
                                 self.web_search.search_visual_references,
                                 arguments.get("query"),
-                                arguments.get("max_results", 6),
+                                visual_search_results,
                                 task_context=task_context,
                             )
 

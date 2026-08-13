@@ -239,9 +239,9 @@ class WebSearchService:
 
     def search_web(self, query: Any, max_results: int = 5, task_context: Any = None) -> dict[str, Any]:
         clean_query = self._query(query)
-        limit = max(1, min(8, int(max_results)))
+        limit = max(1, min(WEB_SEARCH_MAX_RESULTS, int(max_results)))
         url = "https://www.bing.com/search?" + urllib.parse.urlencode(
-            {"q": clean_query, "format": "rss"}
+            {"q": clean_query, "format": "rss", "count": limit}
         )
         payload = self._fixed_get(url, "application/rss+xml,application/xml,text/xml", task_context)
         root = ElementTree.fromstring(payload)
@@ -261,7 +261,7 @@ class WebSearchService:
 
     def _bing_images(self, query: str, limit: int, task_context: Any = None) -> list[dict[str, Any]]:
         url = "https://www.bing.com/images/search?" + urllib.parse.urlencode(
-            {"q": query, "form": "HDRSC2"}
+            {"q": query, "form": "HDRSC2", "count": limit}
         )
         parser = BingImageResultParser()
         parser.feed(self._fixed_get(url, "text/html", task_context).decode("utf-8", "replace"))
@@ -336,21 +336,42 @@ class WebSearchService:
 
     def search_visual_references(self, query: Any, max_results: int = 6, task_context: Any = None) -> dict[str, Any]:
         clean_query = self._query(query)
-        limit = max(1, min(8, int(max_results)))
-        candidates: list[dict[str, Any]] = []
+        limit = max(1, min(WEB_SEARCH_MAX_RESULTS, int(max_results)))
         errors: list[str] = []
-        for provider in (self._bing_images, self._commons_images):
-            try:
-                candidates.extend(provider(clean_query, limit, task_context))
-            except (OSError, RuntimeError, ValueError, json.JSONDecodeError, ElementTree.ParseError) as exc:
-                errors.append(str(exc))
-        unique: list[dict[str, Any]] = []
+        providers = (self._bing_images, self._commons_images)
+        provider_results: list[list[dict[str, Any]]] = [[] for _provider in providers]
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(providers),
+            thread_name_prefix="visual-search-provider",
+        ) as executor:
+            futures = [
+                executor.submit(provider, clean_query, limit, task_context)
+                for provider in providers
+            ]
+            for index, future in enumerate(futures):
+                try:
+                    provider_results[index] = future.result()
+                except (
+                    OSError,
+                    RuntimeError,
+                    ValueError,
+                    json.JSONDecodeError,
+                    ElementTree.ParseError,
+                ) as exc:
+                    errors.append(str(exc))
+
+        candidates = [candidate for results in provider_results for candidate in results]
+        unique_candidates: list[dict[str, Any]] = []
         seen: set[str] = set()
         for candidate in candidates:
             image_url = str(candidate.get("imageUrl") or "")
             if not image_url or image_url in seen:
                 continue
             seen.add(image_url)
+            unique_candidates.append(candidate)
+
+        def prepare_candidate(candidate: dict[str, Any]) -> dict[str, Any] | None:
+            image_url = str(candidate.get("imageUrl") or "")
             try:
                 preview_source = self._public_image_bytes(
                     str(candidate.get("thumbnailUrl") or image_url),
@@ -359,16 +380,32 @@ class WebSearchService:
                 )
                 preview_bytes = self._normalized_image_bytes(preview_source, max_side=720)
             except (OSError, RuntimeError, ValueError, Image.UnidentifiedImageError):
-                continue
+                return None
             clean_candidate = dict(candidate)
             clean_candidate["_previewBytes"] = preview_bytes
             clean_candidate["previewDataUrl"] = (
                 "data:image/jpeg;base64," + base64.b64encode(preview_bytes).decode("ascii")
             )
-            unique.append(clean_candidate)
-            if len(unique) >= limit:
-                break
-        return {"query": clean_query, "results": unique, "errors": errors}
+            return clean_candidate
+
+        preview_candidates = unique_candidates[:limit * 2]
+        preview_workers = min(
+            WEB_SEARCH_PREVIEW_MAX_WORKERS,
+            len(preview_candidates),
+        )
+        if preview_workers:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=preview_workers,
+                thread_name_prefix="visual-search-preview",
+            ) as executor:
+                prepared = list(executor.map(prepare_candidate, preview_candidates))
+        else:
+            prepared = []
+        return {
+            "query": clean_query,
+            "results": [candidate for candidate in prepared if candidate is not None][:limit],
+            "errors": errors,
+        }
 
     def stage_reference_records(
         self,

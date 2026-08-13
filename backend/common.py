@@ -51,7 +51,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -75,7 +75,9 @@ STATIC_UI_VERSION = "51"
 IMAGE_STREAM_DEBUG_LOG_MAX_BYTES = 20 * 1024 * 1024
 WEB_SEARCH_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 WEB_REFERENCE_IMAGE_MAX_BYTES = 16 * 1024 * 1024
-WEB_REFERENCE_MAX_COUNT = 6
+WEB_REFERENCE_MAX_COUNT = 8
+WEB_SEARCH_MAX_RESULTS = 48
+WEB_SEARCH_PREVIEW_MAX_WORKERS = 12
 MAIN_PAGE_NAME = "frontend/index.html"
 LUCIDE_VERSION = "0.468.0"
 LUCIDE_SHA256 = "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e"
@@ -143,6 +145,10 @@ IMAGE_REASONING_MODES = {
         "effort": "medium",
         "max_turns": 3,
         "max_references": 3,
+        "search_workers": 4,
+        "search_parallel_queries": 2,
+        "web_search_results": 8,
+        "visual_search_results": 8,
         "depth": "Flash 模式：仍须先判断自己要完成什么、哪些要求已明确、是否存在自己不理解或会影响结果的信息缺口；在此基础上迅速选择一个可执行方案。若开启搜索且缺口重要，立即做必要检索并根据结果快速复核，然后形成生图提示词进入迭代。Flash 压缩的是比较和反思轮次，不是省略任务理解与信息缺口判断。",
     },
     "medium": {
@@ -150,6 +156,10 @@ IMAGE_REASONING_MODES = {
         "effort": "medium",
         "max_turns": 5,
         "max_references": 4,
+        "search_workers": 8,
+        "search_parallel_queries": 4,
+        "web_search_results": 12,
+        "visual_search_results": 12,
         "depth": "Medium 模式：进行均衡的需求拆解、方案设计和适度信息获取，检查关键可用性后形成生图方案。",
     },
     "high": {
@@ -157,6 +167,10 @@ IMAGE_REASONING_MODES = {
         "effort": "high",
         "max_turns": 7,
         "max_references": 6,
+        "search_workers": 16,
+        "search_parallel_queries": 6,
+        "web_search_results": 20,
+        "visual_search_results": 16,
         "depth": "High 模式：详细拆解需求和视觉方案，主动获取有价值的信息，比较主要候选方案，并对构图、事实准确性和生成风险做一轮明确反思后再定稿。",
     },
     "extra": {
@@ -164,6 +178,10 @@ IMAGE_REASONING_MODES = {
         "effort": "xhigh",
         "max_turns": 10,
         "max_references": 6,
+        "search_workers": 24,
+        "search_parallel_queries": 10,
+        "web_search_results": 32,
+        "visual_search_results": 24,
         "depth": "Max 模式：先拟定多个足够详细的候选方案，主动且可多轮搜索网页与图片，交叉核对信息并阅读视觉候选；频繁反思遗漏、冲突、构图、材质和事实风险，只有确认信息与方案均充分周全后才形成最终生图提示词。",
     },
     "max": {
@@ -171,6 +189,10 @@ IMAGE_REASONING_MODES = {
         "effort": "xhigh",
         "max_turns": 12,
         "max_references": 8,
+        "search_workers": 32,
+        "search_parallel_queries": 16,
+        "web_search_results": 48,
+        "visual_search_results": 32,
         "depth": "Max 模式：先拟定多个足够详细的候选方案，主动且可多轮搜索网页与图片，交叉核对信息并阅读视觉候选；频繁反思遗漏、冲突、构图、材质和事实风险，只有确认信息与方案均充分周全后才形成最终生图提示词。",
     },
 }
@@ -379,7 +401,11 @@ IMAGE_AGENT_WEB_TOOLS = (
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Focused web search query."},
-                "max_results": {"type": "integer", "minimum": 1, "maximum": 8},
+                "max_results": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": WEB_SEARCH_MAX_RESULTS,
+                },
             },
             "required": ["query", "max_results"],
             "additionalProperties": False,
@@ -397,7 +423,11 @@ IMAGE_AGENT_WEB_TOOLS = (
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Focused image-search query."},
-                "max_results": {"type": "integer", "minimum": 1, "maximum": 8},
+                "max_results": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": WEB_SEARCH_MAX_RESULTS,
+                },
             },
             "required": ["query", "max_results"],
             "additionalProperties": False,
