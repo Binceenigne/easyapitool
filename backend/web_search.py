@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .common import *
-from .platform import get_small_url_bytes
+from .platform import get_small_url_bytes, open_url_with_direct_fallback
 
 class BingImageResultParser(HTMLParser):
     def __init__(self) -> None:
@@ -153,15 +153,29 @@ class WebSearchService:
         return "webref-" + hashlib.sha256(image_url.encode("utf-8")).hexdigest()[:12]
 
     @staticmethod
-    def _fixed_get(url: str, accept: str) -> bytes:
+    def _fixed_get(url: str, accept: str, task_context: Any = None) -> bytes:
         request = urllib.request.Request(
             url,
             headers={"User-Agent": WebSearchService.USER_AGENT, "Accept": accept},
         )
+        if task_context is not None:
+            task_context.check_cancelled()
+            response = open_url_with_direct_fallback(request, timeout=20)
+            task_context.add_response(response)
+            try:
+                payload = response.read()
+                task_context.check_cancelled()
+                return payload
+            except BaseException:
+                task_context.check_cancelled()
+                raise
+            finally:
+                task_context.remove_response(response)
+                response.close()
         return get_small_url_bytes(request, timeout=20)
 
     @staticmethod
-    def _public_image_bytes(url: str, max_bytes: int) -> bytes:
+    def _public_image_bytes(url: str, max_bytes: int, task_context: Any = None) -> bytes:
         clean_url = require_public_https_url(url)
         request = urllib.request.Request(
             clean_url,
@@ -181,13 +195,24 @@ class WebSearchService:
         for opener in openers:
             try:
                 with opener.open(request, timeout=20) as response:
+                    if task_context is not None:
+                        task_context.add_response(response)
                     final_url = response.geturl()
                     require_public_https_url(final_url)
                     content_type = str(response.headers.get("Content-Type") or "").lower()
                     if content_type and not content_type.startswith("image/"):
                         raise ValueError("远程地址未返回图片")
-                    return read_limited_response(response, max_bytes)
+                    try:
+                        payload = read_limited_response(response, max_bytes)
+                        if task_context is not None:
+                            task_context.check_cancelled()
+                        return payload
+                    finally:
+                        if task_context is not None:
+                            task_context.remove_response(response)
             except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as exc:
+                if task_context is not None:
+                    task_context.check_cancelled()
                 errors.append(str(exc))
         raise RuntimeError(errors[-1] if errors else "无法下载远程图片")
 
@@ -212,13 +237,13 @@ class WebSearchService:
         image.save(output, format="JPEG", quality=90, optimize=True)
         return output.getvalue()
 
-    def search_web(self, query: Any, max_results: int = 5) -> dict[str, Any]:
+    def search_web(self, query: Any, max_results: int = 5, task_context: Any = None) -> dict[str, Any]:
         clean_query = self._query(query)
         limit = max(1, min(8, int(max_results)))
         url = "https://www.bing.com/search?" + urllib.parse.urlencode(
             {"q": clean_query, "format": "rss"}
         )
-        payload = self._fixed_get(url, "application/rss+xml,application/xml,text/xml")
+        payload = self._fixed_get(url, "application/rss+xml,application/xml,text/xml", task_context)
         root = ElementTree.fromstring(payload)
         results: list[dict[str, str]] = []
         for item in root.findall("./channel/item")[:limit]:
@@ -234,12 +259,12 @@ class WebSearchService:
             )
         return {"query": clean_query, "results": results}
 
-    def _bing_images(self, query: str, limit: int) -> list[dict[str, Any]]:
+    def _bing_images(self, query: str, limit: int, task_context: Any = None) -> list[dict[str, Any]]:
         url = "https://www.bing.com/images/search?" + urllib.parse.urlencode(
             {"q": query, "form": "HDRSC2"}
         )
         parser = BingImageResultParser()
-        parser.feed(self._fixed_get(url, "text/html").decode("utf-8", "replace"))
+        parser.feed(self._fixed_get(url, "text/html", task_context).decode("utf-8", "replace"))
         parser.close()
         results: list[dict[str, Any]] = []
         for metadata in parser.results:
@@ -264,7 +289,7 @@ class WebSearchService:
                 break
         return results
 
-    def _commons_images(self, query: str, limit: int) -> list[dict[str, Any]]:
+    def _commons_images(self, query: str, limit: int, task_context: Any = None) -> list[dict[str, Any]]:
         url = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode(
             {
                 "action": "query",
@@ -279,7 +304,7 @@ class WebSearchService:
                 "origin": "*",
             }
         )
-        payload = json.loads(self._fixed_get(url, "application/json").decode("utf-8"))
+        payload = json.loads(self._fixed_get(url, "application/json", task_context).decode("utf-8"))
         pages = (payload.get("query") or {}).get("pages") or {}
         results: list[dict[str, Any]] = []
         for page in pages.values():
@@ -309,14 +334,14 @@ class WebSearchService:
             )
         return results[:limit]
 
-    def search_visual_references(self, query: Any, max_results: int = 6) -> dict[str, Any]:
+    def search_visual_references(self, query: Any, max_results: int = 6, task_context: Any = None) -> dict[str, Any]:
         clean_query = self._query(query)
         limit = max(1, min(8, int(max_results)))
         candidates: list[dict[str, Any]] = []
         errors: list[str] = []
         for provider in (self._bing_images, self._commons_images):
             try:
-                candidates.extend(provider(clean_query, limit))
+                candidates.extend(provider(clean_query, limit, task_context))
             except (OSError, RuntimeError, ValueError, json.JSONDecodeError, ElementTree.ParseError) as exc:
                 errors.append(str(exc))
         unique: list[dict[str, Any]] = []
@@ -330,6 +355,7 @@ class WebSearchService:
                 preview_source = self._public_image_bytes(
                     str(candidate.get("thumbnailUrl") or image_url),
                     WEB_SEARCH_RESPONSE_MAX_BYTES,
+                    task_context,
                 )
                 preview_bytes = self._normalized_image_bytes(preview_source, max_side=720)
             except (OSError, RuntimeError, ValueError, Image.UnidentifiedImageError):
@@ -349,6 +375,7 @@ class WebSearchService:
         candidates: list[dict[str, Any]],
         target_dir: Path,
         max_count: int = WEB_REFERENCE_MAX_COUNT,
+        task_context: Any = None,
     ) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -359,7 +386,7 @@ class WebSearchService:
                     continue
                 try:
                     image_bytes = self._public_image_bytes(
-                        str(url), WEB_REFERENCE_IMAGE_MAX_BYTES
+                        str(url), WEB_REFERENCE_IMAGE_MAX_BYTES, task_context
                     )
                     image_bytes = self._normalized_image_bytes(image_bytes)
                     break

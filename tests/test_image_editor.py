@@ -9,6 +9,7 @@ from unittest.mock import Mock
 
 from PIL import Image
 
+import backend.image_editor as backend_image_editor
 import image_editor
 
 
@@ -306,6 +307,43 @@ class ImageEditorTests(unittest.TestCase):
 
             request = opener.open.call_args.args[0]
             self.assertEqual(request.headers["Accept"], "text/event-stream")
+
+    def test_generation_http_error_is_logged_with_safe_request_summary(self):
+        http_error = backend_image_editor.urllib.error.HTTPError(
+            "https://example.test/v1/images/generations",
+            403,
+            "Forbidden",
+            {"CF-Ray": "ray-image"},
+            io.BytesIO(b"Forbidden"),
+        )
+        opener = SimpleNamespace(open=Mock(side_effect=http_error))
+        fields = {
+            "model": "gpt-image-2",
+            "prompt": "private prompt",
+            "stream": True,
+            "partial_images": 3,
+        }
+        with unittest.mock.patch.object(
+            backend_image_editor.ImageGenerationClient,
+            "_opener",
+            return_value=opener,
+        ), unittest.mock.patch.object(
+            backend_image_editor, "log_network_error"
+        ) as log_error:
+            with self.assertRaisesRegex(RuntimeError, "HTTP 403: Forbidden"):
+                image_editor.ImageGenerationClient.generate_image(
+                    "https://example.test/v1",
+                    "secret",
+                    fields,
+                )
+
+        log_error.assert_called_once()
+        logged = log_error.call_args
+        self.assertEqual(logged.args[0], "image_generation_http_error")
+        self.assertEqual(logged.kwargs["status"], 403)
+        self.assertEqual(logged.kwargs["response_body"], "Forbidden")
+        self.assertEqual(logged.kwargs["details"]["model"], "gpt-image-2")
+        self.assertNotIn("prompt", logged.kwargs["details"])
 
     def test_service_routes_without_references_to_generations(self):
         with tempfile.TemporaryDirectory() as temp:

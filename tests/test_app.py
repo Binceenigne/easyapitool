@@ -11,6 +11,8 @@ from unittest.mock import Mock, patch
 from PIL import Image
 
 import app
+import backend.client as backend_client
+import backend.network_log as backend_network_log
 import backend.platform as backend_platform
 import backend.runtime as backend_runtime
 import backend.controller_mixins.image_files as controller_image_files
@@ -1119,6 +1121,78 @@ class UtilityTests(unittest.TestCase):
 
         urlopen.assert_called_once()
 
+    def test_network_error_log_redacts_secrets_and_request_content(self):
+        with tempfile.TemporaryDirectory() as temp:
+            log_path = Path(temp) / "network-errors.jsonl"
+            secret = "sk-sensitive-secret"
+            error = RuntimeError(f"Bearer {secret} failed")
+            with patch.object(backend_network_log, "NETWORK_ERROR_LOG_PATH", log_path), patch.object(
+                backend_network_log.urllib.request,
+                "getproxies",
+                return_value={"https": "http://user:password@127.0.0.1:7897"},
+            ):
+                backend_network_log.log_network_error(
+                    "test_network_error",
+                    request_id="request-123",
+                    method="POST",
+                    url="https://example.test/v1/responses?api_key=hidden&mode=debug",
+                    error=error,
+                    status=403,
+                    response_headers={"CF-Ray": "ray-123", "Authorization": secret},
+                    response_body={"error": {"message": f"token {secret}"}},
+                    details={
+                        "model": "gpt-test",
+                        "prompt": "private prompt",
+                        "input": [{"image": "data:image/png;base64,AAAA"}],
+                    },
+                    secrets=(secret,),
+                )
+
+            raw_log = log_path.read_text(encoding="utf-8")
+            record = json.loads(raw_log)
+
+        self.assertNotIn(secret, raw_log)
+        self.assertNotIn("private prompt", raw_log)
+        self.assertNotIn("hidden", raw_log)
+        self.assertNotIn("password", raw_log)
+        self.assertEqual(record["endpoint"], "https://example.test/v1/responses?fields=api_key,mode")
+        self.assertEqual(record["responseHeaders"], {"cf-ray": "ray-123"})
+        self.assertEqual(record["details"]["prompt"], "[REDACTED]")
+        self.assertEqual(record["proxy"]["https"], "http://127.0.0.1:7897")
+
+    def test_client_logs_ssl_eof_during_responses_stream(self):
+        class FailingResponse:
+            headers = {"Content-Type": "text/event-stream", "CF-Ray": "ray-eof"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def __iter__(self):
+                raise app.ssl.SSLEOFError(8, "EOF occurred in violation of protocol")
+
+        with patch("app.urllib.request.urlopen", return_value=FailingResponse()), patch.object(
+            backend_client, "log_network_error"
+        ) as log_error:
+            with self.assertRaisesRegex(RuntimeError, "Responses 网络请求失败"):
+                app.EasyClinClient.stream_response(
+                    "https://example.test/v1",
+                    "secret",
+                    "gpt-test",
+                    "instructions",
+                    "input",
+                    reasoning_effort="high",
+                )
+
+        log_error.assert_called_once()
+        logged = log_error.call_args
+        self.assertEqual(logged.args[0], "responses_stream_error")
+        self.assertIsInstance(logged.kwargs["error"], app.ssl.SSLEOFError)
+        self.assertEqual(logged.kwargs["details"]["model"], "gpt-test")
+        self.assertEqual(logged.kwargs["details"]["reasoningEffort"], "high")
+
     def test_client_allows_tool_only_response_without_text(self):
         class FakeHeaders:
             @staticmethod
@@ -1501,7 +1575,17 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("document.createElement(completed ? 'button' : 'div')", page)
         self.assertNotIn("card.disabled = true;", page)
         self.assertIn('id="imageSetDeleteModal"', page)
+        self.assertIn('id="imageGenerationStopModal"', page)
         self.assertIn('role="alertdialog"', page)
+        self.assertIn("activeRequests: new Map()", page)
+        self.assertIn("cancel_image_generation(set.requestId || set.setId)", page)
+        self.assertIn("requestStopImageGeneration(set.setId)", page)
+        self.assertIn("stopButton.className = 'is-stop'", page)
+        self.assertIn("set.justCompleted = set.justCompleted === true", page)
+        self.assertIn("const expanded = set.expanded === true", page)
+        self.assertIn("您的任务已完成：", page)
+        self.assertNotIn("image-reasoning-stop", page)
+        self.assertNotIn("image-generation-item-stop", page)
         self.assertNotIn("window.confirm", page)
         self.assertIn("copy_generated_image", page)
         self.assertIn("function copyGeneratedImage(result)", page)
@@ -2104,7 +2188,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("item.revealFrames = [frame]", page)
         self.assertIn("function toggleImageGenerationSet(setId)", page)
         self.assertIn("if (!set || set.status === 'running') return", page)
-        self.assertIn("if (set.status !== 'running')", page)
+        self.assertIn("toggleButton.addEventListener('click', () => toggleImageGenerationSet(set.setId))", page)
         self.assertIn("if (!set.expanded && set.history)", page)
         self.assertIn("set.previewsLoaded = false", page)
         self.assertIn("existingSet.expanded = false", page)
@@ -2235,6 +2319,26 @@ class StaticAssetCacheTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_image_task_context_cancel_closes_active_responses(self):
+        class FakeResponse:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        context = controller_image_reasoning.ImageTaskContext()
+        responses = [FakeResponse(), FakeResponse()]
+        for response in responses:
+            context.add_response(response)
+
+        context.cancel()
+
+        self.assertTrue(context.cancel_event.is_set())
+        self.assertTrue(all(response.closed for response in responses))
+        with self.assertRaises(controller_image_reasoning.ImageGenerationCancelled):
+            context.check_cancelled()
+
     def test_import_reference_image_validates_and_persists_image_data(self):
         controller = app.AppController.__new__(app.AppController)
         with tempfile.TemporaryDirectory() as temp:
@@ -2380,6 +2484,118 @@ class ControllerTests(unittest.TestCase):
             sum(event["type"] == "item_completed" for event in events),
             2,
         )
+
+    def test_cancel_image_generation_stops_running_request_and_releases_task(self):
+        threading = __import__("threading")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            generation_started = threading.Event()
+            result_holder = {}
+
+            def generate_until_cancelled(*_args, **kwargs):
+                task_context = kwargs["task_context"]
+                response = SimpleNamespace(closed=False)
+                response.close = lambda: setattr(response, "closed", True)
+                task_context.add_response(response)
+                generation_started.set()
+                task_context.cancel_event.wait(2)
+                self.assertTrue(response.closed)
+                task_context.check_cancelled()
+
+            controller = app.AppController.__new__(app.AppController)
+            controller.image_generator = SimpleNamespace(generate=generate_until_cancelled)
+            controller.store = SimpleNamespace(
+                get_key_record=lambda key_id: {
+                    "id": key_id,
+                    "base_url": "https://example.test/v1",
+                },
+                get_secret=lambda _key_id: "secret",
+            )
+            events = []
+
+            def run_generation():
+                result_holder["result"] = controller.generate_image(
+                    "key-1",
+                    "生成一张测试图片",
+                    [],
+                    {"imageCount": 1, "requestId": "cancel-request"},
+                    event_callback=events.append,
+                )
+
+            with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
+                controller_image_files,
+                "generated_pictures_dir",
+                return_value=root / "Pictures" / app.APP_NAME,
+            ):
+                worker = threading.Thread(target=run_generation)
+                worker.start()
+                self.assertTrue(generation_started.wait(2))
+                cancelled = controller.cancel_image_generation("cancel-request")
+                worker.join(2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(cancelled["ok"])
+        self.assertTrue(result_holder["result"]["cancelled"])
+        self.assertEqual(events[-1]["type"], "set_cancelled")
+        self.assertNotIn("cancel-request", controller.image_tasks)
+
+    def test_generate_image_runs_independent_sessions_concurrently(self):
+        threading = __import__("threading")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            overlap = threading.Barrier(2, timeout=2)
+            results = {}
+
+            def generate_with_overlap(_base_url, _secret, _request, output_dir, **_kwargs):
+                overlap.wait()
+                output_dir.mkdir(parents=True, exist_ok=True)
+                result_path = output_dir / "result.png"
+                Image.new("RGB", (8, 8), "blue").save(result_path)
+                return {
+                    "ok": True,
+                    "path": str(result_path),
+                    "uri": result_path.as_uri(),
+                    "width": 8,
+                    "height": 8,
+                    "format": "png",
+                    "actualSize": "8x8",
+                }
+
+            controller = app.AppController.__new__(app.AppController)
+            controller.image_generator = SimpleNamespace(generate=generate_with_overlap)
+            controller.store = SimpleNamespace(
+                get_key_record=lambda key_id: {
+                    "id": key_id,
+                    "base_url": "https://example.test/v1",
+                },
+                get_secret=lambda _key_id: "secret",
+            )
+
+            def run_generation(request_id):
+                results[request_id] = controller.generate_image(
+                    "key-1",
+                    f"并发任务 {request_id}",
+                    [],
+                    {"imageCount": 1, "requestId": request_id},
+                )
+
+            with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
+                controller_image_files,
+                "generated_pictures_dir",
+                return_value=root / "Pictures" / app.APP_NAME,
+            ):
+                workers = [
+                    threading.Thread(target=run_generation, args=(request_id,))
+                    for request_id in ("parallel-a", "parallel-b")
+                ]
+                for worker in workers:
+                    worker.start()
+                for worker in workers:
+                    worker.join(4)
+
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(set(results), {"parallel-a", "parallel-b"})
+        self.assertTrue(all(result["ok"] for result in results.values()))
 
     def test_generate_image_accepts_missing_reference_images(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -4755,6 +4971,7 @@ class ControllerTests(unittest.TestCase):
             {
                 "add_key",
                 "append_image_stream_debug",
+                "cancel_image_generation",
                 "check_for_updates",
                 "choose_edit_images",
                 "complete_initialization",
@@ -4796,6 +5013,7 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("window", public_names)
         self.assertIn("open_generated_pictures", app.RPC_METHODS)
         self.assertIn("append_image_stream_debug", app.RPC_METHODS)
+        self.assertIn("cancel_image_generation", app.RPC_METHODS)
 
     def test_append_image_stream_debug_writes_sanitized_json_lines(self):
         controller = app.AppController.__new__(app.AppController)

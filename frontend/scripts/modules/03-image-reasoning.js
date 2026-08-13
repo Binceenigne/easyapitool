@@ -807,8 +807,9 @@
 
         function toggleImageGenerationSet(setId) {
             const set = imageGenerationSetById(setId);
-            if (!set || set.status === 'running') return;
+            if (!set) return;
             set.expanded = !set.expanded;
+            if (set.expanded) set.justCompleted = false;
             if (set.expanded && set.history && !set.previewsLoaded) {
                 void loadImageGenerationSetPreviews(set);
                 return;

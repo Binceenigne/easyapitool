@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from .common import *
+from .network_log import log_network_error, new_network_request_id
+
+
 class EasyClinClient:
     @staticmethod
     def get_json(base_url: str, secret: str, path: str, timeout: int = 25) -> dict[str, Any]:
@@ -81,7 +84,10 @@ class EasyClinClient:
         parallel_tool_calls: bool | None = None,
         on_completed: Any = None,
         allow_empty_text: bool = False,
+        task_context: Any = None,
     ) -> str:
+        if task_context is not None:
+            task_context.check_cancelled()
         url = f"{base_url.rstrip('/')}/responses"
         payload = {
             "model": model,
@@ -101,6 +107,22 @@ class EasyClinClient:
         if parallel_tool_calls is not None:
             payload["parallel_tool_calls"] = bool(parallel_tool_calls)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request_id = new_network_request_id()
+        request_started_at = time.perf_counter()
+        request_details = {
+            "model": model,
+            "reasoningEffort": reasoning_effort or "",
+            "stream": True,
+            "inputType": type(input_text).__name__,
+            "inputItemCount": len(input_text) if isinstance(input_text, list) else 1,
+            "toolNames": [
+                str(tool.get("name") or tool.get("type") or "")
+                for tool in tools or []
+                if isinstance(tool, dict)
+            ],
+            "requestBytes": len(body),
+            "timeoutSeconds": timeout,
+        }
         request = urllib.request.Request(
             url,
             data=body,
@@ -115,9 +137,25 @@ class EasyClinClient:
         for attempt in range(2):
             try:
                 response_context = urllib.request.urlopen(request, timeout=timeout)
+                if task_context is not None:
+                    task_context.add_response(response_context)
                 break
             except urllib.error.HTTPError as exc:
                 response_body = exc.read().decode("utf-8", "replace")
+                log_network_error(
+                    "responses_http_error",
+                    request_id=request_id,
+                    method="POST",
+                    url=url,
+                    error=exc,
+                    status=exc.code,
+                    elapsed_ms=(time.perf_counter() - request_started_at) * 1000,
+                    attempt=attempt + 1,
+                    response_headers=exc.headers,
+                    response_body=response_body,
+                    details=request_details,
+                    secrets=(secret,),
+                )
                 clean_body = response_body.strip()
                 generic_forbidden = exc.code == 403 and (
                     not clean_body
@@ -129,7 +167,7 @@ class EasyClinClient:
                     continue
                 if generic_forbidden:
                     raise RuntimeError(
-                        "HTTP 403: 思维服务暂时拒绝请求，请稍后重试"
+                        f"HTTP 403: 思维服务暂时拒绝请求，请稍后重试（诊断 ID: {request_id}）"
                     ) from None
                 try:
                     error_payload = json.loads(response_body)
@@ -137,10 +175,27 @@ class EasyClinClient:
                     message = error.get("message") if isinstance(error, dict) else str(error)
                 except json.JSONDecodeError:
                     message = response_body[:300]
-                raise RuntimeError(f"HTTP {exc.code}: {message or exc.reason}") from None
+                raise RuntimeError(
+                    f"HTTP {exc.code}: {message or exc.reason}（诊断 ID: {request_id}）"
+                ) from None
             except (urllib.error.URLError, TimeoutError) as exc:
+                log_network_error(
+                    "responses_connect_error",
+                    request_id=request_id,
+                    method="POST",
+                    url=url,
+                    error=exc,
+                    elapsed_ms=(time.perf_counter() - request_started_at) * 1000,
+                    attempt=attempt + 1,
+                    details=request_details,
+                    secrets=(secret,),
+                )
                 reason = exc.reason if hasattr(exc, "reason") else exc
-                raise RuntimeError(f"Responses 网络请求失败: {reason}") from None
+                raise RuntimeError(
+                    f"Responses 网络请求失败: {reason}（诊断 ID: {request_id}）"
+                ) from None
+        response_headers = getattr(response_context, "headers", None)
+        response_status = getattr(response_context, "status", None)
         try:
             with response_context as response:
                 content_type = str(response.headers.get("Content-Type") or "").lower()
@@ -197,6 +252,8 @@ class EasyClinClient:
                         on_completed(completed if isinstance(completed, dict) else payload)
 
                 for raw_line in response:
+                    if task_context is not None:
+                        task_context.check_cancelled()
                     line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
                     if not line:
                         flush_event()
@@ -209,6 +266,28 @@ class EasyClinClient:
                 if not text and not allow_empty_text:
                     raise RuntimeError("Responses 接口未返回文本")
                 return text
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except Exception as exc:
+            if task_context is not None:
+                task_context.check_cancelled()
+            log_network_error(
+                "responses_stream_error",
+                request_id=request_id,
+                method="POST",
+                url=url,
+                error=exc,
+                status=response_status,
+                elapsed_ms=(time.perf_counter() - request_started_at) * 1000,
+                attempt=attempt + 1,
+                response_headers=response_headers,
+                details=request_details,
+                secrets=(secret,),
+            )
+            if not isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
+                raise
             reason = exc.reason if hasattr(exc, "reason") else exc
-            raise RuntimeError(f"Responses 网络请求失败: {reason}") from None
+            raise RuntimeError(
+                f"Responses 网络请求失败: {reason}（诊断 ID: {request_id}）"
+            ) from None
+        finally:
+            if task_context is not None:
+                task_context.remove_response(response_context)

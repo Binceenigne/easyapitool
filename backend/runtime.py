@@ -252,6 +252,9 @@ class RemoteWebApi(WebApi):
             on_event=self._controller.push_image_generation_event,
         )
 
+    def cancel_image_generation(self, request_id: str) -> dict[str, Any]:
+        return self._remote("cancel_image_generation", request_id)
+
     def polish_prompt(self, key_id: str, prompt: str) -> dict[str, Any]:
         return self._rpc_client.call_with_events(
             "polish_prompt",

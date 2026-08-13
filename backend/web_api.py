@@ -58,6 +58,9 @@ class WebApi:
     ) -> dict[str, Any]:
         return self._controller.generate_image(key_id, prompt, image_paths, options)
 
+    def cancel_image_generation(self, request_id: str) -> dict[str, Any]:
+        return self._controller.cancel_image_generation(request_id)
+
     def polish_prompt(self, key_id: str, prompt: str) -> dict[str, Any]:
         return self._controller.polish_prompt(key_id, prompt)
 

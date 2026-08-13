@@ -214,7 +214,7 @@
                 }
             }
             if (event.type === 'set_completed') {
-                set.status = 'completed';
+                const wasRunning = set.status === 'running';
                 set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage);
                 if (Array.isArray(event.items)) {
                     event.items.forEach((result, itemIndex) => {
@@ -243,6 +243,18 @@
                         }
                     });
                 }
+                set.status = set.items.some(item => item.status === 'completed') ? 'completed' : 'failed';
+                set.justCompleted = wasRunning && set.status === 'completed' && set.expanded !== true;
+            }
+            if (event.type === 'set_cancelled') {
+                set.status = 'cancelled';
+                set.reasoningStatus = set.reasoningStatus === 'running' ? 'cancelled' : set.reasoningStatus;
+                set.reasoningCompletedAt ||= Date.now();
+                set.items.forEach(item => {
+                    if (item.status === 'completed') return;
+                    item.status = 'cancelled';
+                    item.error = event.error || '生成已停止';
+                });
             }
             renderImageGenerationSets();
             if (event.type === 'set_completed') notifyImageGenerationCompleted(set);
@@ -254,9 +266,9 @@
             const completedCount = set.items.filter(item => item.status === 'completed').length;
             if (!completedCount) return;
             set.completionNotified = true;
-            showToast(completedCount === 1
-                ? '图片生成完成，可以查看大图'
-                : `${completedCount} 张图片生成完成，可以查看大图`);
+            const prompt = String(set.originalPrompt || set.prompt || '图片生成任务').replace(/\s+/g, ' ').trim();
+            const summary = prompt.length > 24 ? `${prompt.slice(0, 24)}…` : prompt;
+            showToast(`您的任务已完成：${summary}`);
         }
 
         function syncImageGenerationResult(result, requestId = '') {
@@ -266,8 +278,9 @@
                 || imageGenerationSetById(result?.requestId)
                 || imageGenerationSetById(resultSetId)
                 || createImageGenerationSet(resultSetId, result.requestedCount || 1, result.prompt || '', result);
+            const wasRunning = set.status === 'running';
             set.requestId ||= String(result?.requestId || requestId || resultSetId);
-            set.status = 'completed';
+            set.status = result.cancelled ? 'cancelled' : result.ok ? 'completed' : 'failed';
             set.sessionId = result.sessionId || set.sessionId;
             set.parentSetId = result.parentSetId || set.parentSetId;
             set.roundNumber = Number(result.roundNumber) || set.roundNumber;
@@ -306,7 +319,7 @@
                     partialTotal: 3
                 };
                 if (!set.items[itemIndex]) set.items[itemIndex] = item;
-                item.status = resultItem.ok ? 'completed' : 'failed';
+                item.status = resultItem.ok ? 'completed' : result.cancelled ? 'cancelled' : 'failed';
                 item.uri = resultItem.uri || item.uri;
                 item.previewUri = resultItem.previewUri || item.previewUri;
                 item.fullUri = item.fullUri || resultItem.fullUri || '';
@@ -317,6 +330,11 @@
                 item.error = resultItem.error || '';
             });
             set.items.forEach(item => {
+                if (result.cancelled && item.status !== 'completed') {
+                    item.status = 'cancelled';
+                    item.error = result.error || '生成已停止';
+                    return;
+                }
                 if (item.status !== 'completed') return;
                 const existingFinalFrame = Array.isArray(item.revealFrames)
                     ? item.revealFrames.find(frame => frame.kind === 'final')
@@ -327,6 +345,8 @@
                     path: item.path
                 });
             });
+            set.justCompleted = set.justCompleted === true
+                || wasRunning && set.status === 'completed' && set.expanded !== true;
             renderImageGenerationSets();
             notifyImageGenerationCompleted(set);
         }
@@ -413,6 +433,55 @@
             window.imageEditState.pendingDeleteSetId = '';
             window.imageEditState.pendingDeleteSetIds = [];
             await closeAnimatedModal(document.getElementById('imageSetDeleteModal'));
+        }
+
+        function requestStopImageGeneration(setId) {
+            const set = imageGenerationSetById(setId);
+            if (!set || set.status !== 'running' || set.stopRequested) return;
+            window.imageEditState.pendingStopSetId = set.setId;
+            const modal = document.getElementById('imageGenerationStopModal');
+            const appMain = document.getElementById('appMain');
+            const message = document.getElementById('imageGenerationStopModalMessage');
+            message.textContent = set.items.some(item => item.status === 'completed')
+                ? '停止后会保留已经生成完成的图片，其余思维过程和图片生成会立即结束。'
+                : '当前思维过程和图片生成会立即结束。此任务尚未完成的内容不会保存。';
+            if (modal.parentElement !== appMain) appMain.append(modal);
+            openAnimatedModal(modal);
+            renderLucideIcons();
+            requestAnimationFrame(() => document.getElementById('cancelImageGenerationStopButton').focus());
+        }
+
+        async function closeImageGenerationStopModal() {
+            window.imageEditState.pendingStopSetId = '';
+            await closeAnimatedModal(document.getElementById('imageGenerationStopModal'));
+        }
+
+        function handleImageGenerationStopModalBackdrop(event) {
+            if (event.target === event.currentTarget) void closeImageGenerationStopModal();
+        }
+
+        async function confirmStopImageGeneration() {
+            const setId = window.imageEditState.pendingStopSetId;
+            const set = imageGenerationSetById(setId);
+            if (!set || set.status !== 'running') return void closeImageGenerationStopModal();
+            const confirmButton = document.getElementById('confirmImageGenerationStopButton');
+            confirmButton.disabled = true;
+            setIconLabel(confirmButton, 'loader-circle', '正在停止');
+            confirmButton.querySelector('[data-lucide], svg')?.classList.add('is-spinning');
+            set.stopRequested = true;
+            renderImageGenerationSets();
+            try {
+                const result = await window.pywebview.api.cancel_image_generation(set.requestId || set.setId);
+                if (!result.ok) throw new Error(result.error || '无法停止图片任务');
+                await closeImageGenerationStopModal();
+            } catch (error) {
+                set.stopRequested = false;
+                renderImageGenerationSets();
+                showToast(error.message || String(error), 'error');
+            } finally {
+                confirmButton.disabled = false;
+                setIconLabel(confirmButton, 'square', '确认停止');
+            }
         }
 
         function handleImageSetDeleteModalBackdrop(event) {
@@ -667,8 +736,14 @@
 
         async function submitImageEdit(event) {
             event.preventDefault();
-            if (window.imageEditState.busy) return;
-            const session = window.imageEditState.editSession;
+            const session = window.imageEditState.editSession
+                ? { ...window.imageEditState.editSession }
+                : null;
+            if (session && [...window.imageEditState.activeRequests.values()].some(
+                request => request.sessionId === session.sessionId
+            )) {
+                return showToast('该图片会话已有任务正在运行，请等待完成或先停止任务', 'error');
+            }
             const files = session ? [] : window.imageEditState.files;
             const activeKey = getActiveKey();
             const promptInput = document.getElementById('imageEditPrompt');
@@ -682,6 +757,18 @@
             const status = document.getElementById('imageEditStatus');
             const requestId = globalThis.crypto?.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`;
             const imageCount = window.imageEditState.imageCount;
+            const requestOptions = {
+                size: document.getElementById('imageEditSize').value,
+                quality: document.getElementById('imageEditQuality').value,
+                outputPreset: document.getElementById('imageEditOutputPreset').value,
+                imageCount,
+                requestId,
+                sessionId: session?.sessionId || requestId,
+                parentSetId: session?.setId || '',
+                continuation: Boolean(session),
+                reasoningMode: window.imageEditState.reasoningMode,
+                webSearchEnabled: window.imageEditState.webSearchEnabled
+            };
             createImageGenerationSet(requestId, imageCount, prompt, {
                 sessionId: session?.sessionId || requestId,
                 parentSetId: session?.setId || '',
@@ -701,20 +788,14 @@
                 }],
                 webSearchEnabled: window.imageEditState.reasoningMode !== 'instant' && window.imageEditState.webSearchEnabled
             });
-            window.imageEditState.busy = true;
-            button.disabled = true;
-            document.getElementById('imageReasoningMenuButton').disabled = true;
-            document.getElementById('reasoningSliderTrack').setAttribute('aria-disabled', 'true');
-            document.getElementById('imageWebSearchEnabled').disabled = true;
-            document.getElementById('polishImagePromptButton').disabled = true;
             closeImageGenerationControls();
             closeImageReasoningMenu();
-            setIconLabel(
-                button,
-                'loader-circle',
-                window.imageEditState.reasoningMode === 'instant' ? `正在生成 ${imageCount} 张` : '正在思考'
-            );
-            button.querySelector('[data-lucide], svg')?.classList.add('is-spinning');
+            window.imageEditState.activeRequests.set(requestId, {
+                requestId,
+                sessionId: requestOptions.sessionId,
+                parentSetId: requestOptions.parentSetId,
+                startedAt: Date.now()
+            });
             status.textContent = window.imageEditState.reasoningMode !== 'instant'
                 ? `${IMAGE_REASONING_LABELS[window.imageEditState.reasoningMode]} 模式正在理解需求并设计方案`
                 : session
@@ -722,33 +803,38 @@
                 : files.length
                 ? `正在参考 ${files.length} 张图片生成新图`
                 : '正在根据提示词生成图片';
+            if (!session) {
+                promptInput.value = '';
+                document.getElementById('imagePromptModalTextarea').value = '';
+                resizeImagePrompt();
+            }
+            let finalStatus = '';
             try {
                 const result = await window.pywebview.api.generate_image(
                     activeKey.id,
                     prompt,
                     files.map(file => file.path),
-                    {
-                        size: document.getElementById('imageEditSize').value,
-                        quality: document.getElementById('imageEditQuality').value,
-                        outputPreset: document.getElementById('imageEditOutputPreset').value,
-                        imageCount,
-                        requestId,
-                        sessionId: session?.sessionId || requestId,
-                        parentSetId: session?.setId || '',
-                        continuation: Boolean(session),
-                        reasoningMode: window.imageEditState.reasoningMode,
-                        webSearchEnabled: window.imageEditState.webSearchEnabled
-                    }
+                    requestOptions
                 );
+                if (result.cancelled) {
+                    syncImageGenerationResult(result, requestId);
+                    finalStatus = '任务已停止，已完成图片已保留';
+                    return;
+                }
                 if (!result.ok) throw new Error(result.error || '图片生成失败');
                 syncImageGenerationResult(result, requestId);
-                advanceImageEditSession(result);
+                const currentSession = window.imageEditState.editSession;
+                if (session
+                    && currentSession?.sessionId === session.sessionId
+                    && currentSession?.setId === session.setId) {
+                    advanceImageEditSession(result);
+                }
                 const successCount = result.items.filter(item => item.ok).length;
-                if (!window.imageEditState.editSession) status.textContent = `已生成 ${successCount}/${result.requestedCount} 张图片`;
+                finalStatus = `任务完成：已生成 ${successCount}/${result.requestedCount} 张图片`;
             } catch (error) {
                 const failedSet = imageGenerationSetById(requestId);
                 if (failedSet) {
-                    failedSet.status = 'completed';
+                    failedSet.status = 'failed';
                     failedSet.items.forEach(item => {
                         if (!['completed', 'failed'].includes(item.status)) {
                             item.status = 'failed';
@@ -757,16 +843,15 @@
                     });
                     renderImageGenerationSets();
                 }
-                status.textContent = error.message || String(error);
-                showToast(status.textContent, 'error');
+                finalStatus = error.message || String(error);
+                showToast(finalStatus, 'error');
             } finally {
-                window.imageEditState.busy = false;
-                button.disabled = false;
-                document.getElementById('imageReasoningMenuButton').disabled = false;
-                document.getElementById('reasoningSliderTrack').setAttribute('aria-disabled', 'false');
-                document.getElementById('imageWebSearchEnabled').disabled = window.imageEditState.reasoningMode === 'instant';
-                document.getElementById('polishImagePromptButton').disabled = false;
-                setIconLabel(button, 'sparkles', `生成 ${window.imageEditState.imageCount} 张`);
+                window.imageEditState.activeRequests.delete(requestId);
+                const activeCount = window.imageEditState.activeRequests.size;
+                status.textContent = activeCount
+                    ? `${activeCount} 个任务正在后台运行，可继续创建新任务`
+                    : finalStatus || '填写提示词即可生成，参考图可选';
+                renderImageGenerationSets();
             }
         }
 

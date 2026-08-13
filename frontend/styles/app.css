@@ -2553,6 +2553,45 @@ html.dark #keySwitcherMenu {
   transition: background 140ms ease;
 }
 
+.image-generation-set.is-collapsed {
+  border-left: 3px solid transparent;
+}
+
+.image-generation-set.is-collapsed.is-completed:not(.is-just-completed) {
+  background: var(--bg);
+}
+
+.image-generation-set.is-collapsed.is-completed:not(.is-just-completed) .image-generation-set-header {
+  background: var(--bg);
+}
+
+.image-generation-set.is-collapsed.is-running {
+  border-left-color: #8b5cf6;
+  background: color-mix(in srgb, #8b5cf6 9%, var(--bg));
+}
+
+.image-generation-set.is-collapsed.is-running .image-generation-set-header {
+  background: color-mix(in srgb, #8b5cf6 8%, var(--bg));
+}
+
+.image-generation-set.is-collapsed:is(.is-failed, .is-cancelled, .is-interrupted) {
+  border-left-color: var(--critical);
+  background: color-mix(in srgb, var(--critical) 8%, var(--bg));
+}
+
+.image-generation-set.is-collapsed:is(.is-failed, .is-cancelled, .is-interrupted) .image-generation-set-header {
+  background: color-mix(in srgb, var(--critical) 7%, var(--bg));
+}
+
+.image-generation-set.is-collapsed.is-just-completed {
+  border-left-color: #16a34a;
+  background: color-mix(in srgb, #22c55e 11%, var(--bg));
+}
+
+.image-generation-set.is-collapsed.is-just-completed .image-generation-set-header {
+  background: color-mix(in srgb, #22c55e 10%, var(--bg));
+}
+
 .image-generation-set.is-batch-selectable {
   cursor: pointer;
 }
@@ -3147,6 +3186,16 @@ html.dark #keySwitcherMenu {
   padding: 0;
 }
 
+.image-generation-set-actions button.is-stop {
+  color: var(--text-soft);
+}
+
+.image-generation-set-actions button.is-stop:hover:not(:disabled) {
+  border-color: var(--critical);
+  background: rgba(244, 63, 94, 0.08);
+  color: var(--critical);
+}
+
 .image-generation-set-actions button.is-icon-only {
   width: 28px;
   padding: 0;
@@ -3313,12 +3362,18 @@ html.dark #keySwitcherMenu {
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
 }
 
+.image-generation-item.is-cancelled > span {
+  background: rgba(15, 23, 42, 0.58);
+  color: #fff;
+}
+
 .image-generation-item.is-failed > span {
   background: rgba(127, 29, 29, 0.55);
   color: #fff;
 }
 
-#appMain > #imageSetDeleteModal {
+#appMain > #imageSetDeleteModal,
+#appMain > #imageGenerationStopModal {
   position: absolute;
   inset: 0;
 }

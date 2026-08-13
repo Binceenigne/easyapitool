@@ -20,6 +20,8 @@ from typing import Any, Callable
 
 from PIL import Image
 
+from .network_log import log_network_error, new_network_request_id
+
 
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 CONTENT_TYPES = {
@@ -833,6 +835,26 @@ class ImageSessionStore:
             round_data["completedAt"] = self._timestamp()
             self._write_manifest(manifest)
 
+    def cancel_round(self, session_id: str, set_id: str) -> None:
+        clean_session_id = self._safe_id(session_id)
+        clean_set_id = self._safe_id(set_id)
+        with self._manifest_lock:
+            manifest = self._read_manifest(clean_session_id)
+            if manifest is None:
+                return
+            round_data = next(
+                (item for item in manifest["rounds"] if item.get("setId") == clean_set_id),
+                None,
+            )
+            if round_data is None:
+                return
+            for item in round_data.get("items") or []:
+                if item.get("status") != "completed":
+                    item.update({"status": "cancelled", "error": "生成已停止"})
+            round_data["status"] = "cancelled"
+            round_data["completedAt"] = self._timestamp()
+            self._write_manifest(manifest)
+
     def list_sets(self) -> list[dict[str, Any]]:
         restored: list[dict[str, Any]] = []
         if not self.root.is_dir():
@@ -1243,8 +1265,13 @@ class ImageGenerationClient:
         return urllib.request.build_opener(NoRedirectHandler())
 
     @staticmethod
-    def _error(exc: urllib.error.HTTPError, secret: str) -> RuntimeError:
-        body_text = exc.read().decode("utf-8", "replace")
+    def _error(
+        exc: urllib.error.HTTPError,
+        secret: str,
+        body_text: str | None = None,
+    ) -> RuntimeError:
+        if body_text is None:
+            body_text = exc.read().decode("utf-8", "replace")
         try:
             parsed = json.loads(body_text)
             message = (parsed.get("error") or {}).get("message") or parsed.get("message")
@@ -1260,7 +1287,10 @@ class ImageGenerationClient:
         response: Any,
         stream: bool,
         on_partial: Callable[[str, int], None] | None = None,
+        task_context: Any = None,
     ) -> dict[str, Any]:
+        if task_context is not None:
+            task_context.check_cancelled()
         if not stream:
             return json.loads(response.read().decode("utf-8"))
 
@@ -1329,6 +1359,8 @@ class ImageGenerationClient:
             pending_data = []
 
         for raw_line in response:
+            if task_context is not None:
+                task_context.check_cancelled()
             line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
             if not line:
                 flush_pending()
@@ -1371,30 +1403,111 @@ class ImageGenerationClient:
         fields: dict[str, Any],
         timeout: int = 600,
         on_partial: Callable[[str, int], None] | None = None,
+        task_context: Any = None,
     ) -> dict[str, Any]:
+        if task_context is not None:
+            task_context.check_cancelled()
+        url = f"{base_url.rstrip('/')}/images/generations"
+        request_id = new_network_request_id()
+        request_started_at = time.perf_counter()
+        body = json.dumps(fields, ensure_ascii=False).encode("utf-8")
+        request_details = {
+            "operation": "generation",
+            "model": str(fields.get("model") or ""),
+            "size": str(fields.get("size") or ""),
+            "quality": str(fields.get("quality") or ""),
+            "outputFormat": str(fields.get("output_format") or ""),
+            "background": str(fields.get("background") or ""),
+            "moderation": str(fields.get("moderation") or ""),
+            "stream": bool(fields.get("stream")),
+            "partialImages": int(fields.get("partial_images") or 0),
+            "requestBytes": len(body),
+            "timeoutSeconds": timeout,
+        }
         request = urllib.request.Request(
-            f"{base_url.rstrip('/')}/images/generations",
-            data=json.dumps(fields, ensure_ascii=False).encode("utf-8"),
+            url,
+            data=body,
             headers={
                 "Authorization": f"Bearer {secret}",
                 "Accept": "text/event-stream" if fields.get("stream") else "application/json",
                 "Content-Type": "application/json; charset=utf-8",
+                "User-Agent": "DJYX_APITOOL/image-generation",
             },
             method="POST",
         )
         try:
-            with cls._opener().open(request, timeout=timeout) as response:
+            response_context = cls._opener().open(request, timeout=timeout)
+            if task_context is not None:
+                task_context.add_response(response_context)
+        except urllib.error.HTTPError as exc:
+            response_body = exc.read().decode("utf-8", "replace")
+            log_network_error(
+                "image_generation_http_error",
+                request_id=request_id,
+                method="POST",
+                url=url,
+                error=exc,
+                status=exc.code,
+                elapsed_ms=(time.perf_counter() - request_started_at) * 1000,
+                attempt=1,
+                response_headers=exc.headers,
+                response_body=response_body,
+                details=request_details,
+                secrets=(secret,),
+            )
+            error = cls._error(exc, secret, response_body)
+            raise RuntimeError(f"{error}（诊断 ID: {request_id}）") from None
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            log_network_error(
+                "image_generation_connect_error",
+                request_id=request_id,
+                method="POST",
+                url=url,
+                error=exc,
+                elapsed_ms=(time.perf_counter() - request_started_at) * 1000,
+                attempt=1,
+                details=request_details,
+                secrets=(secret,),
+            )
+            raise RuntimeError(
+                f"网络请求失败: {exc.reason if hasattr(exc, 'reason') else exc}"
+                f"（诊断 ID: {request_id}）"
+            ) from None
+        response_headers = getattr(response_context, "headers", None)
+        response_status = getattr(response_context, "status", None)
+        try:
+            with response_context as response:
                 return cls._read_response(
                     response,
                     bool(fields.get("stream")),
                     on_partial,
+                    task_context,
                 )
-        except urllib.error.HTTPError as exc:
-            raise cls._error(exc, secret) from None
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except Exception as exc:
+            if task_context is not None:
+                task_context.check_cancelled()
+            log_network_error(
+                "image_generation_stream_error",
+                request_id=request_id,
+                method="POST",
+                url=url,
+                error=exc,
+                status=response_status,
+                elapsed_ms=(time.perf_counter() - request_started_at) * 1000,
+                attempt=1,
+                response_headers=response_headers,
+                details=request_details,
+                secrets=(secret,),
+            )
+            if not isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
+                raise
             raise RuntimeError(
                 f"网络请求失败: {exc.reason if hasattr(exc, 'reason') else exc}"
+                f"（诊断 ID: {request_id}）"
             ) from None
+        finally:
+            if task_context is not None:
+                task_context.remove_response(response_context)
 
     @staticmethod
     def edit_images(
@@ -1404,7 +1517,13 @@ class ImageGenerationClient:
         fields: dict[str, Any],
         timeout: int = 600,
         on_partial: Callable[[str, int], None] | None = None,
+        task_context: Any = None,
     ) -> dict[str, Any]:
+        if task_context is not None:
+            task_context.check_cancelled()
+        url = f"{base_url.rstrip('/')}/images/edits"
+        request_id = new_network_request_id()
+        request_started_at = time.perf_counter()
         boundary = f"----API_TOOLS_{uuid.uuid4().hex}"
         body = io.BytesIO()
 
@@ -1431,29 +1550,107 @@ class ImageGenerationClient:
             )
         body.write(f"--{boundary}--\r\n".encode("ascii"))
 
+        request_body = body.getvalue()
+        request_details = {
+            "operation": "edit",
+            "model": str(fields.get("model") or ""),
+            "size": str(fields.get("size") or ""),
+            "quality": str(fields.get("quality") or ""),
+            "outputFormat": str(fields.get("output_format") or ""),
+            "background": str(fields.get("background") or ""),
+            "moderation": str(fields.get("moderation") or ""),
+            "stream": bool(fields.get("stream")),
+            "partialImages": int(fields.get("partial_images") or 0),
+            "referenceCount": len(image_paths),
+            "requestBytes": len(request_body),
+            "timeoutSeconds": timeout,
+        }
         request = urllib.request.Request(
-            f"{base_url.rstrip('/')}/images/edits",
-            data=body.getvalue(),
+            url,
+            data=request_body,
             headers={
                 "Authorization": f"Bearer {secret}",
                 "Accept": "text/event-stream" if fields.get("stream") else "application/json",
                 "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "User-Agent": "DJYX_APITOOL/image-generation",
             },
             method="POST",
         )
         try:
-            with ImageGenerationClient._opener().open(request, timeout=timeout) as response:
+            response_context = ImageGenerationClient._opener().open(
+                request, timeout=timeout
+            )
+            if task_context is not None:
+                task_context.add_response(response_context)
+        except urllib.error.HTTPError as exc:
+            response_body = exc.read().decode("utf-8", "replace")
+            log_network_error(
+                "image_edit_http_error",
+                request_id=request_id,
+                method="POST",
+                url=url,
+                error=exc,
+                status=exc.code,
+                elapsed_ms=(time.perf_counter() - request_started_at) * 1000,
+                attempt=1,
+                response_headers=exc.headers,
+                response_body=response_body,
+                details=request_details,
+                secrets=(secret,),
+            )
+            error = ImageGenerationClient._error(exc, secret, response_body)
+            raise RuntimeError(f"{error}（诊断 ID: {request_id}）") from None
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            log_network_error(
+                "image_edit_connect_error",
+                request_id=request_id,
+                method="POST",
+                url=url,
+                error=exc,
+                elapsed_ms=(time.perf_counter() - request_started_at) * 1000,
+                attempt=1,
+                details=request_details,
+                secrets=(secret,),
+            )
+            raise RuntimeError(
+                f"网络请求失败: {exc.reason if hasattr(exc, 'reason') else exc}"
+                f"（诊断 ID: {request_id}）"
+            ) from None
+        response_headers = getattr(response_context, "headers", None)
+        response_status = getattr(response_context, "status", None)
+        try:
+            with response_context as response:
                 return ImageGenerationClient._read_response(
                     response,
                     bool(fields.get("stream")),
                     on_partial,
+                    task_context,
                 )
-        except urllib.error.HTTPError as exc:
-            raise ImageGenerationClient._error(exc, secret) from None
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except Exception as exc:
+            if task_context is not None:
+                task_context.check_cancelled()
+            log_network_error(
+                "image_edit_stream_error",
+                request_id=request_id,
+                method="POST",
+                url=url,
+                error=exc,
+                status=response_status,
+                elapsed_ms=(time.perf_counter() - request_started_at) * 1000,
+                attempt=1,
+                response_headers=response_headers,
+                details=request_details,
+                secrets=(secret,),
+            )
+            if not isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
+                raise
             raise RuntimeError(
                 f"网络请求失败: {exc.reason if hasattr(exc, 'reason') else exc}"
+                f"（诊断 ID: {request_id}）"
             ) from None
+        finally:
+            if task_context is not None:
+                task_context.remove_response(response_context)
 
 
 class ImageGenerationService:
@@ -1467,7 +1664,10 @@ class ImageGenerationService:
         request: ImageGenerationRequest,
         output_dir: Path,
         on_partial: Callable[[dict[str, Any]], None] | None = None,
+        task_context: Any = None,
     ) -> dict[str, Any]:
+        if task_context is not None:
+            task_context.check_cancelled()
         output_dir.mkdir(parents=True, exist_ok=True)
         generation_id = uuid.uuid4().hex[:12]
 
@@ -1507,6 +1707,7 @@ class ImageGenerationService:
                 request.image_paths,
                 request.fields,
                 on_partial=persist_partial,
+                task_context=task_context,
             )
         else:
             response = self.client.generate_image(
@@ -1514,7 +1715,10 @@ class ImageGenerationService:
                 secret,
                 request.fields,
                 on_partial=persist_partial,
+                task_context=task_context,
             )
+        if task_context is not None:
+            task_context.check_cancelled()
         image_data = ((response.get("data") or [{}])[0] or {}).get("b64_json")
         if not image_data:
             raise RuntimeError("生图接口未返回图片数据")

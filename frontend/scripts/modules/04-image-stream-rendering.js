@@ -500,6 +500,8 @@
                 ? reasoningToolLabel(activeTool)
                 : set.reasoningStatus === 'completed'
                     ? '方案已确定'
+                    : set.reasoningStatus === 'cancelled'
+                        ? '已停止'
                     : set.reasoningStatus === 'running'
                         ? '正在确认方案'
                         : activeTurn?.title || '正在分析问题';
@@ -520,7 +522,9 @@
             toggle.addEventListener('click', () => toggleReasoningPanel(set.setId));
             const statusIcon = set.reasoningStatus === 'running'
                 ? 'clock-3'
-                : set.reasoningStatus === 'failed' ? 'triangle-alert' : 'circle-check';
+                : set.reasoningStatus === 'failed'
+                    ? 'triangle-alert'
+                    : set.reasoningStatus === 'cancelled' ? 'square' : 'circle-check';
             const title = reasoningPanelTitle(set, activeTurn, activeTool);
             toggle.innerHTML = `${iconMarkup(statusIcon, 'icon-12')}<strong>${escapeHtml(title)}</strong><span class="image-reasoning-usage" data-reasoning-elapsed="${escapeHtml(set.setId)}" title="${escapeHtml(reasoningUsageTitle(set))}">${totalReasoningElapsed(set)} · ${formatReasoningUsage(set)}</span>${iconMarkup(set.reasoningExpanded ? 'chevron-up' : 'chevron-right', 'icon-12')}`;
             panel.append(toggle);
@@ -700,11 +704,11 @@
                 return;
             }
             sets.forEach(set => {
-                const expanded = set.status === 'running' || set.expanded === true;
+                const expanded = set.expanded === true;
                 const section = document.createElement('article');
                 const batchSelectable = window.imageEditState.batchSelectionMode === true && set.status !== 'running';
                 const batchSelected = batchSelectable && window.imageEditState.selectedSetIds.has(set.setId);
-                section.className = `image-generation-set is-${set.status}${expanded ? ' is-expanded' : ' is-collapsed'}${batchSelectable ? ' is-batch-selectable' : ''}${batchSelected ? ' is-batch-selected' : ''}`;
+                section.className = `image-generation-set is-${set.status}${expanded ? ' is-expanded' : ' is-collapsed'}${set.justCompleted && !expanded ? ' is-just-completed' : ''}${batchSelectable ? ' is-batch-selectable' : ''}${batchSelected ? ' is-batch-selected' : ''}`;
                 section.dataset.setId = set.setId;
                 section.setAttribute('aria-selected', String(batchSelected));
                 if (batchSelectable) {
@@ -741,18 +745,33 @@
                 const completedCount = set.items.filter(item => item.status === 'completed').length;
                 const meta = document.createElement('small');
                 meta.textContent = set.status === 'running'
-                    ? `第 ${set.roundNumber || 1} 轮 · 生成中 · ${completedCount}/${set.requestedCount}`
+                    ? `第 ${set.roundNumber || 1} 轮 · ${set.stopRequested ? '正在停止' : '生成中'} · ${completedCount}/${set.requestedCount}`
+                    : set.status === 'cancelled'
+                        ? `第 ${set.roundNumber || 1} 轮 · 已停止 · 保留 ${completedCount} 张`
                     : set.status === 'interrupted'
                         ? `第 ${set.roundNumber || 1} 轮 · 已中断 · 保留 ${completedCount} 张`
+                    : set.status === 'failed'
+                        ? `第 ${set.roundNumber || 1} 轮 · 生成失败 · 保留 ${completedCount} 张`
                         : `第 ${set.roundNumber || 1} 轮 · ${completedCount}/${set.requestedCount} 张 · 已保存`;
                 heading.append(titleRow, meta);
                 const actions = document.createElement('div');
                 actions.className = 'image-generation-set-actions';
+                if (set.status === 'running') {
+                    const stopButton = document.createElement('button');
+                    stopButton.type = 'button';
+                    stopButton.className = 'is-stop';
+                    stopButton.title = set.stopRequested ? '正在停止任务' : '停止当前任务';
+                    stopButton.setAttribute('aria-label', stopButton.title);
+                    stopButton.disabled = set.stopRequested === true;
+                    stopButton.innerHTML = `${iconMarkup(set.stopRequested ? 'loader-circle' : 'square', `icon-12${set.stopRequested ? ' is-spinning' : ''}`)}<span>${set.stopRequested ? '停止中' : '停止'}</span>`;
+                    stopButton.addEventListener('click', () => requestStopImageGeneration(set.setId));
+                    actions.append(stopButton);
+                }
                 const continueButton = document.createElement('button');
                 continueButton.type = 'button';
                 continueButton.title = '基于此轮继续创作';
                 continueButton.setAttribute('aria-label', continueButton.title);
-                continueButton.disabled = completedCount === 0;
+                continueButton.disabled = set.status === 'running' || completedCount === 0;
                 continueButton.innerHTML = `${iconMarkup('corner-down-left', 'icon-12')}<span>继续编辑</span>`;
                 continueButton.addEventListener('click', () => enterImageEditSession(set.setId));
                 const deleteButton = document.createElement('button');
@@ -764,17 +783,15 @@
                 deleteButton.innerHTML = iconMarkup('trash-2', 'icon-12');
                 deleteButton.addEventListener('click', () => deleteImageGenerationSet(set.setId));
                 actions.append(continueButton, deleteButton);
-                if (set.status !== 'running') {
-                    const toggleButton = document.createElement('button');
-                    toggleButton.type = 'button';
-                    toggleButton.className = 'is-icon-only image-generation-set-toggle';
-                    toggleButton.title = expanded ? '折叠图片集' : '展开图片集';
-                    toggleButton.setAttribute('aria-label', toggleButton.title);
-                    toggleButton.setAttribute('aria-expanded', String(expanded));
-                    toggleButton.innerHTML = iconMarkup(expanded ? 'chevron-up' : 'chevron-down', 'icon-12');
-                    toggleButton.addEventListener('click', () => toggleImageGenerationSet(set.setId));
-                    actions.append(toggleButton);
-                }
+                const toggleButton = document.createElement('button');
+                toggleButton.type = 'button';
+                toggleButton.className = 'is-icon-only image-generation-set-toggle';
+                toggleButton.title = expanded ? '折叠图片集' : '展开图片集';
+                toggleButton.setAttribute('aria-label', toggleButton.title);
+                toggleButton.setAttribute('aria-expanded', String(expanded));
+                toggleButton.innerHTML = iconMarkup(expanded ? 'chevron-up' : 'chevron-down', 'icon-12');
+                toggleButton.addEventListener('click', () => toggleImageGenerationSet(set.setId));
+                actions.append(toggleButton);
                 header.append(heading, actions);
 
                 section.append(header);
@@ -869,6 +886,8 @@
                         overlay.innerHTML = `${iconMarkup('loader-circle', 'icon-16 is-spinning')}<em>生成中</em>`;
                     } else if (item.status === 'failed') {
                         overlay.textContent = item.error || '生成失败';
+                    } else if (item.status === 'cancelled') {
+                        overlay.textContent = '已停止';
                     } else {
                         overlay.innerHTML = `${iconMarkup('loader-circle', 'icon-16 is-spinning')}<em>等待生成</em>`;
                     }

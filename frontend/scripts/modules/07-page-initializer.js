@@ -99,6 +99,7 @@
                     closeImagePromptModal();
                     closeImageResultModal();
                     closeImageSetDeleteModal();
+                    closeImageGenerationStopModal();
                     closeImageReasoningMenu();
                 }
                 handleDevToolsSequence(event);

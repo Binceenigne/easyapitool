@@ -796,6 +796,20 @@
             </div>
         </div>
 
+        <div id="imageGenerationStopModal" class="app-modal animated-modal image-set-delete-modal" hidden role="alertdialog" aria-modal="true" aria-labelledby="imageGenerationStopModalTitle" aria-describedby="imageGenerationStopModalMessage" onclick="handleImageGenerationStopModalBackdrop(event)">
+            <div class="app-modal-panel image-set-delete-modal-panel">
+                <div class="app-modal-header">
+                    <div><i data-lucide="square" class="icon-14 color-critical" aria-hidden="true"></i><h2 id="imageGenerationStopModalTitle">停止当前任务</h2></div>
+                    <button type="button" onclick="closeImageGenerationStopModal()" title="关闭停止确认" aria-label="关闭停止确认"><i data-lucide="x" class="icon-14" aria-hidden="true"></i></button>
+                </div>
+                <p id="imageGenerationStopModalMessage">停止后将保留已经生成完成的图片，尚未完成的思维过程和图片生成会立即结束。</p>
+                <div class="image-set-delete-modal-actions">
+                    <button type="button" id="cancelImageGenerationStopButton" onclick="closeImageGenerationStopModal()">继续生成</button>
+                    <button type="button" id="confirmImageGenerationStopButton" class="is-danger" onclick="confirmStopImageGeneration()"><i data-lucide="square" aria-hidden="true"></i><span>确认停止</span></button>
+                </div>
+            </div>
+        </div>
+
         <div id="updateModal" class="app-modal animated-modal" hidden role="dialog" aria-modal="true" aria-labelledby="updateModalTitle" onclick="handleAppModalBackdrop(event)">
             <div class="app-modal-panel update-modal-panel">
                 <div class="app-modal-header">

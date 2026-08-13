@@ -7,7 +7,86 @@ from ..web_search import WebSearchService
 from ..store import Store
 from ..client import EasyClinClient
 
+class ImageGenerationCancelled(Exception):
+    pass
+
+
+class ImageTaskContext:
+    def __init__(self) -> None:
+        self.cancel_event = threading.Event()
+        self._response_lock = threading.Lock()
+        self._responses: dict[int, Any] = {}
+
+    def check_cancelled(self) -> None:
+        if self.cancel_event.is_set():
+            raise ImageGenerationCancelled("生成已停止")
+
+    def add_response(self, response: Any) -> None:
+        with self._response_lock:
+            if self.cancel_event.is_set():
+                try:
+                    response.close()
+                finally:
+                    raise ImageGenerationCancelled("生成已停止")
+            self._responses[id(response)] = response
+
+    def remove_response(self, response: Any) -> None:
+        with self._response_lock:
+            self._responses.pop(id(response), None)
+
+    def cancel(self) -> None:
+        self.cancel_event.set()
+        with self._response_lock:
+            responses = tuple(self._responses.values())
+        for response in responses:
+            try:
+                response.close()
+            except Exception:
+                pass
+
+
 class ImageReasoningMixin:
+    @staticmethod
+    def _call_with_task_context(method: Any, *args: Any, task_context: ImageTaskContext | None) -> Any:
+        if task_context is not None and "task_context" in inspect.signature(method).parameters:
+            return method(*args, task_context=task_context)
+        return method(*args)
+
+    def _register_image_task(self, request_id: str) -> ImageTaskContext:
+        task_lock = getattr(self, "image_task_lock", None)
+        if task_lock is None:
+            task_lock = threading.Lock()
+            self.image_task_lock = task_lock
+        with task_lock:
+            tasks = getattr(self, "image_tasks", None)
+            if tasks is None:
+                tasks = {}
+                self.image_tasks = tasks
+            if request_id in tasks:
+                raise ValueError("图片任务编号已存在")
+            context = ImageTaskContext()
+            tasks[request_id] = context
+            return context
+
+    def _release_image_task(self, request_id: str) -> None:
+        task_lock = getattr(self, "image_task_lock", None)
+        if task_lock is None:
+            return
+        with task_lock:
+            getattr(self, "image_tasks", {}).pop(request_id, None)
+
+    def cancel_image_generation(self, request_id: str) -> dict[str, Any]:
+        clean_request_id = str(request_id or "")[:80]
+        task_lock = getattr(self, "image_task_lock", None)
+        if not clean_request_id or task_lock is None:
+            return {"ok": False, "error": "任务不存在或已经结束"}
+        with task_lock:
+            context = getattr(self, "image_tasks", {}).get(clean_request_id)
+        if context is None:
+            return {"ok": False, "error": "任务不存在或已经结束"}
+        context.cancel()
+        return {"ok": True, "requestId": clean_request_id}
+
     def _run_instant_image_continuation_planner(
         self,
         record: Any,
@@ -15,6 +94,7 @@ class ImageReasoningMixin:
         current_request: str,
         context: dict[str, Any],
         visible_assets: list[dict[str, Any]],
+        task_context: ImageTaskContext | None = None,
     ) -> dict[str, Any]:
         visible_asset_ids = [
             str(asset.get("assetId") or "")
@@ -56,6 +136,7 @@ class ImageReasoningMixin:
             ),
             self._agent_input(planning_input, visible_paths),
             reasoning_effort=IMAGE_CONTINUATION_PLANNER_EFFORT,
+            task_context=task_context,
         )
         return parse_image_continuation_plan(
             output,
@@ -69,6 +150,7 @@ class ImageReasoningMixin:
         record: Any,
         secret: str,
         assets: list[dict[str, Any]],
+        task_context: ImageTaskContext | None = None,
     ) -> dict[str, str]:
         if not assets or len(assets) > 16:
             raise ValueError("单批素材描述必须包含 1 到 16 张图片")
@@ -95,6 +177,7 @@ class ImageReasoningMixin:
                 image_paths,
             ),
             reasoning_effort=IMAGE_CONTINUATION_PLANNER_EFFORT,
+            task_context=task_context,
         )
         return parse_image_asset_descriptions(output, asset_ids)
 
@@ -108,6 +191,7 @@ class ImageReasoningMixin:
         context: dict[str, Any],
         visible_asset_ids: list[str],
         additional_asset_ids: list[str] | None = None,
+        task_context: ImageTaskContext | None = None,
     ) -> dict[str, Any]:
         undescribed_assets = [
             asset
@@ -117,10 +201,11 @@ class ImageReasoningMixin:
             and not str(asset.get("description") or "").strip()
         ]
         for batch_start in range(0, len(undescribed_assets), 16):
-            descriptions = self._describe_image_asset_batch(
-                record,
-                secret,
-                undescribed_assets[batch_start:batch_start + 16],
+            batch = undescribed_assets[batch_start:batch_start + 16]
+            descriptions = (
+                self._describe_image_asset_batch(record, secret, batch, task_context)
+                if task_context is not None
+                else self._describe_image_asset_batch(record, secret, batch)
             )
             session_store.update_asset_descriptions(session_id, descriptions)
         if not undescribed_assets:
@@ -142,6 +227,7 @@ class ImageReasoningMixin:
         emit: Any,
         continuation_context: dict[str, Any] | None = None,
         visible_assets: list[dict[str, Any]] | None = None,
+        task_context: ImageTaskContext | None = None,
     ) -> dict[str, Any]:
         reasoning_started_at = time.perf_counter()
         config = IMAGE_REASONING_MODES[reasoning_mode]
@@ -264,6 +350,8 @@ class ImageReasoningMixin:
         output = ""
         total_agent_turns = max_agent_turns + (1 if continuation_enabled else 0)
         for turn_index in range(total_agent_turns):
+            if task_context is not None:
+                task_context.check_cancelled()
             current_turn = turn_index + 1
             current_turn_start = published_length
             emit(
@@ -297,6 +385,7 @@ class ImageReasoningMixin:
                 parallel_tool_calls=True if tools else None,
                 on_completed=completed_payloads.append,
                 allow_empty_text=bool(tools),
+                task_context=task_context,
             )
             response = completed_payloads[-1] if completed_payloads else {}
             turn_usage = response_usage_metrics(response, model)
@@ -369,18 +458,24 @@ class ImageReasoningMixin:
                         web_search_calls += 1
                         if call["name"] == "search_web":
                             search_futures[index] = executor.submit(
+                                self._call_with_task_context,
                                 self.web_search.search_web,
                                 arguments.get("query"),
                                 arguments.get("max_results", 5),
+                                task_context=task_context,
                             )
                         else:
                             search_futures[index] = executor.submit(
+                                self._call_with_task_context,
                                 self.web_search.search_visual_references,
                                 arguments.get("query"),
                                 arguments.get("max_results", 6),
+                                task_context=task_context,
                             )
 
             for index in search_indexes:
+                if task_context is not None:
+                    task_context.check_cancelled()
                 call = parsed_calls[index]
                 try:
                     tool_result = search_futures[index].result()
@@ -658,6 +753,71 @@ class ImageReasoningMixin:
         event_callback: Any = None,
     ) -> dict[str, Any]:
         clean_options = dict(options) if isinstance(options, dict) else {}
+        request_id = str(clean_options.get("requestId") or uuid.uuid4().hex)[:80]
+        session_id = str(clean_options.get("sessionId") or request_id)[:80]
+        parent_set_id = str(clean_options.get("parentSetId") or "")[:80]
+        clean_options["requestId"] = request_id
+        try:
+            task_context = self._register_image_task(request_id)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        try:
+            return self._generate_image(
+                key_id,
+                prompt,
+                image_paths,
+                clean_options,
+                event_callback,
+                task_context,
+            )
+        except ImageGenerationCancelled:
+            getattr(self, "active_image_sets", set()).discard(request_id)
+            self._release_image_session_activity(session_id)
+            shutil.rmtree(
+                app_data_dir() / "image-search-references" / request_id,
+                ignore_errors=True,
+            )
+            try:
+                self._image_session_store().cancel_round(session_id, request_id)
+            except (OSError, RuntimeError, ValueError):
+                pass
+            event = {
+                "type": "set_cancelled",
+                "requestId": request_id,
+                "setId": request_id,
+                "sessionId": session_id,
+                "parentSetId": parent_set_id,
+                "error": "生成已停止",
+            }
+            if event_callback is not None:
+                try:
+                    event_callback(event)
+                except Exception:
+                    pass
+            return {
+                "ok": False,
+                "cancelled": True,
+                "error": "生成已停止",
+                "requestId": request_id,
+                "setId": request_id,
+                "sessionId": session_id,
+                "parentSetId": parent_set_id,
+            }
+        finally:
+            self._release_image_task(request_id)
+
+    def _generate_image(
+        self,
+        key_id: str,
+        prompt: str,
+        image_paths: list[str],
+        options: dict[str, Any] | None = None,
+        event_callback: Any = None,
+        task_context: ImageTaskContext | None = None,
+    ) -> dict[str, Any]:
+        clean_options = dict(options) if isinstance(options, dict) else {}
+        if task_context is not None:
+            task_context.check_cancelled()
         try:
             image_count = int(clean_options.get("imageCount") or 1)
         except (TypeError, ValueError):
@@ -709,10 +869,9 @@ class ImageReasoningMixin:
         session_activity_reserved = False
         pending_asset_source = False
 
-        if continuation_enabled:
-            if not self._reserve_image_session_activity(session_id):
-                return {"ok": False, "error": "该图片会话正在生成中，请稍后再试"}
-            session_activity_reserved = True
+        if not self._reserve_image_session_activity(session_id):
+            return {"ok": False, "error": "该图片会话正在生成中，请稍后再试"}
+        session_activity_reserved = True
 
         def discard_pending_assets() -> None:
             if not pending_asset_source:
@@ -812,6 +971,7 @@ class ImageReasoningMixin:
                     continuation_context,
                     visible_asset_ids,
                     registered_input_asset_ids,
+                    task_context,
                 )
                 asset_by_id = {
                     str(asset.get("assetId") or ""): asset
@@ -830,6 +990,7 @@ class ImageReasoningMixin:
                         original_prompt,
                         continuation_context,
                         visible_assets,
+                        task_context,
                     )
             except (OSError, RuntimeError, ValueError) as exc:
                 discard_pending_assets()
@@ -854,6 +1015,7 @@ class ImageReasoningMixin:
                     emit,
                     continuation_context if continuation_enabled else None,
                     visible_assets if continuation_enabled else None,
+                    task_context,
                 )
                 final_prompt = str(agent_result["prompt"])
                 reasoning_summary = str(agent_result["summary"])
@@ -925,13 +1087,15 @@ class ImageReasoningMixin:
                 available_slots = max(0, 16 - len(request.image_paths))
                 web_candidates = list(agent_result.get("webCandidates") or [])
                 if web_candidates and available_slots:
-                    staged_web_references = self.web_search.stage_reference_records(
+                    staged_web_references = self._call_with_task_context(
+                        self.web_search.stage_reference_records,
                         web_candidates,
                         web_reference_dir,
                         min(
                             int(IMAGE_REASONING_MODES[reasoning_mode]["max_references"]),
                             available_slots,
                         ),
+                        task_context=task_context,
                     )
                     web_reference_paths = tuple(
                         Path(reference["path"]) for reference in staged_web_references
@@ -1056,6 +1220,8 @@ class ImageReasoningMixin:
         )
 
         def generate_one(item_index: int) -> dict[str, Any]:
+            if task_context is not None:
+                task_context.check_cancelled()
             emit("item_started", item_index)
 
             def on_partial(partial: dict[str, Any]) -> None:
@@ -1072,7 +1238,10 @@ class ImageReasoningMixin:
                     / "process-images"
                     / f"item-{item_index + 1:03d}",
                     on_partial=on_partial,
+                    task_context=task_context,
                 )
+                if task_context is not None:
+                    task_context.check_cancelled()
                 source_path = Path(result["path"])
                 try:
                     result["managedPath"] = str(source_path)
@@ -1106,6 +1275,8 @@ class ImageReasoningMixin:
                 futures = [executor.submit(generate_one, index) for index in range(image_count)]
                 for future in concurrent.futures.as_completed(futures):
                     items.append(future.result())
+            if task_context is not None:
+                task_context.check_cancelled()
         except BaseException:
             active_sets.discard(request_id)
             release_session_activity()

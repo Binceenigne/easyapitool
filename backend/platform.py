@@ -915,6 +915,7 @@ RPC_METHODS = {
     "add_key",
     "append_image_stream_debug",
     "check_for_updates",
+    "cancel_image_generation",
     "delete_key",
     "delete_image_set",
     "defer_update_restart",

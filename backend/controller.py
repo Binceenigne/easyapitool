@@ -12,7 +12,7 @@ from .controller_mixins.workers_window import WorkersWindowMixin
 from .controller_mixins.updates import UpdateMixin
 from .controller_mixins.quota_state import QuotaStateMixin
 from .controller_mixins.prompt import PromptMixin
-from .controller_mixins.image_reasoning import ImageReasoningMixin
+from .controller_mixins.image_reasoning import ImageReasoningMixin, ImageTaskContext
 from .controller_mixins.settings import SettingsMixin
 from .controller_mixins.window_commands import WindowCommandsMixin
 
@@ -60,6 +60,8 @@ class AppController(WindowStateMixin, ImageFilesMixin, WorkersWindowMixin, Updat
         self.active_image_sets: set[str] = set()
         self.image_session_activity_lock = threading.Lock()
         self.active_image_sessions: set[str] = set()
+        self.image_task_lock = threading.Lock()
+        self.image_tasks: dict[str, ImageTaskContext] = {}
         full_release_notes = bundled_changelog()
         self.update_state: dict[str, Any] = {
             "status": "idle",
