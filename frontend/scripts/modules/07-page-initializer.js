@@ -8,6 +8,7 @@
             initializeImageViewerInteractions();
             initializeEditImageScrollbar();
             initializeImageReasoningSlider();
+            initializeImageAdvancedReasoningMatrix();
             initializeImageReasoningHoverPlayback();
             restoreImageGenerationPreferences();
             window.setInterval(updateReasoningTimers, 1000);

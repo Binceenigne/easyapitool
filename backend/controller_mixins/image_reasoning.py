@@ -47,10 +47,22 @@ class ImageTaskContext:
 
 class ImageReasoningMixin:
     @staticmethod
-    def _call_with_task_context(method: Any, *args: Any, task_context: ImageTaskContext | None) -> Any:
-        if task_context is not None and "task_context" in inspect.signature(method).parameters:
-            return method(*args, task_context=task_context)
-        return method(*args)
+    def _call_with_task_context(
+        method: Any,
+        *args: Any,
+        task_context: ImageTaskContext | None,
+        **kwargs: Any,
+    ) -> Any:
+        side_effect = getattr(method, "side_effect", None)
+        signature_target = side_effect if callable(side_effect) else method
+        parameters = inspect.signature(signature_target).parameters
+        accepts_task_context = "task_context" in parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        if task_context is not None and accepts_task_context:
+            kwargs["task_context"] = task_context
+        return method(*args, **kwargs)
 
     def _register_image_task(self, request_id: str) -> ImageTaskContext:
         task_lock = getattr(self, "image_task_lock", None)
@@ -121,7 +133,8 @@ class ImageReasoningMixin:
             for asset in visible_assets
             if Path(str(asset.get("path") or "")).is_file()
         )
-        output = self.client.stream_response(
+        output = self._call_with_task_context(
+            self.client.stream_response,
             record["base_url"],
             secret,
             IMAGE_CONTINUATION_PLANNER_MODEL,
@@ -131,6 +144,9 @@ class ImageReasoningMixin:
                 "以保持角色、物体或世界观一致性，也可不选。完整保留用户本轮原始请求，不润色、"
                 "不反思、不联网。你实际看到的图片按 visibleAssetIds 顺序附在文字后；必须为"
                 "descriptionRequiredAssetIds 中每张图写一条客观、可复用的视觉描述。只输出 JSON："
+                "上一轮及更早轮次用户上传的图片会保留在素材池中，但本轮不会自动附带，也不要默认"
+                "让它们占用最终 16 个参考图槽位；如果某张图确实有助于保持主体、材质、风格或世界观"
+                "一致性，应主动从素材目录中选入并加载。"
                 '{"operation":"edit|generate","selected_asset_ids":[],"descriptions":'
                 '[{"asset_id":"...","description":"..."}],"rationale":"..."}'
             ),
@@ -162,7 +178,8 @@ class ImageReasoningMixin:
         )
         if len(image_paths) != len(assets) or any(not asset_id for asset_id in asset_ids):
             raise ValueError("待描述素材不可用")
-        output = self.client.stream_response(
+        output = self._call_with_task_context(
+            self.client.stream_response,
             record["base_url"],
             secret,
             IMAGE_CONTINUATION_PLANNER_MODEL,
@@ -228,9 +245,11 @@ class ImageReasoningMixin:
         continuation_context: dict[str, Any] | None = None,
         visible_assets: list[dict[str, Any]] | None = None,
         task_context: ImageTaskContext | None = None,
+        reasoning_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         reasoning_started_at = time.perf_counter()
-        config = IMAGE_REASONING_MODES[reasoning_mode]
+        config = dict(reasoning_config or resolve_image_reasoning_config(reasoning_mode))
+        advanced_mode = bool(config.get("advanced"))
         model = str(config["model"])
         reasoning_effort = str(config["effort"])
         max_agent_turns = int(config["max_turns"])
@@ -318,6 +337,12 @@ class ImageReasoningMixin:
             "请流畅输出面向用户、可审计的简短工作摘要，描述正在判断的创作环境、关键需求、"
             "候选方案与可用性评估；不要披露隐藏内部推理、逐 token 思维链或敏感信息。"
         )
+        if advanced_mode:
+            instructions += (
+                "当前为高级模式，必须完整执行需求理解、信息缺口判断、方案设计、工具化检索、"
+                "候选比较、视觉与事实风险复核、最终提示词整理这些阶段；不得因深度较低而关闭"
+                "任何阶段或工具。深度仅用于限制最大思考轮数、并行搜索规模和候选结果池大小。"
+            )
         if web_search_enabled:
             instructions += (
                 "你可以按需调用网页与视觉参考搜索工具。涉及真实产品、地点、事件、人物、时效信息、"
@@ -339,7 +364,9 @@ class ImageReasoningMixin:
                 " assetId 选择最终图片模型需要的会话素材。edit 必须选图；generate 也可以选图保持"
                 "角色、物体和世界观一致性。必须为 descriptionRequiredAssetIds 中每张首次读取图片"
                 "提供客观、可复用的描述。更早素材先依据缓存描述筛选；工具返回被选素材原图后再检查"
-                "其画面，并把操作和素材选择纳入后续搜索、反思及最终提示词。"
+                "其画面。上一轮及更早轮次用户上传的图片会保留在图片池中，不会默认附带或优先占用"
+                "最终 16 个参考图槽位；若它们有助于保持角色、物体、材质、风格或世界观一致性，鼓励"
+                "通过 plan_image_continuation 主动选入，再把操作和素材选择纳入后续搜索、反思及最终提示词。"
             )
         instructions += (
             f"摘要结束后单独输出标记 {PROMPT_RESULT_MARKER}，标记后只写可直接提交给图片模型的最终提示词。"
@@ -379,7 +406,8 @@ class ImageReasoningMixin:
                     else None
                 )
                 tool_choice = "auto" if tools else None
-            output = self.client.stream_response(
+            output = self._call_with_task_context(
+                self.client.stream_response,
                 record["base_url"],
                 secret,
                 model,
@@ -785,7 +813,9 @@ class ImageReasoningMixin:
                 ignore_errors=True,
             )
             try:
-                self._image_session_store().cancel_round(session_id, request_id)
+                cancel_round = getattr(self._image_session_store(), "cancel_round", None)
+                if callable(cancel_round):
+                    cancel_round(session_id, request_id)
             except (OSError, RuntimeError, ValueError):
                 pass
             event = {
@@ -838,12 +868,23 @@ class ImageReasoningMixin:
         if continuation_enabled and not parent_set_id:
             return {"ok": False, "error": "续作请求缺少来源轮次"}
         reasoning_mode = str(clean_options.get("reasoningMode") or "instant").lower()
-        if reasoning_mode not in {"instant", *IMAGE_REASONING_MODES}:
-            return {"ok": False, "error": "无效的思维模式"}
+        reasoning_config: dict[str, Any] | None = None
+        if reasoning_mode != "instant":
+            try:
+                reasoning_config = resolve_image_reasoning_config(
+                    reasoning_mode,
+                    clean_options.get("reasoningModel"),
+                    clean_options.get("reasoningEffort"),
+                )
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
         requested_web_search = clean_options.get("webSearchEnabled")
         web_search_enabled = (
             reasoning_mode != "instant"
-            and requested_web_search is not False
+            and (
+                reasoning_mode == "advanced"
+                or requested_web_search is not False
+            )
         )
         clean_options.update(
             {
@@ -932,6 +973,8 @@ class ImageReasoningMixin:
         continuation_plan: dict[str, Any] | None = None
         selected_asset_ids: list[str] = []
         selected_asset_paths: list[str] = []
+        required_input_asset_ids: list[str] = []
+        required_input_paths: list[str] = []
         if continuation_enabled:
             try:
                 continuation_context = session_store.continuation_context(
@@ -953,6 +996,7 @@ class ImageReasoningMixin:
                     for asset in registered_inputs
                     if asset.get("assetId")
                 ]
+                required_input_asset_ids = list(dict.fromkeys(registered_input_asset_ids))
                 if registered_inputs:
                     continuation_context = session_store.continuation_context(
                         session_id,
@@ -1004,7 +1048,7 @@ class ImageReasoningMixin:
                 release_session_activity()
                 return {"ok": False, "error": f"续作规划失败：{exc}"}
         if reasoning_mode != "instant":
-            reasoning_effort = str(IMAGE_REASONING_MODES[reasoning_mode]["effort"])
+            reasoning_effort = str((reasoning_config or {})["effort"])
             try:
                 agent_result = self._run_image_prompt_agent(
                     record,
@@ -1023,6 +1067,7 @@ class ImageReasoningMixin:
                     continuation_context if continuation_enabled else None,
                     visible_assets if continuation_enabled else None,
                     task_context,
+                    reasoning_config,
                 )
                 final_prompt = str(agent_result["prompt"])
                 reasoning_summary = str(agent_result["summary"])
@@ -1064,12 +1109,25 @@ class ImageReasoningMixin:
                 for asset_id in selected_asset_ids
                 if asset_id in asset_by_id and Path(str(asset_by_id[asset_id].get("path") or "")).is_file()
             ]
+            required_input_paths = [
+                str(asset_by_id[asset_id]["path"])
+                for asset_id in required_input_asset_ids
+                if asset_id in asset_by_id and Path(str(asset_by_id[asset_id].get("path") or "")).is_file()
+            ]
+            final_reference_asset_ids = list(
+                dict.fromkeys([*required_input_asset_ids, *selected_asset_ids])
+            )[:16]
+            selected_asset_paths = [
+                str(asset_by_id[asset_id]["path"])
+                for asset_id in final_reference_asset_ids
+                if asset_id in asset_by_id and Path(str(asset_by_id[asset_id].get("path") or "")).is_file()
+            ]
             clean_options.update(
                 {
                     "operation": str(continuation_plan["operation"]),
                     "continuationRationale": str(continuation_plan.get("rationale") or ""),
                     "selectedAssetIds": selected_asset_ids,
-                    "inputAssetIds": selected_asset_ids,
+                    "inputAssetIds": final_reference_asset_ids,
                     "inputReferencePaths": selected_asset_paths,
                 }
             )
@@ -1099,7 +1157,7 @@ class ImageReasoningMixin:
                         web_candidates,
                         web_reference_dir,
                         min(
-                            int(IMAGE_REASONING_MODES[reasoning_mode]["max_references"]),
+                            int((reasoning_config or {})["max_references"]),
                             available_slots,
                         ),
                         task_context=task_context,
@@ -1121,6 +1179,11 @@ class ImageReasoningMixin:
                 "reasoningMode": reasoning_mode,
                 "reasoningModel": reasoning_model,
                 "reasoningEffort": reasoning_effort,
+                "reasoningDepth": (
+                    str((reasoning_config or {}).get("effort") or "")
+                    if reasoning_mode == "advanced"
+                    else ""
+                ),
                 "reasoningSummary": reasoning_summary,
                 "reasoningDurationMs": reasoning_duration_ms,
                 "reasoningUsage": reasoning_usage,
@@ -1215,6 +1278,11 @@ class ImageReasoningMixin:
             reasoningMode=reasoning_mode,
             reasoningModel=reasoning_model,
             reasoningEffort=reasoning_effort,
+            reasoningDepth=(
+                str((reasoning_config or {}).get("effort") or "")
+                if reasoning_mode == "advanced"
+                else ""
+            ),
             reasoningSummary=reasoning_summary,
             reasoningDurationMs=reasoning_duration_ms,
             reasoningUsage=reasoning_usage,
@@ -1235,7 +1303,8 @@ class ImageReasoningMixin:
                 emit("item_partial", item_index, **partial)
 
             try:
-                result = self.image_generator.generate(
+                result = self._call_with_task_context(
+                    self.image_generator.generate,
                     record["base_url"],
                     secret,
                     request,
@@ -1302,6 +1371,11 @@ class ImageReasoningMixin:
             "reasoningMode": reasoning_mode,
             "reasoningModel": reasoning_model,
             "reasoningEffort": reasoning_effort,
+            "reasoningDepth": (
+                str((reasoning_config or {}).get("effort") or "")
+                if reasoning_mode == "advanced"
+                else ""
+            ),
             "reasoningSummary": reasoning_summary,
             "reasoningDurationMs": reasoning_duration_ms,
             "reasoningUsage": reasoning_usage,

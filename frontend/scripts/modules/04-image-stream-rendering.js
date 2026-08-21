@@ -495,7 +495,11 @@
 
         function reasoningPanelTitle(set, activeTurn, activeTool) {
             const mode = normalizeImageReasoningMode(set.reasoningMode);
-            const modeLabel = IMAGE_REASONING_LABELS[mode];
+            const modeLabel = imageReasoningModeLabel(
+                mode,
+                set.reasoningModel,
+                set.reasoningDepth || set.reasoningEffort
+            );
             const statusLabel = activeTool
                 ? reasoningToolLabel(activeTool)
                 : set.reasoningStatus === 'completed'

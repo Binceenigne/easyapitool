@@ -914,6 +914,7 @@ def trace_startup(stage: str, **details: Any) -> None:
 RPC_METHODS = {
     "add_key",
     "append_image_stream_debug",
+    "benchmark_run",
     "check_for_updates",
     "cancel_image_generation",
     "delete_key",

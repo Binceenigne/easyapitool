@@ -58,6 +58,18 @@ class WebApi:
     ) -> dict[str, Any]:
         return self._controller.generate_image(key_id, prompt, image_paths, options)
 
+    def open_benchmark(self) -> dict[str, Any]:
+        return {"ok": False, "error": "Benchmark 仅在桌面 UI 进程中可用"}
+
+    def benchmark_run(
+        self,
+        key_id: str,
+        prompt: str,
+        image_paths: list[str],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._controller.benchmark_run(key_id, prompt, image_paths, options)
+
     def cancel_image_generation(self, request_id: str) -> dict[str, Any]:
         return self._controller.cancel_image_generation(request_id)
 

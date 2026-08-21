@@ -15,8 +15,9 @@ from .controller_mixins.prompt import PromptMixin
 from .controller_mixins.image_reasoning import ImageReasoningMixin, ImageTaskContext
 from .controller_mixins.settings import SettingsMixin
 from .controller_mixins.window_commands import WindowCommandsMixin
+from .controller_mixins.benchmark import BenchmarkMixin
 
-class AppController(WindowStateMixin, ImageFilesMixin, WorkersWindowMixin, UpdateMixin, QuotaStateMixin, PromptMixin, ImageReasoningMixin, SettingsMixin, WindowCommandsMixin):
+class AppController(WindowStateMixin, ImageFilesMixin, WorkersWindowMixin, UpdateMixin, QuotaStateMixin, PromptMixin, ImageReasoningMixin, BenchmarkMixin, SettingsMixin, WindowCommandsMixin):
     def __init__(
         self,
         asset_cache: StaticAssetCache | None = None,

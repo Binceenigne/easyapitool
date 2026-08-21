@@ -39,7 +39,7 @@ class ControllerRpcServer:
             if method_name not in RPC_METHODS:
                 raise ValueError("不允许的后台调用")
             method = getattr(self.controller, method_name)
-            if method_name in {"generate_image", "polish_prompt"}:
+            if method_name in {"benchmark_run", "generate_image", "polish_prompt"}:
                 send_lock = threading.Lock()
 
                 def send_event(event: dict[str, Any]) -> None:

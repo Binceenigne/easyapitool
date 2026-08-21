@@ -588,11 +588,18 @@ class UtilityTests(unittest.TestCase):
                         "userPrompt": "设计主角",
                         "reasoningSummary": "采用紫色披风和银色肩甲。",
                         "operation": "generate",
-                        "inputAssetIds": [],
+                        "inputAssetIds": ["asset-reference"],
                         "outputAssetIds": ["asset-character"],
                     }
                 ],
                 "assets": [
+                    {
+                        "assetId": "asset-reference",
+                        "description": "金色材质参考图",
+                        "sourceSetIds": ["set-1"],
+                        "sourceRoles": ["input"],
+                        "path": "D:/private/session/reference.png",
+                    },
                     {
                         "assetId": "asset-character",
                         "description": "紫色披风角色正面设定图",
@@ -616,6 +623,14 @@ class UtilityTests(unittest.TestCase):
         self.assertEqual(payload["history"][0]["userPrompt"], "设计主角")
         self.assertEqual(payload["history"][0]["reasoningSummary"], "采用紫色披风和银色肩甲。")
         self.assertEqual(payload["visibleAssetIds"], ["asset-character"])
+        self.assertEqual(payload["historicalInputAssetIds"], ["asset-reference"])
+        reference_policy = next(
+            item["selectionPolicy"]
+            for item in payload["assetCatalog"]
+            if item["assetId"] == "asset-reference"
+        )
+        self.assertIn("不要因为它存在就自动加入", reference_policy)
+        self.assertIn("保持角色、物体、材质、风格或世界观一致", reference_policy)
         self.assertEqual(payload["descriptionRequiredAssetIds"], [])
         self.assertNotIn("D:/private", prompt)
 
@@ -679,7 +694,7 @@ class UtilityTests(unittest.TestCase):
             )
 
         self.assertEqual(captured["model"], app.IMAGE_CONTINUATION_PLANNER_MODEL)
-        self.assertEqual(captured["kwargs"]["reasoning_effort"], "minimal")
+        self.assertEqual(captured["kwargs"]["reasoning_effort"], "low")
         self.assertNotIn("tools", captured["kwargs"])
         self.assertNotIn("on_delta", captured["kwargs"])
         self.assertIn("不润色", captured["instructions"])
@@ -1648,9 +1663,9 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("function copyGeneratedImage(result)", page)
         self.assertIn("card.addEventListener('contextmenu'", page)
         self.assertIn("canvas.addEventListener('contextmenu'", page)
-        self.assertIn("document.getElementById('editImageSelection').hidden = active", page)
-        self.assertIn("? '描述本轮要修改或继续创作的内容'", page)
-        self.assertIn("const files = session ? [] : window.imageEditState.files", page)
+        self.assertNotIn("document.getElementById('editImageSelection').hidden = active", page)
+        self.assertIn("? '描述本轮要修改或继续创作的内容；可添加必须参考的图片'", page)
+        self.assertIn("const files = [...window.imageEditState.files]", page)
         self.assertIn("continuation: Boolean(session)", page)
         self.assertNotIn("function generatedResultReference", page)
         self.assertNotIn("session.references", page)
@@ -1981,7 +1996,52 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('aria-valuemax="5"', page)
         for mode in ("instant", "flash", "medium", "high", "extra", "max"):
             self.assertIn(f'data-layer-mode="{mode}"', page)
+        self.assertIn('data-layer-mode="advanced"', page)
+        self.assertIn('id="advancedEntryButton"', page)
+        self.assertIn('id="advancedBackButton"', page)
+        self.assertIn('id="advancedMatrix"', page)
+        self.assertIn('id="advancedPad"', page)
+        self.assertIn('id="advancedPadBgA"', page)
+        self.assertIn('id="advancedPadBgB"', page)
+        self.assertIn('id="advancedKnob"', page)
         self.assertIn("const IMAGE_REASONING_MODES = ['instant', 'flash', 'medium', 'high', 'extra', 'max']", page)
+        self.assertIn("const IMAGE_ADVANCED_MODELS = ['luna', 'terra', 'sol']", page)
+        self.assertIn("const IMAGE_ADVANCED_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']", page)
+        self.assertIn("function setImageAdvancedMode(model, effort, persist = true)", page)
+        self.assertIn("function returnToNormalImageReasoningMode(persist = true)", page)
+        self.assertIn("function initializeImageAdvancedReasoningMatrix()", page)
+        self.assertIn("function previewImageAdvancedPointer(event)", page)
+        self.assertIn("const effortPosition = pointerX / rect.width * 4", page)
+        self.assertIn("const modelPosition = (1 - pointerY / rect.height) * 2", page)
+        self.assertIn("const effortPosition = horizontal * (IMAGE_ADVANCED_EFFORTS.length - 1)", page)
+        self.assertIn("const modelPosition = (1 - vertical) * (IMAGE_ADVANCED_MODELS.length - 1)", page)
+        self.assertIn("Math.round(modelPosition)", page)
+        self.assertIn("Math.round(effortPosition)", page)
+        self.assertIn("const strength = 0.14 + 0.86 * Math.pow(1 - distance, 1.55)", page)
+        self.assertIn("const highlightScale = active ? (hot ? 2.2 : 2)", page)
+        self.assertIn("previewImageAdvancedPointer(event);", page)
+        self.assertIn("IMAGE_ADVANCED_MODELS[cell.modelIndex]", page)
+        self.assertIn("IMAGE_ADVANCED_EFFORTS[cell.effortIndex]", page)
+        self.assertIn("--dot-highlight-scale: 0", stylesheet)
+        self.assertIn("transform: scale(calc(1 + var(--dot-highlight-scale)))", stylesheet)
+        self.assertIn("left 400ms cubic-bezier(0.3, 1.35, 0.5, 1)", stylesheet)
+        self.assertIn("@property --adv-h", stylesheet)
+        self.assertIn("width 220ms cubic-bezier(0.22, 1, 0.36, 1)", stylesheet)
+        self.assertIn("--reasoning-menu-right", page)
+        self.assertIn("--reasoning-menu-normal-width", page)
+        self.assertIn("--reasoning-menu-advanced-width", page)
+        self.assertIn("right: var(--reasoning-menu-right, 12px)", stylesheet)
+        self.assertIn("left: auto", stylesheet)
+        self.assertIn("transform-origin: bottom right", stylesheet)
+        self.assertIn("width: var(--reasoning-menu-normal-width, 220px)", stylesheet)
+        self.assertIn("width: var(--reasoning-menu-advanced-width, 330px)", stylesheet)
+        self.assertIn("reasoningAdvancedModel: state.reasoningAdvancedModel", page)
+        self.assertIn("reasoningAdvancedEffort: state.reasoningAdvancedEffort", page)
+        self.assertIn("reasoningPreviousMode: state.reasoningPreviousMode", page)
+        self.assertIn("...reasoningOptions", page)
+        self.assertIn("reasoningMode: 'advanced'", page)
+        self.assertIn("reasoningModel: state.reasoningAdvancedModel", page)
+        self.assertIn("reasoningEffort: state.reasoningAdvancedEffort", page)
         self.assertIn("function setImageReasoningModeFromPointer(event)", page)
         self.assertIn("function initializeImageReasoningSlider()", page)
         self.assertIn("sliderTrack.addEventListener('keydown'", page)
@@ -2069,7 +2129,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn(".image-reasoning-control[data-mode=max]", stylesheet)
         self.assertRegex(
             stylesheet,
-            r"\.image-reasoning-menu\s*\{[^}]*display: flex;[^}]*flex-direction: column;[^}]*width: var\(--reasoning-menu-width, 220px\)",
+            r"\.image-reasoning-menu\s*\{[^}]*right: var\(--reasoning-menu-right, 12px\);[^}]*left: auto;[^}]*display: flex;[^}]*flex-direction: column;[^}]*width: var\(--reasoning-menu-normal-width, 220px\)",
         )
         self.assertRegex(
             stylesheet,
@@ -2092,6 +2152,12 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('.reasoning-bg-layer[data-layer-mode=high] .reasoning-gradient', stylesheet)
         self.assertIn('.reasoning-bg-layer[data-layer-mode=extra] .reasoning-gradient', stylesheet)
         self.assertIn('.reasoning-bg-layer[data-layer-mode=max] .reasoning-gradient', stylesheet)
+        self.assertIn('.reasoning-bg-layer[data-layer-mode=advanced] .reasoning-gradient', stylesheet)
+        self.assertIn('.image-reasoning-control[data-mode=advanced]', stylesheet)
+        self.assertIn('.image-reasoning-menu.is-advanced', stylesheet)
+        self.assertIn('.advanced-matrix', stylesheet)
+        self.assertIn('.advanced-pad', stylesheet)
+        self.assertIn('.advanced-knob', stylesheet)
         self.assertRegex(
             stylesheet,
             r"\.image-reasoning-control\[data-mode=high\]\s*\{[^}]*background: #5865f2;",
@@ -2171,7 +2237,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("sliderFill.style.transform = `translate3d(0, 0, 0) scaleX(${percentage / 100})`", page)
         self.assertIn("transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1)", stylesheet)
         self.assertIn("transform-origin: left center", stylesheet)
-        self.assertIn("controlRight - menuWidth", page)
+        self.assertNotIn("controlRight - menuWidth", page)
+        self.assertIn("layer.clientWidth - controlRight", page)
         self.assertIn(".image-reasoning-menu.is-open", stylesheet)
         self.assertIn(".image-reasoning-panel", stylesheet)
         self.assertIn(".image-reasoning-toggle", stylesheet)
@@ -2253,14 +2320,14 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("if (!expanded)", page)
         self.assertIn("function loadImageGenerationSetPreviews(set)", page)
         self.assertIn("previewPath = item.previewPath || item.result?.previewPath", page)
-        self.assertIn("setImageReasoningMode(normalizeImageReasoningMode(set.reasoningMode), false)", page)
+        self.assertIn("setImageReasoningSelection(\n                set.reasoningMode,", page)
         self.assertIn("item.setId === cleanSetId || item.requestId === cleanSetId", page)
         self.assertIn("const existingFinalFrame = Array.isArray(item.revealFrames)", page)
         self.assertIn("if (existingFinalFrame) return", page)
         self.assertIn("setImageWebSearchEnabled(set.webSearchEnabled === true, false)", page)
         self.assertIn("previousPrompt: set.originalPrompt || set.prompt || ''", page)
         self.assertIn("reasoningMode: window.imageEditState.reasoningMode", page)
-        self.assertIn("setImageReasoningMode(normalizeImageReasoningMode(draft.reasoningMode), false)", page)
+        self.assertIn("setImageReasoningSelection(\n                    draft.reasoningMode,", page)
         self.assertIn("function reasoningTurnsForSet(set)", page)
         self.assertIn("if (!Array.isArray(set.reasoningTurns)) set.reasoningTurns = []", page)
         self.assertIn("reasoningTurns: Array.isArray(set.reasoningTurns) ? set.reasoningTurns : []", page)
@@ -2794,6 +2861,118 @@ class ControllerTests(unittest.TestCase):
             "紫色披风、银色肩甲的角色正面图",
         )
 
+    def test_continuation_new_input_is_visible_to_planner_and_required_for_generation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pictures_root = root / "Pictures"
+            session_store = image_editor.ImageSessionStore(pictures_root)
+            parent_source = root / "parent.png"
+            added_source = root / "added.png"
+            output_source = root / "output.png"
+            Image.new("RGB", (8, 8), "purple").save(parent_source)
+            Image.new("RGB", (8, 8), "gold").save(added_source)
+            Image.new("RGB", (8, 8), "blue").save(output_source)
+            added_asset_id = app.image_asset_record(added_source)["assetId"]
+            session_store.begin_round(
+                "world-session",
+                "set-1",
+                "设计紫色披风角色",
+                1,
+                0,
+                {"originalPrompt": "设计紫色披风角色", "operation": "generate"},
+            )
+            parent_result = session_store.persist_result(
+                "world-session",
+                "set-1",
+                0,
+                parent_source,
+                {"width": 8, "height": 8, "format": "png"},
+            )
+            session_store.complete_round("world-session", "set-1")
+            service = SimpleNamespace(
+                generate=__import__("unittest.mock").mock.Mock(
+                    return_value={
+                        "ok": True,
+                        "path": str(output_source),
+                        "uri": output_source.as_uri(),
+                        "width": 8,
+                        "height": 8,
+                        "format": "png",
+                        "actualSize": "8x8",
+                    }
+                )
+            )
+            controller = app.AppController.__new__(app.AppController)
+            controller.active_image_sets = set()
+            controller.image_generator = service
+            controller.store = SimpleNamespace(
+                get_key_record=lambda key_id: {
+                    "id": key_id,
+                    "base_url": "https://example.test/v1",
+                },
+                get_secret=lambda _key_id: "secret",
+            )
+            planner_inputs = []
+
+            def stream_response(*args, **_kwargs):
+                planner_inputs.append(args[4])
+                return json.dumps(
+                    {
+                        "operation": "generate",
+                        "selected_asset_ids": [parent_result["assetId"]],
+                        "descriptions": [
+                            {
+                                "asset_id": parent_result["assetId"],
+                                "description": "紫色披风角色正面图",
+                            },
+                            {
+                                "asset_id": added_asset_id,
+                                "description": "金色材质与纹理参考图",
+                            },
+                        ],
+                        "rationale": "保留原有角色设计。",
+                    },
+                    ensure_ascii=False,
+                )
+
+            controller.client = SimpleNamespace(stream_response=stream_response)
+            with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
+                controller_image_files, "generated_pictures_dir", return_value=pictures_root
+            ):
+                result = controller.generate_image(
+                    "key-1",
+                    "加入这张金色材质参考图",
+                    [str(added_source)],
+                    {
+                        "requestId": "set-2",
+                        "sessionId": "world-session",
+                        "parentSetId": "set-1",
+                        "continuation": True,
+                        "reasoningMode": "instant",
+                    },
+                )
+
+            generated_paths = {str(path) for path in service.generate.call_args.args[2].image_paths}
+            planner_content = planner_inputs[0][0]["content"]
+            manifest = json.loads(
+                (pictures_root / "sessions" / "world-session" / "manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            added_asset = next(
+                asset for asset in manifest["assets"] if asset["assetId"] == added_asset_id
+            )
+            parent_asset = next(
+                asset for asset in manifest["assets"] if asset["assetId"] == parent_result["assetId"]
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["selectedAssetIds"], [parent_result["assetId"]])
+        self.assertEqual(sum(item["type"] == "input_image" for item in planner_content), 2)
+        self.assertIn(added_asset["assetId"], planner_content[0]["text"])
+        self.assertIn(str(pictures_root / "sessions" / "world-session" / added_asset["original"]), generated_paths)
+        self.assertIn(str(pictures_root / "sessions" / "world-session" / parent_asset["original"]), generated_paths)
+
     def test_continuation_planner_and_image_request_exclude_sibling_branch_assets(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -3011,17 +3190,17 @@ class ControllerTests(unittest.TestCase):
             },
             {
                 "flash": ("gpt-5.6-luna", "medium"),
-                "medium": ("gpt-5.6-terra", "medium"),
-                "high": ("gpt-5.6-terra", "high"),
-                "extra": ("gpt-5.6-terra", "xhigh"),
-                "max": ("gpt-5.6-sol", "xhigh"),
+                "medium": ("gpt-5.6-luna", "high"),
+                "high": ("gpt-5.6-terra", "xhigh"),
+                "extra": ("gpt-5.6-terra", "max"),
+                "max": ("gpt-5.6-sol", "max"),
             },
         )
         self.assertEqual(app.PROMPT_POLISH_MODEL, "gpt-5.6-terra")
         self.assertEqual(app.PROMPT_POLISH_REASONING_EFFORT, "medium")
         self.assertEqual(
             app.IMAGE_WEB_SEARCH_MODES,
-            {"flash", "medium", "high", "extra", "max"},
+            {"flash", "medium", "high", "extra", "max", "advanced"},
         )
         self.assertEqual(
             {
@@ -3044,6 +3223,65 @@ class ControllerTests(unittest.TestCase):
             app.IMAGE_REASONING_MODES["extra"]["depth"],
             app.IMAGE_REASONING_MODES["max"]["depth"],
         )
+
+    def test_advanced_reasoning_matrix_resolves_models_and_depth_budgets(self):
+        efforts = ["low", "medium", "high", "xhigh", "max"]
+        budget_fields = (
+            "max_turns",
+            "search_workers",
+            "search_parallel_queries",
+            "web_search_results",
+            "visual_search_results",
+        )
+        for model_key, model_name in app.IMAGE_ADVANCED_MODELS.items():
+            for effort in efforts:
+                config = app.resolve_image_reasoning_config("advanced", model_key, effort)
+                self.assertTrue(config["advanced"])
+                self.assertEqual(config["mode"], "advanced")
+                self.assertEqual(config["modelKey"], model_key)
+                self.assertEqual(config["model"], model_name)
+                self.assertEqual(config["effort"], effort)
+                self.assertIn("完整启用", config["depth"])
+        for field in budget_fields:
+            values = [app.IMAGE_ADVANCED_REASONING_MODES[effort][field] for effort in efforts]
+            self.assertEqual(values, sorted(values))
+            self.assertGreater(values[-1], values[0])
+        for effort in efforts:
+            budgets = {
+                tuple(
+                    app.resolve_image_reasoning_config("advanced", model, effort)[field]
+                    for field in budget_fields
+                )
+                for model in app.IMAGE_ADVANCED_MODELS
+            }
+            self.assertEqual(len(budgets), 1)
+
+    def test_generate_image_rejects_invalid_advanced_reasoning_selection(self):
+        controller = app.AppController.__new__(app.AppController)
+
+        invalid_model = controller.generate_image(
+            "key-1",
+            "Generate image",
+            [],
+            {
+                "reasoningMode": "advanced",
+                "reasoningModel": "unknown",
+                "reasoningEffort": "high",
+            },
+        )
+        invalid_effort = controller.generate_image(
+            "key-1",
+            "Generate image",
+            [],
+            {
+                "reasoningMode": "advanced",
+                "reasoningModel": "terra",
+                "reasoningEffort": "extreme",
+            },
+        )
+
+        self.assertEqual(invalid_model["error"], "无效的高级模型")
+        self.assertEqual(invalid_effort["error"], "无效的高级思维深度")
 
     def test_generate_image_rejects_removed_low_reasoning_mode(self):
         controller = app.AppController.__new__(app.AppController)
@@ -3116,12 +3354,12 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["prompt"], "A clean professional chart")
         self.assertEqual(result["originalPrompt"], "make this clearer")
-        self.assertEqual(result["reasoningModel"], "gpt-5.6-terra")
-        self.assertEqual(result["reasoningEffort"], "medium")
+        self.assertEqual(result["reasoningModel"], "gpt-5.6-luna")
+        self.assertEqual(result["reasoningEffort"], "high")
         self.assertEqual(service.generate.call_args.args[2].prompt, "A clean professional chart")
         response_call = controller.client.stream_response.call_args
-        self.assertEqual(response_call.args[2], "gpt-5.6-terra")
-        self.assertEqual(response_call.kwargs["reasoning_effort"], "medium")
+        self.assertEqual(response_call.args[2], "gpt-5.6-luna")
+        self.assertEqual(response_call.kwargs["reasoning_effort"], "high")
         self.assertEqual(
             [tool["name"] for tool in response_call.kwargs["tools"]],
             ["search_web", "search_visual_references", "select_visual_references"],
@@ -3146,6 +3384,73 @@ class ControllerTests(unittest.TestCase):
             event for event in events if event["type"] == "react_turn_completed"
         )
         self.assertEqual(completed_turn["text"], "环境：工作创作\n方案：清晰图表")
+
+    def test_generate_image_advanced_uses_selected_model_and_forces_all_tools(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            output_path = root / "result.png"
+            Image.new("RGB", (8, 8), "blue").save(output_path)
+            service = SimpleNamespace(
+                generate=Mock(
+                    return_value={
+                        "ok": True,
+                        "path": str(output_path),
+                        "uri": output_path.as_uri(),
+                        "width": 8,
+                        "height": 8,
+                        "format": "png",
+                        "actualSize": "8x8",
+                    }
+                )
+            )
+            controller = app.AppController.__new__(app.AppController)
+            controller.image_generator = service
+            controller.store = SimpleNamespace(
+                get_key_record=lambda key_id: {
+                    "id": key_id,
+                    "base_url": "https://example.test/v1",
+                },
+                get_secret=lambda _key_id: "secret",
+            )
+
+            def stream_response(*_args, **kwargs):
+                text = "已完成全部高级阶段。\n<<<FINAL_PROMPT>>>Advanced final prompt"
+                kwargs["on_delta"](text)
+                kwargs["on_completed"]({"output": []})
+                return text
+
+            controller.client = SimpleNamespace(stream_response=Mock(side_effect=stream_response))
+            with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
+                controller_image_files, "generated_pictures_dir", return_value=root / "Pictures"
+            ):
+                result = controller.generate_image(
+                    "key-1",
+                    "Create a fully researched image",
+                    [],
+                    {
+                        "requestId": "advanced-sol-high",
+                        "reasoningMode": "advanced",
+                        "reasoningModel": "sol",
+                        "reasoningEffort": "high",
+                        "webSearchEnabled": False,
+                    },
+                )
+
+        response_call = controller.client.stream_response.call_args
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["reasoningMode"], "advanced")
+        self.assertEqual(result["reasoningModel"], "gpt-5.6-sol")
+        self.assertEqual(result["reasoningEffort"], "high")
+        self.assertEqual(result["reasoningDepth"], "high")
+        self.assertTrue(result["webSearchEnabled"])
+        self.assertEqual(response_call.args[2], "gpt-5.6-sol")
+        self.assertEqual(response_call.kwargs["reasoning_effort"], "high")
+        self.assertEqual(
+            [tool["name"] for tool in response_call.kwargs["tools"]],
+            ["search_web", "search_visual_references", "select_visual_references"],
+        )
+        self.assertIn("必须完整执行需求理解", response_call.args[3])
+        self.assertIn("不得因深度较低而关闭任何阶段或工具", response_call.args[3])
 
     def test_flash_agent_assesses_information_gaps_and_keeps_search_tools(self):
         controller = app.AppController.__new__(app.AppController)
@@ -3235,7 +3540,7 @@ class ControllerTests(unittest.TestCase):
         self.assertAlmostEqual(result["reasoningUsage"]["costUsd"], 0.0001)
         controller.client.get_json.assert_not_called()
 
-    def test_extra_agent_uses_terra_xhigh_with_max_depth_logic(self):
+    def test_extra_agent_uses_terra_max_with_max_depth_logic(self):
         controller = app.AppController.__new__(app.AppController)
         captured = {}
 
@@ -3260,7 +3565,7 @@ class ControllerTests(unittest.TestCase):
         )
 
         self.assertEqual(captured["model"], "gpt-5.6-terra")
-        self.assertEqual(captured["reasoning_effort"], "xhigh")
+        self.assertEqual(captured["reasoning_effort"], "max")
         self.assertIn(app.IMAGE_REASONING_MODES["max"]["depth"], captured["instructions"])
         self.assertEqual(result["prompt"], "Extra final prompt")
 
@@ -5033,6 +5338,7 @@ class ControllerTests(unittest.TestCase):
             {
                 "add_key",
                 "append_image_stream_debug",
+                "benchmark_run",
                 "cancel_image_generation",
                 "check_for_updates",
                 "choose_edit_images",
@@ -5052,6 +5358,7 @@ class ControllerTests(unittest.TestCase):
                 "load_generated_image",
                 "list_image_sets",
                 "native_drag",
+                "open_benchmark",
                 "open_devtools",
                 "open_generated_pictures",
                 "polish_prompt",
@@ -5075,7 +5382,44 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("window", public_names)
         self.assertIn("open_generated_pictures", app.RPC_METHODS)
         self.assertIn("append_image_stream_debug", app.RPC_METHODS)
+        self.assertIn("benchmark_run", app.RPC_METHODS)
         self.assertIn("cancel_image_generation", app.RPC_METHODS)
+
+    def test_benchmark_run_executes_all_modes_and_labels_events(self):
+        controller = app.AppController.__new__(app.AppController)
+        calls = []
+        events = []
+
+        def generate_image(key_id, prompt, image_paths, options, event_callback=None):
+            calls.append((key_id, prompt, image_paths, options))
+            event_callback({"type": "react_started", "model": "model"})
+            return {
+                "ok": True,
+                "prompt": f"final-{options['reasoningMode']}",
+                "reasoningUsage": {},
+                "items": [],
+                "webReferences": [],
+            }
+
+        controller.generate_image = generate_image
+        result = controller.benchmark_run(
+            "key-1",
+            "benchmark prompt",
+            ["reference.png"],
+            {"benchmarkId": "benchmark-1", "quality": "low"},
+            event_callback=events.append,
+        )
+
+        expected_modes = {"instant", "flash", "medium", "high", "extra", "max"}
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["successful"], 6)
+        self.assertEqual({call[3]["reasoningMode"] for call in calls}, expected_modes)
+        self.assertEqual({item["benchmarkMode"] for item in result["results"]}, expected_modes)
+        self.assertTrue(all(call[3]["imageCount"] == 1 for call in calls))
+        react_events = [event for event in events if event["type"] == "react_started"]
+        self.assertEqual({event["benchmarkMode"] for event in react_events}, expected_modes)
+        self.assertEqual(events[0]["type"], "benchmark_started")
+        self.assertEqual(events[-1]["type"], "benchmark_completed")
 
     def test_append_image_stream_debug_writes_sanitized_json_lines(self):
         controller = app.AppController.__new__(app.AppController)
@@ -5357,6 +5701,36 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(connection.responses[1]["result"]["setId"], "set-1")
         self.assertTrue(connection.closed)
 
+    def test_rpc_server_streams_benchmark_events_before_result(self):
+        class FakeConnection:
+            def __init__(self):
+                self.responses = []
+
+            def recv(self):
+                return {
+                    "method": "benchmark_run",
+                    "args": ["key", "prompt", [], {"benchmarkId": "benchmark-1"}],
+                }
+
+            def send(self, response):
+                self.responses.append(response)
+
+            def close(self):
+                pass
+
+        def benchmark_run(*_args, event_callback=None):
+            event_callback({"type": "benchmark_started", "benchmarkId": "benchmark-1"})
+            return {"ok": True, "benchmarkId": "benchmark-1", "results": []}
+
+        connection = FakeConnection()
+        server = app.ControllerRpcServer(
+            SimpleNamespace(benchmark_run=benchmark_run), "pipe", b"secret"
+        )
+        server._handle_connection(connection)
+
+        self.assertEqual(connection.responses[0]["event"]["type"], "benchmark_started")
+        self.assertEqual(connection.responses[1]["result"]["benchmarkId"], "benchmark-1")
+
     def test_rpc_server_streams_prompt_polish_events_before_result(self):
         class FakeConnection:
             def __init__(self):
@@ -5403,12 +5777,18 @@ class ControllerTests(unittest.TestCase):
             save_edited_image=lambda path: {"local": path},
             copy_generated_image=lambda path: {"copied": path},
             push_image_generation_event=mock.Mock(),
+            push_benchmark_event=mock.Mock(),
+            open_benchmark=lambda api: {"local": api},
         )
         api = app.RemoteWebApi(controller, rpc)
 
         state = api.get_state()
         refresh = api.refresh_now("trace-1")
         generated = api.generate_image("key-1", "combine", ["a.png", "b.png"], {"quality": "low"})
+        benchmark_opened = api.open_benchmark()
+        benchmark = api.benchmark_run(
+            "key-1", "compare", [], {"benchmarkId": "benchmark-1"}
+        )
         polished = api.polish_prompt("key-1", "rough")
         listed = api.list_image_sets()
         deleted_set = api.delete_image_set("session-1", "set-1")
@@ -5426,14 +5806,28 @@ class ControllerTests(unittest.TestCase):
                 "args": ("key-1", "combine", ["a.png", "b.png"], {"quality": "low"}),
             },
         )
+        self.assertIs(benchmark_opened["local"], api)
+        self.assertEqual(
+            benchmark,
+            {
+                "method": "benchmark_run",
+                "args": ("key-1", "compare", [], {"benchmarkId": "benchmark-1"}),
+            },
+        )
         self.assertEqual(
             polished,
             {"method": "polish_prompt", "args": ("key-1", "rough")},
         )
-        self.assertIs(
-            rpc.call_with_events.call_args.kwargs["on_event"],
-            controller.push_image_generation_event,
+        generation_call = next(
+            call for call in rpc.call_with_events.call_args_list
+            if call.args[0] == "generate_image"
         )
+        benchmark_call = next(
+            call for call in rpc.call_with_events.call_args_list
+            if call.args[0] == "benchmark_run"
+        )
+        self.assertIs(generation_call.kwargs["on_event"], controller.push_image_generation_event)
+        self.assertIs(benchmark_call.kwargs["on_event"], controller.push_benchmark_event)
         self.assertEqual(choose, {"local": "choose"})
         self.assertEqual(listed, {"method": "list_image_sets", "args": ()})
         self.assertEqual(

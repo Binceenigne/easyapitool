@@ -94,6 +94,7 @@ class UiController(AppController):
         super().__init__(asset_cache)
         self.rpc_client = rpc_client
         self.release_timer: threading.Timer | None = None
+        self.benchmark_window: webview.Window | None = None
 
     def _destroy_ui(self) -> None:
         self.stopping.set()
@@ -149,6 +150,52 @@ class UiController(AppController):
             self.window.evaluate_js(f"window.applyImageGenerationEvent({payload});")
         except Exception:
             pass
+
+    def push_benchmark_event(self, event: dict[str, Any]) -> None:
+        if not self.benchmark_window:
+            return
+        payload = json.dumps(event, ensure_ascii=False)
+        try:
+            self.benchmark_window.evaluate_js(f"window.applyBenchmarkEvent({payload});")
+        except Exception:
+            pass
+
+    def open_benchmark(self, js_api: Any) -> dict[str, Any]:
+        if not self.asset_cache.is_ready():
+            return {"ok": False, "error": "Benchmark 静态资源尚未就绪"}
+        if self.benchmark_window is not None:
+            try:
+                self.benchmark_window.show()
+                return {"ok": True, "reused": True}
+            except Exception:
+                self.benchmark_window = None
+        benchmark_page = self.asset_cache.release_dir / "frontend/benchmark.html"
+        if not benchmark_page.is_file():
+            return {"ok": False, "error": "Benchmark 页面不存在"}
+        try:
+            benchmark_window = webview.create_window(
+                "API_TOOLS Benchmark",
+                url=benchmark_page.as_uri(),
+                js_api=js_api,
+                width=1500,
+                height=960,
+                min_size=(900, 640),
+                resizable=True,
+                background_color="#06121d",
+            )
+            if benchmark_window is None:
+                return {"ok": False, "error": "无法创建 Benchmark 窗口"}
+            self.benchmark_window = benchmark_window
+
+            def clear_benchmark_window(*_args: Any) -> None:
+                if self.benchmark_window is benchmark_window:
+                    self.benchmark_window = None
+
+            benchmark_window.events.closed += clear_benchmark_window
+            return {"ok": True, "reused": False}
+        except Exception as exc:
+            trace_startup("benchmark_window_failed", error=str(exc))
+            return {"ok": False, "error": f"无法打开 Benchmark：{exc}"}
 
     def restart_app(self) -> dict[str, Any]:
         self._flush_window_size()
@@ -250,6 +297,25 @@ class RemoteWebApi(WebApi):
             image_paths,
             options,
             on_event=self._controller.push_image_generation_event,
+        )
+
+    def open_benchmark(self) -> dict[str, Any]:
+        return self._controller.open_benchmark(self)
+
+    def benchmark_run(
+        self,
+        key_id: str,
+        prompt: str,
+        image_paths: list[str],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._rpc_client.call_with_events(
+            "benchmark_run",
+            key_id,
+            prompt,
+            image_paths,
+            options,
+            on_event=self._controller.push_benchmark_event,
         )
 
     def cancel_image_generation(self, request_id: str) -> dict[str, Any]:

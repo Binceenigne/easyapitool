@@ -294,6 +294,7 @@ class ImageSessionStore:
                     "reasoningMode": str(options.get("reasoningMode") or "instant"),
                     "reasoningModel": str(options.get("reasoningModel") or ""),
                     "reasoningEffort": str(options.get("reasoningEffort") or ""),
+                    "reasoningDepth": str(options.get("reasoningDepth") or ""),
                     "reasoningSummary": str(options.get("reasoningSummary") or ""),
                     "reasoningDurationMs": max(0, int(options.get("reasoningDurationMs") or 0)),
                     "reasoningUsage": self._reasoning_usage(options.get("reasoningUsage")),
@@ -835,26 +836,6 @@ class ImageSessionStore:
             round_data["completedAt"] = self._timestamp()
             self._write_manifest(manifest)
 
-    def cancel_round(self, session_id: str, set_id: str) -> None:
-        clean_session_id = self._safe_id(session_id)
-        clean_set_id = self._safe_id(set_id)
-        with self._manifest_lock:
-            manifest = self._read_manifest(clean_session_id)
-            if manifest is None:
-                return
-            round_data = next(
-                (item for item in manifest["rounds"] if item.get("setId") == clean_set_id),
-                None,
-            )
-            if round_data is None:
-                return
-            for item in round_data.get("items") or []:
-                if item.get("status") != "completed":
-                    item.update({"status": "cancelled", "error": "生成已停止"})
-            round_data["status"] = "cancelled"
-            round_data["completedAt"] = self._timestamp()
-            self._write_manifest(manifest)
-
     def list_sets(self) -> list[dict[str, Any]]:
         restored: list[dict[str, Any]] = []
         if not self.root.is_dir():
@@ -964,6 +945,7 @@ class ImageSessionStore:
                             "reasoningMode": reasoning_mode,
                             "reasoningModel": str(options.get("reasoningModel") or ""),
                             "reasoningEffort": str(options.get("reasoningEffort") or ""),
+                            "reasoningDepth": str(options.get("reasoningDepth") or options.get("reasoningEffort") or ""),
                             "reasoningSummary": reasoning_summary,
                             "reasoningDurationMs": max(0, int(options.get("reasoningDurationMs") or 0)),
                             "reasoningUsage": self._reasoning_usage(options.get("reasoningUsage")),
@@ -1287,10 +1269,7 @@ class ImageGenerationClient:
         response: Any,
         stream: bool,
         on_partial: Callable[[str, int], None] | None = None,
-        task_context: Any = None,
     ) -> dict[str, Any]:
-        if task_context is not None:
-            task_context.check_cancelled()
         if not stream:
             return json.loads(response.read().decode("utf-8"))
 
@@ -1359,8 +1338,6 @@ class ImageGenerationClient:
             pending_data = []
 
         for raw_line in response:
-            if task_context is not None:
-                task_context.check_cancelled()
             line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
             if not line:
                 flush_pending()
@@ -1403,10 +1380,7 @@ class ImageGenerationClient:
         fields: dict[str, Any],
         timeout: int = 600,
         on_partial: Callable[[str, int], None] | None = None,
-        task_context: Any = None,
     ) -> dict[str, Any]:
-        if task_context is not None:
-            task_context.check_cancelled()
         url = f"{base_url.rstrip('/')}/images/generations"
         request_id = new_network_request_id()
         request_started_at = time.perf_counter()
@@ -1437,8 +1411,6 @@ class ImageGenerationClient:
         )
         try:
             response_context = cls._opener().open(request, timeout=timeout)
-            if task_context is not None:
-                task_context.add_response(response_context)
         except urllib.error.HTTPError as exc:
             response_body = exc.read().decode("utf-8", "replace")
             log_network_error(
@@ -1481,11 +1453,8 @@ class ImageGenerationClient:
                     response,
                     bool(fields.get("stream")),
                     on_partial,
-                    task_context,
                 )
         except Exception as exc:
-            if task_context is not None:
-                task_context.check_cancelled()
             log_network_error(
                 "image_generation_stream_error",
                 request_id=request_id,
@@ -1505,9 +1474,6 @@ class ImageGenerationClient:
                 f"网络请求失败: {exc.reason if hasattr(exc, 'reason') else exc}"
                 f"（诊断 ID: {request_id}）"
             ) from None
-        finally:
-            if task_context is not None:
-                task_context.remove_response(response_context)
 
     @staticmethod
     def edit_images(
@@ -1517,10 +1483,7 @@ class ImageGenerationClient:
         fields: dict[str, Any],
         timeout: int = 600,
         on_partial: Callable[[str, int], None] | None = None,
-        task_context: Any = None,
     ) -> dict[str, Any]:
-        if task_context is not None:
-            task_context.check_cancelled()
         url = f"{base_url.rstrip('/')}/images/edits"
         request_id = new_network_request_id()
         request_started_at = time.perf_counter()
@@ -1580,8 +1543,6 @@ class ImageGenerationClient:
             response_context = ImageGenerationClient._opener().open(
                 request, timeout=timeout
             )
-            if task_context is not None:
-                task_context.add_response(response_context)
         except urllib.error.HTTPError as exc:
             response_body = exc.read().decode("utf-8", "replace")
             log_network_error(
@@ -1624,11 +1585,8 @@ class ImageGenerationClient:
                     response,
                     bool(fields.get("stream")),
                     on_partial,
-                    task_context,
                 )
         except Exception as exc:
-            if task_context is not None:
-                task_context.check_cancelled()
             log_network_error(
                 "image_edit_stream_error",
                 request_id=request_id,
@@ -1648,9 +1606,6 @@ class ImageGenerationClient:
                 f"网络请求失败: {exc.reason if hasattr(exc, 'reason') else exc}"
                 f"（诊断 ID: {request_id}）"
             ) from None
-        finally:
-            if task_context is not None:
-                task_context.remove_response(response_context)
 
 
 class ImageGenerationService:
@@ -1664,10 +1619,7 @@ class ImageGenerationService:
         request: ImageGenerationRequest,
         output_dir: Path,
         on_partial: Callable[[dict[str, Any]], None] | None = None,
-        task_context: Any = None,
     ) -> dict[str, Any]:
-        if task_context is not None:
-            task_context.check_cancelled()
         output_dir.mkdir(parents=True, exist_ok=True)
         generation_id = uuid.uuid4().hex[:12]
 
@@ -1707,7 +1659,6 @@ class ImageGenerationService:
                 request.image_paths,
                 request.fields,
                 on_partial=persist_partial,
-                task_context=task_context,
             )
         else:
             response = self.client.generate_image(
@@ -1715,10 +1666,7 @@ class ImageGenerationService:
                 secret,
                 request.fields,
                 on_partial=persist_partial,
-                task_context=task_context,
             )
-        if task_context is not None:
-            task_context.check_cancelled()
         image_data = ((response.get("data") or [{}])[0] or {}).get("b64_json")
         if not image_data:
             raise RuntimeError("生图接口未返回图片数据")

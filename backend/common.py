@@ -51,7 +51,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -71,7 +71,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "51"
+STATIC_UI_VERSION = "52"
 IMAGE_STREAM_DEBUG_LOG_MAX_BYTES = 20 * 1024 * 1024
 WEB_SEARCH_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 WEB_REFERENCE_IMAGE_MAX_BYTES = 16 * 1024 * 1024
@@ -152,8 +152,8 @@ IMAGE_REASONING_MODES = {
         "depth": "Flash 模式：仍须先判断自己要完成什么、哪些要求已明确、是否存在自己不理解或会影响结果的信息缺口；在此基础上迅速选择一个可执行方案。若开启搜索且缺口重要，立即做必要检索并根据结果快速复核，然后形成生图提示词进入迭代。Flash 压缩的是比较和反思轮次，不是省略任务理解与信息缺口判断。",
     },
     "medium": {
-        "model": "gpt-5.6-terra",
-        "effort": "medium",
+        "model": "gpt-5.6-luna",
+        "effort": "high",
         "max_turns": 5,
         "max_references": 4,
         "search_workers": 8,
@@ -164,7 +164,7 @@ IMAGE_REASONING_MODES = {
     },
     "high": {
         "model": "gpt-5.6-terra",
-        "effort": "high",
+        "effort": "xhigh",
         "max_turns": 7,
         "max_references": 6,
         "search_workers": 16,
@@ -175,7 +175,7 @@ IMAGE_REASONING_MODES = {
     },
     "extra": {
         "model": "gpt-5.6-terra",
-        "effort": "xhigh",
+        "effort": "max",
         "max_turns": 10,
         "max_references": 6,
         "search_workers": 24,
@@ -186,7 +186,7 @@ IMAGE_REASONING_MODES = {
     },
     "max": {
         "model": "gpt-5.6-sol",
-        "effort": "xhigh",
+        "effort": "max",
         "max_turns": 12,
         "max_references": 8,
         "search_workers": 32,
@@ -196,9 +196,101 @@ IMAGE_REASONING_MODES = {
         "depth": "Max 模式：先拟定多个足够详细的候选方案，主动且可多轮搜索网页与图片，交叉核对信息并阅读视觉候选；频繁反思遗漏、冲突、构图、材质和事实风险，只有确认信息与方案均充分周全后才形成最终生图提示词。",
     },
 }
-IMAGE_WEB_SEARCH_MODES = set(IMAGE_REASONING_MODES)
+IMAGE_ADVANCED_MODELS = {
+    "luna": "gpt-5.6-luna",
+    "terra": "gpt-5.6-terra",
+    "sol": "gpt-5.6-sol",
+}
+IMAGE_ADVANCED_REASONING_MODES = {
+    "low": {
+        "model": "",
+        "effort": "low",
+        "max_turns": 3,
+        "max_references": 3,
+        "search_workers": 4,
+        "search_parallel_queries": 2,
+        "web_search_results": 8,
+        "visual_search_results": 8,
+        "depth": "高级模式低深度：完整启用需求判断、方案设计、工具调用和结果复核；控制思考轮数与搜索规模以保持响应速度。",
+    },
+    "medium": {
+        "model": "",
+        "effort": "medium",
+        "max_turns": 5,
+        "max_references": 4,
+        "search_workers": 8,
+        "search_parallel_queries": 4,
+        "web_search_results": 12,
+        "visual_search_results": 12,
+        "depth": "高级模式中深度：完整启用需求判断、方案设计、工具调用和结果复核，并扩大思考与搜索规模。",
+    },
+    "high": {
+        "model": "",
+        "effort": "high",
+        "max_turns": 7,
+        "max_references": 6,
+        "search_workers": 16,
+        "search_parallel_queries": 6,
+        "web_search_results": 20,
+        "visual_search_results": 16,
+        "depth": "高级模式高深度：完整启用多阶段分析、方案比较、工具检索和结果复核，强化视觉细节与事实准确性。",
+    },
+    "xhigh": {
+        "model": "",
+        "effort": "xhigh",
+        "max_turns": 10,
+        "max_references": 6,
+        "search_workers": 24,
+        "search_parallel_queries": 10,
+        "web_search_results": 32,
+        "visual_search_results": 24,
+        "depth": "高级模式超高深度：完整启用长链路推演、候选比较、并行检索和结果复核，持续优化最终方案。",
+    },
+    "max": {
+        "model": "",
+        "effort": "max",
+        "max_turns": 12,
+        "max_references": 8,
+        "search_workers": 32,
+        "search_parallel_queries": 16,
+        "web_search_results": 48,
+        "visual_search_results": 32,
+        "depth": "高级模式最大深度：完整启用全部思维阶段和工具，在最大轮数与最大搜索规模内反复核验并优化。",
+    },
+}
+IMAGE_WEB_SEARCH_MODES = set(IMAGE_REASONING_MODES) | {"advanced"}
 IMAGE_CONTINUATION_PLANNER_MODEL = "gpt-5.6-luna"
-IMAGE_CONTINUATION_PLANNER_EFFORT = "minimal"
+IMAGE_CONTINUATION_PLANNER_EFFORT = "low"
+
+
+def resolve_image_reasoning_config(
+    mode: Any,
+    model: Any = None,
+    effort: Any = None,
+) -> dict[str, Any]:
+    clean_mode = str(mode or "instant").strip().lower()
+    if clean_mode in IMAGE_REASONING_MODES:
+        return {
+            **IMAGE_REASONING_MODES[clean_mode],
+            "mode": clean_mode,
+            "advanced": False,
+            "modelKey": "",
+        }
+    if clean_mode != "advanced":
+        raise ValueError("无效的思维模式")
+    clean_model = str(model or "luna").strip().lower().removeprefix("gpt-5.6-")
+    clean_effort = str(effort or "low").strip().lower()
+    if clean_model not in IMAGE_ADVANCED_MODELS:
+        raise ValueError("无效的高级模型")
+    if clean_effort not in IMAGE_ADVANCED_REASONING_MODES:
+        raise ValueError("无效的高级思维深度")
+    return {
+        **IMAGE_ADVANCED_REASONING_MODES[clean_effort],
+        "mode": "advanced",
+        "advanced": True,
+        "model": IMAGE_ADVANCED_MODELS[clean_model],
+        "modelKey": clean_model,
+    }
 
 
 def image_asset_record(image_path: Path) -> dict[str, Any]:
@@ -230,6 +322,20 @@ def image_continuation_prompt(
         }
         for item in context.get("history") or []
     ]
+    visible_asset_ids = {
+        str(asset.get("assetId") or "")
+        for asset in visible_assets
+        if asset.get("assetId")
+    }
+    historical_input_asset_ids = list(
+        dict.fromkeys(
+            str(asset_id)
+            for item in history
+            for asset_id in item["inputAssetIds"]
+            if asset_id and asset_id not in visible_asset_ids
+        )
+    )
+    historical_input_asset_id_set = set(historical_input_asset_ids)
     catalog = [
         {
             "assetId": str(asset.get("assetId") or ""),
@@ -237,6 +343,12 @@ def image_continuation_prompt(
             or "尚无缓存描述；除非该素材列在 visibleAssetIds 中，否则不要假定其画面内容。",
             "sourceSetIds": list(asset.get("sourceSetIds") or []),
             "sourceRoles": list(asset.get("sourceRoles") or []),
+            "selectionPolicy": (
+                "历史用户上传参考图：仅在有助于保持角色、物体、材质、风格或世界观一致时主动选用；"
+                "不要因为它存在就自动加入最终参考图，以节省 16 个图片槽位。"
+                if str(asset.get("assetId") or "") in historical_input_asset_id_set
+                else "按当前续作规划判断是否需要选用。"
+            ),
         }
         for asset in context.get("assets") or []
         if asset.get("assetId")
@@ -250,6 +362,7 @@ def image_continuation_prompt(
             for asset in visible_assets
             if asset.get("assetId")
         ],
+        "historicalInputAssetIds": historical_input_asset_ids,
         "descriptionRequiredAssetIds": [
             str(asset.get("assetId") or "")
             for asset in visible_assets
@@ -507,6 +620,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENTRY_SCRIPT = PROJECT_ROOT / "app.py"
 FRONTEND_RUNTIME_FILES = (
     MAIN_PAGE_NAME,
+    "frontend/benchmark.html",
     "frontend/styles/app.css",
     "frontend/styles/legacy.css",
     "frontend/assets/title_logo.png",

@@ -84,10 +84,7 @@ class EasyClinClient:
         parallel_tool_calls: bool | None = None,
         on_completed: Any = None,
         allow_empty_text: bool = False,
-        task_context: Any = None,
     ) -> str:
-        if task_context is not None:
-            task_context.check_cancelled()
         url = f"{base_url.rstrip('/')}/responses"
         payload = {
             "model": model,
@@ -137,8 +134,6 @@ class EasyClinClient:
         for attempt in range(2):
             try:
                 response_context = urllib.request.urlopen(request, timeout=timeout)
-                if task_context is not None:
-                    task_context.add_response(response_context)
                 break
             except urllib.error.HTTPError as exc:
                 response_body = exc.read().decode("utf-8", "replace")
@@ -252,8 +247,6 @@ class EasyClinClient:
                         on_completed(completed if isinstance(completed, dict) else payload)
 
                 for raw_line in response:
-                    if task_context is not None:
-                        task_context.check_cancelled()
                     line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
                     if not line:
                         flush_event()
@@ -267,8 +260,6 @@ class EasyClinClient:
                     raise RuntimeError("Responses 接口未返回文本")
                 return text
         except Exception as exc:
-            if task_context is not None:
-                task_context.check_cancelled()
             log_network_error(
                 "responses_stream_error",
                 request_id=request_id,
@@ -288,6 +279,3 @@ class EasyClinClient:
             raise RuntimeError(
                 f"Responses 网络请求失败: {reason}（诊断 ID: {request_id}）"
             ) from None
-        finally:
-            if task_context is not None:
-                task_context.remove_response(response_context)

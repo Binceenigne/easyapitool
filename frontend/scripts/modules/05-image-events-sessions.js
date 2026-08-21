@@ -38,6 +38,7 @@
                 set.reasoningMode = normalizeImageReasoningMode(event.reasoningMode || set.reasoningMode);
                 set.reasoningModel = event.reasoningModel || set.reasoningModel;
                 set.reasoningEffort = event.reasoningEffort || set.reasoningEffort;
+                set.reasoningDepth = event.reasoningDepth || set.reasoningDepth || set.reasoningEffort;
                 set.reasoningSummary = event.reasoningSummary || set.reasoningSummary;
                 set.reasoningDurationMs = Math.max(0, Number(event.reasoningDurationMs) || set.reasoningDurationMs);
                 set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage);
@@ -61,6 +62,7 @@
                 set.reasoningMode = normalizeImageReasoningMode(event.mode || set.reasoningMode);
                 set.reasoningModel = event.model || '';
                 set.reasoningEffort = event.reasoningEffort || '';
+                set.reasoningDepth = event.reasoningDepth || set.reasoningDepth || set.reasoningEffort;
                 set.webSearchEnabled = event.webSearchEnabled === true;
                 set.reasoningStartedAt ||= Date.now();
                 set.reasoningCompletedAt = 0;
@@ -138,6 +140,7 @@
                 set.effectivePrompt = event.prompt || '';
                 set.reasoningModel = event.model || set.reasoningModel;
                 set.reasoningEffort = event.reasoningEffort || set.reasoningEffort;
+                set.reasoningDepth = event.reasoningDepth || set.reasoningDepth || set.reasoningEffort;
                 set.webSearchEnabled = event.webSearchEnabled === true || set.webSearchEnabled;
                 if (event.webSearchFailed) set.webSearchStatus = 'failed';
                 else if (event.webSearchUsed) set.webSearchStatus = 'completed';
@@ -353,9 +356,8 @@
 
         function setImageEditSessionUi(active) {
             const placeholder = active
-                ? '描述本轮要修改或继续创作的内容'
+                ? '描述本轮要修改或继续创作的内容；可添加必须参考的图片'
                 : '描述要生成的图片；也可以粘贴或拖入参考图片';
-            document.getElementById('editImageSelection').hidden = active;
             document.getElementById('imageEditPrompt').placeholder = placeholder;
             document.getElementById('imagePromptModalTextarea').placeholder = placeholder;
         }
@@ -370,6 +372,9 @@
                     files: [...window.imageEditState.files],
                     prompt: document.getElementById('imageEditPrompt').value,
                     reasoningMode: window.imageEditState.reasoningMode,
+                    reasoningAdvancedModel: window.imageEditState.reasoningAdvancedModel,
+                    reasoningAdvancedEffort: window.imageEditState.reasoningAdvancedEffort,
+                    reasoningPreviousMode: window.imageEditState.reasoningPreviousMode,
                     webSearchEnabled: window.imageEditState.webSearchEnabled
                 };
             }
@@ -379,9 +384,19 @@
                 roundNumber: Number(set.roundNumber) || 1,
                 previousPrompt: set.originalPrompt || set.prompt || ''
             };
-            setImageReasoningMode(normalizeImageReasoningMode(set.reasoningMode), false);
+            window.imageEditState.reasoningPreviousMode = normalizeImageReasoningPreset(
+                set.reasoningPreviousMode || window.imageEditState.reasoningPreviousMode
+            );
+            setImageReasoningSelection(
+                set.reasoningMode,
+                set.reasoningModel,
+                set.reasoningDepth || set.reasoningEffort,
+                false
+            );
             setImageWebSearchEnabled(set.webSearchEnabled === true, false);
             setImageEditSessionUi(true);
+            window.imageEditState.files = [];
+            renderEditImageList();
             const prompt = document.getElementById('imageEditPrompt');
             prompt.value = '';
             resizeImagePrompt();
@@ -398,7 +413,13 @@
             if (draft) {
                 window.imageEditState.files = [...draft.files];
                 document.getElementById('imageEditPrompt').value = draft.prompt || '';
-                setImageReasoningMode(normalizeImageReasoningMode(draft.reasoningMode), false);
+                window.imageEditState.reasoningPreviousMode = normalizeImageReasoningPreset(draft.reasoningPreviousMode);
+                setImageReasoningSelection(
+                    draft.reasoningMode,
+                    draft.reasoningAdvancedModel,
+                    draft.reasoningAdvancedEffort,
+                    false
+                );
                 setImageWebSearchEnabled(draft.webSearchEnabled === true, false);
                 persistImageGenerationPreferences();
             }
@@ -423,6 +444,8 @@
                 previousPrompt: result.originalPrompt || result.prompt || ''
             };
             setImageEditSessionUi(true);
+            window.imageEditState.files = [];
+            renderEditImageList();
             document.getElementById('imageEditPrompt').value = '';
             resizeImagePrompt();
             document.getElementById('imageEditHeading').textContent = `会话续作 · 第 ${window.imageEditState.editSession.roundNumber + 1} 轮`;
@@ -744,7 +767,7 @@
             )) {
                 return showToast('该图片会话已有任务正在运行，请等待完成或先停止任务', 'error');
             }
-            const files = session ? [] : window.imageEditState.files;
+            const files = [...window.imageEditState.files];
             const activeKey = getActiveKey();
             const promptInput = document.getElementById('imageEditPrompt');
             const prompt = promptInput.value.trim();
@@ -757,6 +780,7 @@
             const status = document.getElementById('imageEditStatus');
             const requestId = globalThis.crypto?.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`;
             const imageCount = window.imageEditState.imageCount;
+            const reasoningOptions = currentImageReasoningRequestOptions();
             const requestOptions = {
                 size: document.getElementById('imageEditSize').value,
                 quality: document.getElementById('imageEditQuality').value,
@@ -766,18 +790,24 @@
                 sessionId: session?.sessionId || requestId,
                 parentSetId: session?.setId || '',
                 continuation: Boolean(session),
-                reasoningMode: window.imageEditState.reasoningMode,
-                webSearchEnabled: window.imageEditState.webSearchEnabled
+                ...reasoningOptions,
+                reasoningDepth: window.imageEditState.reasoningAdvanced
+                    ? window.imageEditState.reasoningAdvancedEffort
+                    : '',
+                webSearchEnabled: window.imageEditState.reasoningAdvanced
+                    ? true
+                    : window.imageEditState.webSearchEnabled
             };
             createImageGenerationSet(requestId, imageCount, prompt, {
                 sessionId: session?.sessionId || requestId,
                 parentSetId: session?.setId || '',
                 roundNumber: session ? session.roundNumber + 1 : 1,
                 continuation: Boolean(session),
-                reasoningMode: window.imageEditState.reasoningMode,
-                reasoningStatus: window.imageEditState.reasoningMode === 'instant' ? 'idle' : 'running',
+                ...reasoningOptions,
+                reasoningDepth: requestOptions.reasoningDepth,
+                reasoningStatus: reasoningOptions.reasoningMode === 'instant' ? 'idle' : 'running',
                 reasoningStartedAt: Date.now(),
-                reasoningTurns: window.imageEditState.reasoningMode === 'instant' ? [] : [{
+                reasoningTurns: reasoningOptions.reasoningMode === 'instant' ? [] : [{
                     turn: 1,
                     title: '正在分析问题',
                     text: '',
@@ -786,7 +816,8 @@
                     completedAt: 0,
                     tools: []
                 }],
-                webSearchEnabled: window.imageEditState.reasoningMode !== 'instant' && window.imageEditState.webSearchEnabled
+                webSearchEnabled: reasoningOptions.reasoningMode === 'advanced'
+                    || reasoningOptions.reasoningMode !== 'instant' && window.imageEditState.webSearchEnabled
             });
             closeImageGenerationControls();
             closeImageReasoningMenu();
@@ -796,8 +827,12 @@
                 parentSetId: requestOptions.parentSetId,
                 startedAt: Date.now()
             });
-            status.textContent = window.imageEditState.reasoningMode !== 'instant'
-                ? `${IMAGE_REASONING_LABELS[window.imageEditState.reasoningMode]} 模式正在理解需求并设计方案`
+            status.textContent = reasoningOptions.reasoningMode !== 'instant'
+                ? `${imageReasoningModeLabel(
+                    reasoningOptions.reasoningMode,
+                    reasoningOptions.reasoningModel,
+                    requestOptions.reasoningDepth || reasoningOptions.reasoningEffort
+                )} 模式正在理解需求并设计方案`
                 : session
                 ? `正在生成第 ${session.roundNumber + 1} 轮图片`
                 : files.length

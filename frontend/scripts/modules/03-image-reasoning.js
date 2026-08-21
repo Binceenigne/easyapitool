@@ -1,6 +1,8 @@
         const IMAGE_REASONING_MODES = ['instant', 'flash', 'medium', 'high', 'extra', 'max'];
+        const IMAGE_ADVANCED_MODELS = ['luna', 'terra', 'sol'];
+        const IMAGE_ADVANCED_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
         const IMAGE_REASONING_LABELS = {
-            instant: 'Instant', flash: 'Flash', medium: 'Medium', high: 'High', extra: 'Extra', max: 'Max'
+            instant: 'Instant', flash: 'Flash', medium: 'Medium', high: 'High', extra: 'Extra', max: 'Max', advanced: '高级'
         };
         const IMAGE_REASONING_DESCRIPTIONS = {
             instant: '直接快速获得结果',
@@ -23,11 +25,20 @@
             medium: ['#4f7df3', '#5b8def', '#5cc8ff', '#9bdcff'],
             high: ['#5865f2', '#6478f5', '#7185f7', '#8170f5'],
             extra: ['#6d5dfc', '#8b6cff', '#b99cff', '#d9c7ff'],
-            max: ['#536dfe', '#5b8def', '#8b6cff', '#e9ddff', '#3b82f6']
+            max: ['#536dfe', '#5b8def', '#8b6cff', '#e9ddff', '#3b82f6'],
+            advanced: ['#38bdf8', '#5b8def', '#6366f1', '#8b5cf6', '#c084fc']
         };
         const IMAGE_REASONING_STATUS_COLORS = {
             instant: '#27303d', flash: '#0284c7', medium: '#2563eb',
-            high: '#5865f2', extra: '#6d5dfc', max: '#536dfe'
+            high: '#5865f2', extra: '#6d5dfc', max: '#536dfe', advanced: '#6366f1'
+        };
+        const IMAGE_ADVANCED_MODEL_DETAILS = {
+            luna: { name: 'gpt5.6luna', hue: 199, description: '轻快响应 · 日常问答首选' },
+            terra: { name: 'gpt5.6terra', hue: 229, description: '均衡全能 · 复杂任务更稳' },
+            sol: { name: 'gpt5.6sol', hue: 258, description: '旗舰推理 · 挑战最难问题' }
+        };
+        const IMAGE_ADVANCED_EFFORT_DETAILS = {
+            low: '低耗速答', medium: '适度思考', high: '深度推理', xhigh: '超长思维链', max: '极限反思'
         };
         const IMAGE_REASONING_HOVER_PLAYBACK_RATE = 2.5;
         let imageReasoningGradientTimer = 0;
@@ -37,7 +48,242 @@
 
         function normalizeImageReasoningMode(mode) {
             const cleanMode = String(mode || 'instant').toLowerCase();
+            return cleanMode === 'advanced' || IMAGE_REASONING_MODES.includes(cleanMode) ? cleanMode : 'instant';
+        }
+
+        function normalizeImageReasoningPreset(mode) {
+            const cleanMode = String(mode || 'instant').toLowerCase();
             return IMAGE_REASONING_MODES.includes(cleanMode) ? cleanMode : 'instant';
+        }
+
+        function normalizeImageAdvancedModel(model) {
+            const cleanModel = String(model || 'luna').toLowerCase().replace(/^gpt-5\.6-/, '');
+            return IMAGE_ADVANCED_MODELS.includes(cleanModel) ? cleanModel : 'luna';
+        }
+
+        function normalizeImageAdvancedEffort(effort) {
+            const cleanEffort = String(effort || 'low').toLowerCase();
+            return IMAGE_ADVANCED_EFFORTS.includes(cleanEffort) ? cleanEffort : 'low';
+        }
+
+        function restoreImageReasoningPreferences(saved = {}, persist = false) {
+            const source = saved && typeof saved === 'object' ? saved : {};
+            const advanced = source.reasoningAdvanced === true || source.reasoningMode === 'advanced';
+            const previousMode = normalizeImageReasoningPreset(
+                source.reasoningPreviousMode || (advanced ? 'instant' : source.reasoningMode)
+            );
+            window.imageEditState.reasoningPreviousMode = previousMode;
+            window.imageEditState.reasoningAdvancedModel = normalizeImageAdvancedModel(source.reasoningAdvancedModel);
+            window.imageEditState.reasoningAdvancedEffort = normalizeImageAdvancedEffort(source.reasoningAdvancedEffort);
+            window.imageEditState.reasoningAdvanced = advanced;
+            if (advanced) {
+                window.imageEditState.reasoningMode = 'advanced';
+                setImageAdvancedMode(
+                    window.imageEditState.reasoningAdvancedModel,
+                    window.imageEditState.reasoningAdvancedEffort,
+                    persist
+                );
+                window.imageEditState.reasoningPreviousMode = previousMode;
+            } else {
+                setImageReasoningMode(normalizeImageReasoningPreset(source.reasoningMode), persist);
+            }
+        }
+
+        function currentImageReasoningRequestOptions() {
+            const state = window.imageEditState;
+            return state.reasoningAdvanced
+                ? {
+                    reasoningMode: 'advanced',
+                    reasoningModel: state.reasoningAdvancedModel,
+                    reasoningEffort: state.reasoningAdvancedEffort
+                }
+                : {
+                    reasoningMode: normalizeImageReasoningMode(state.reasoningMode),
+                    reasoningModel: '',
+                    reasoningEffort: ''
+                };
+        }
+
+        function imageReasoningModeLabel(mode, model = '', effort = '') {
+            const cleanMode = normalizeImageReasoningMode(mode);
+            if (cleanMode !== 'advanced') return IMAGE_REASONING_LABELS[cleanMode];
+            const cleanModel = normalizeImageAdvancedModel(model);
+            const cleanEffort = normalizeImageAdvancedEffort(effort);
+            return `高级 ${cleanModel} · ${cleanEffort}`;
+        }
+
+        function imageAdvancedHue(modelIndex, effortIndex) {
+            const lowerIndex = Math.max(0, Math.min(IMAGE_ADVANCED_MODELS.length - 1, Math.floor(modelIndex)));
+            const upperIndex = Math.max(0, Math.min(IMAGE_ADVANCED_MODELS.length - 1, Math.ceil(modelIndex)));
+            const mix = modelIndex - lowerIndex;
+            const lowerHue = IMAGE_ADVANCED_MODEL_DETAILS[IMAGE_ADVANCED_MODELS[lowerIndex]].hue;
+            const upperHue = IMAGE_ADVANCED_MODEL_DETAILS[IMAGE_ADVANCED_MODELS[upperIndex]].hue;
+            return lowerHue + (upperHue - lowerHue) * mix + effortIndex * 1.1;
+        }
+
+        function imageAdvancedGlowColor(effortIndex, modelIndex, alpha) {
+            return `hsla(${imageAdvancedHue(modelIndex, effortIndex)}, 95%, ${64 - effortIndex * 2}%, ${alpha})`;
+        }
+
+        function imageAdvancedCellGlow(effortIndex, modelIndex) {
+            const alpha = 0.2 + effortIndex * 0.07;
+            return `0 0 ${12 + effortIndex * 5}px ${imageAdvancedGlowColor(effortIndex, modelIndex, alpha)}, 0 0 ${26 + effortIndex * 9}px ${imageAdvancedGlowColor(effortIndex, modelIndex, alpha * 0.55)}`;
+        }
+
+        function imageAdvancedPadGlow(effortIndex, modelIndex) {
+            const highReduction = Math.max(0, effortIndex - 1);
+            const alpha = 0.2 + effortIndex * 0.07 - highReduction * 0.06;
+            const innerRadius = 12 + effortIndex * 5 - highReduction * 2.5;
+            const outerRadius = 26 + effortIndex * 9 - highReduction * 4;
+            return `0 0 ${innerRadius}px ${imageAdvancedGlowColor(effortIndex, modelIndex, alpha)}, 0 0 ${outerRadius}px ${imageAdvancedGlowColor(effortIndex, modelIndex, alpha * 0.4)}`;
+        }
+
+        function applyImageAdvancedButtonTheme(modelIndex, effortIndex) {
+            const control = document.getElementById('imageReasoningControl');
+            if (!control) return;
+            const menu = document.getElementById('imageReasoningMenu');
+            const hue = imageAdvancedHue(modelIndex, effortIndex);
+            const saturation = 88 - effortIndex * 2;
+            const lightness = 62 - effortIndex * 3;
+            [control, menu].filter(Boolean).forEach(target => {
+                target.style.setProperty('--adv-h', hue.toFixed(2));
+                target.style.setProperty('--adv-s', `${saturation.toFixed(2)}%`);
+                target.style.setProperty('--adv-l', `${lightness.toFixed(2)}%`);
+                target.style.setProperty('--adv-pad-l', `${(13 + effortIndex * 0.4).toFixed(2)}%`);
+                target.style.setProperty('--adv-pad-halo', (0.15 + effortIndex * 0.025).toFixed(3));
+                target.style.setProperty('--adv-pad-color-alpha', (0.82 - effortIndex * 0.035).toFixed(3));
+            });
+            control.dataset.advanced = '1';
+            control.style.boxShadow = `0 0 ${6 + effortIndex}px ${imageAdvancedGlowColor(effortIndex, modelIndex, 0.28)}, 0 0 ${12 + effortIndex * 2}px ${imageAdvancedGlowColor(effortIndex, modelIndex, 0.14)}`;
+            control.style.setProperty(
+                '--reasoning-hover-shadow',
+                `0 0 ${8 + effortIndex}px ${imageAdvancedGlowColor(effortIndex, modelIndex, 0.36)}, 0 0 ${14 + effortIndex * 2}px ${imageAdvancedGlowColor(effortIndex, modelIndex, 0.2)}`
+            );
+            control.querySelectorAll('.reasoning-bg-layer').forEach(layer => {
+                layer.classList.toggle('is-visible', layer.dataset.layerMode === 'advanced');
+            });
+        }
+
+        function clearImageAdvancedButtonTheme() {
+            const control = document.getElementById('imageReasoningControl');
+            if (!control) return;
+            const menu = document.getElementById('imageReasoningMenu');
+            delete control.dataset.advanced;
+            control.style.removeProperty('box-shadow');
+            [control, menu].filter(Boolean).forEach(target => {
+                ['--adv-h', '--adv-s', '--adv-l', '--adv-pad-l', '--adv-pad-halo', '--adv-pad-color-alpha', '--reasoning-hover-shadow']
+                    .forEach(property => target.style.removeProperty(property));
+            });
+        }
+
+        function updateImageAdvancedHighlights(effortPosition, modelPosition, hot = false) {
+            const centerColumn = Math.round(effortPosition / 4 * 16);
+            const centerRow = Math.round((2 - modelPosition) / 2 * 10);
+            document.querySelectorAll('.advanced-anchor').forEach(anchor => {
+                const column = Number(anchor.dataset.col);
+                const row = Number(anchor.dataset.row);
+                const onRow = row === centerRow;
+                const onColumn = column === centerColumn;
+                const onAxis = onRow || onColumn;
+                const active = onRow && onColumn;
+                anchor.classList.toggle('is-axis', onAxis);
+                if (!onAxis) {
+                    ['--dot-highlight-scale', '--dot-alpha', '--dot-glow', '--dot-glow-alpha']
+                        .forEach(property => anchor.style.removeProperty(property));
+                    return;
+                }
+                const axisDistance = onRow
+                    ? Math.abs(column - centerColumn)
+                    : Math.abs(row - centerRow);
+                const armLength = onRow
+                    ? (column < centerColumn ? centerColumn : 16 - centerColumn)
+                    : (row < centerRow ? centerRow : 10 - centerRow);
+                const distance = armLength > 0 ? axisDistance / armLength : 0;
+                const strength = 0.14 + 0.86 * Math.pow(1 - distance, 1.55);
+                const highlightScale = active ? (hot ? 2.2 : 2) : 0.12 + strength * 1.38;
+                anchor.style.setProperty('--dot-highlight-scale', highlightScale.toFixed(3));
+                anchor.style.setProperty('--dot-alpha', (0.36 + strength * 0.64).toFixed(3));
+                anchor.style.setProperty('--dot-glow', `${(0.5 + strength * 7.5).toFixed(2)}px`);
+                anchor.style.setProperty('--dot-glow-alpha', (0.04 + strength * 0.64).toFixed(3));
+            });
+            document.querySelectorAll('.advanced-x-label').forEach(label => {
+                label.classList.toggle('is-active', Number(label.dataset.xLabel) === Math.round(effortPosition));
+            });
+            document.querySelectorAll('.advanced-y-label').forEach(label => {
+                label.classList.toggle('is-active', Number(label.dataset.yLabel) === Math.round(modelPosition));
+            });
+        }
+
+        function updateImageAdvancedSelectionUi(model, effort) {
+            const cleanModel = normalizeImageAdvancedModel(model);
+            const cleanEffort = normalizeImageAdvancedEffort(effort);
+            const modelIndex = IMAGE_ADVANCED_MODELS.indexOf(cleanModel);
+            const effortIndex = IMAGE_ADVANCED_EFFORTS.indexOf(cleanEffort);
+            const modelDetails = IMAGE_ADVANCED_MODEL_DETAILS[cleanModel];
+            const knob = document.getElementById('advancedKnob');
+            if (knob) {
+                const hue = imageAdvancedHue(modelIndex, effortIndex);
+                knob.style.left = `${effortIndex / (IMAGE_ADVANCED_EFFORTS.length - 1) * 100}%`;
+                knob.style.top = `${(IMAGE_ADVANCED_MODELS.length - 1 - modelIndex) / (IMAGE_ADVANCED_MODELS.length - 1) * 100}%`;
+                knob.style.background = `hsl(${hue}, 95%, ${68 - effortIndex}%)`;
+                knob.style.boxShadow = `0 1px 3px rgba(0, 0, 0, 0.3), ${imageAdvancedCellGlow(effortIndex, modelIndex)}`;
+            }
+            const pad = document.getElementById('advancedPad');
+            if (pad) pad.style.boxShadow = imageAdvancedPadGlow(effortIndex, modelIndex);
+            const badge = document.getElementById('advancedStateBadge');
+            if (badge) {
+                badge.textContent = `${cleanModel} · ${cleanEffort}`;
+                badge.style.color = `hsl(${modelDetails.hue}, 78%, ${46 - effortIndex}%)`;
+            }
+            const description = document.getElementById('advancedDesc');
+            if (description) {
+                description.textContent = `${modelDetails.name} · ${IMAGE_ADVANCED_EFFORT_DETAILS[cleanEffort]} — ${modelDetails.description}`;
+            }
+            updateImageAdvancedHighlights(effortIndex, modelIndex, false);
+            applyImageAdvancedButtonTheme(modelIndex, effortIndex);
+        }
+
+        function setImageAdvancedMode(model, effort, persist = true) {
+            const state = window.imageEditState;
+            const cleanModel = normalizeImageAdvancedModel(model);
+            const cleanEffort = normalizeImageAdvancedEffort(effort);
+            if (state.reasoningMode !== 'advanced') {
+                state.reasoningPreviousMode = normalizeImageReasoningPreset(state.reasoningMode);
+            }
+            state.reasoningAdvanced = true;
+            state.reasoningMode = 'advanced';
+            state.reasoningAdvancedModel = cleanModel;
+            state.reasoningAdvancedEffort = cleanEffort;
+            const control = document.getElementById('imageReasoningControl');
+            const generateButton = document.getElementById('generateEditedImageButton');
+            control.dataset.mode = 'advanced';
+            generateButton.dataset.reasoningMode = 'advanced';
+            control.querySelectorAll('.reasoning-bg-layer').forEach(layer => {
+                layer.classList.toggle('is-visible', layer.dataset.layerMode === 'advanced');
+            });
+            document.getElementById('imageReasoningMenuButton').title = `高级模式：${cleanModel} · ${cleanEffort}`;
+            const searchToggle = document.getElementById('imageWebSearchEnabled');
+            if (searchToggle) {
+                searchToggle.checked = true;
+                searchToggle.disabled = true;
+            }
+            updateImageAdvancedSelectionUi(cleanModel, cleanEffort);
+            scheduleNextImageReasoningPulse(true);
+            if (persist) persistImageGenerationPreferences();
+        }
+
+        function returnToNormalImageReasoningMode(persist = true) {
+            const previousMode = normalizeImageReasoningPreset(window.imageEditState.reasoningPreviousMode);
+            setImageReasoningMode(previousMode, persist);
+            showImageReasoningMainView();
+        }
+
+        function setImageReasoningSelection(mode, model = '', effort = '', persist = true) {
+            if (normalizeImageReasoningMode(mode) === 'advanced') {
+                setImageAdvancedMode(model, effort, persist);
+            } else {
+                setImageReasoningMode(mode, persist);
+            }
         }
 
         function imageReasoningHexToRgba(hex, alpha) {
@@ -163,14 +409,12 @@
             const { layer, scale, rect: layerRect } = pageZoomMetrics();
             if (!layer || !layerRect) return;
             const controlRect = control.getBoundingClientRect();
-            const menuWidth = Math.min(220, Math.max(0, layer.clientWidth - 16));
             const controlRight = (controlRect.right - layerRect.left) / scale;
-            const menuLeft = Math.min(
-                layer.clientWidth - menuWidth - 8,
-                Math.max(8, controlRight - menuWidth)
-            );
-            menu.style.setProperty('--reasoning-menu-left', `${menuLeft}px`);
-            menu.style.setProperty('--reasoning-menu-width', `${menuWidth}px`);
+            const menuRight = Math.max(8, layer.clientWidth - controlRight);
+            const availableWidth = Math.max(0, layer.clientWidth - menuRight - 8);
+            menu.style.setProperty('--reasoning-menu-right', `${menuRight}px`);
+            menu.style.setProperty('--reasoning-menu-normal-width', `${Math.min(220, availableWidth)}px`);
+            menu.style.setProperty('--reasoning-menu-advanced-width', `${Math.min(330, availableWidth)}px`);
             const anchorTop = (controlRect.top - layerRect.top) / scale;
             menu.style.setProperty('--reasoning-menu-bottom', `${Math.max(12, layer.clientHeight - anchorTop + 8)}px`);
         }
@@ -193,6 +437,7 @@
                 closeImageGenerationControls();
                 const appMain = document.getElementById('appMain');
                 if (appMain && menu.parentElement !== appMain) appMain.append(menu);
+                syncImageReasoningMenuView();
                 menu.hidden = false;
                 positionImageReasoningMenu();
                 requestAnimationFrame(() => menu.classList.add('is-open'));
@@ -203,10 +448,13 @@
         }
 
         function setImageReasoningMode(mode, persist = true) {
-            const cleanMode = normalizeImageReasoningMode(mode);
+            const cleanMode = normalizeImageReasoningPreset(mode);
             const modeIndex = IMAGE_REASONING_MODES.indexOf(cleanMode);
             const previousMode = window.imageEditState.reasoningMode;
             window.imageEditState.reasoningMode = cleanMode;
+            window.imageEditState.reasoningAdvanced = false;
+            window.imageEditState.reasoningPreviousMode = cleanMode;
+            clearImageAdvancedButtonTheme();
             const control = document.getElementById('imageReasoningControl');
             const generateButton = document.getElementById('generateEditedImageButton');
             control.dataset.mode = cleanMode;
@@ -264,11 +512,17 @@
             document.getElementById('imageReasoningMenuButton').title = `思维深度：${IMAGE_REASONING_LABELS[cleanMode]}`;
             const searchToggle = document.getElementById('imageWebSearchEnabled');
             searchToggle.disabled = cleanMode === 'instant';
+            searchToggle.checked = window.imageEditState.webSearchEnabled;
             scheduleNextImageReasoningPulse(true);
             if (persist) persistImageGenerationPreferences();
         }
 
         function setImageWebSearchEnabled(enabled, persist = true) {
+            if (window.imageEditState.reasoningAdvanced) {
+                const toggle = document.getElementById('imageWebSearchEnabled');
+                if (toggle) toggle.checked = true;
+                return;
+            }
             window.imageEditState.webSearchEnabled = enabled === true;
             const toggle = document.getElementById('imageWebSearchEnabled');
             if (toggle) toggle.checked = window.imageEditState.webSearchEnabled;
@@ -315,6 +569,142 @@
                 event.preventDefault();
                 setImageReasoningMode(IMAGE_REASONING_MODES[Math.max(0, Math.min(IMAGE_REASONING_MODES.length - 1, nextIndex))]);
             });
+        }
+
+        function showImageReasoningMainView() {
+            const menu = document.getElementById('imageReasoningMenu');
+            document.getElementById('reasoningMenuMainView').hidden = false;
+            document.getElementById('reasoningMenuAdvancedView').hidden = true;
+            menu?.classList.remove('is-advanced');
+        }
+
+        function showImageReasoningAdvancedView(activate = true) {
+            const state = window.imageEditState;
+            if (activate) {
+                setImageAdvancedMode(state.reasoningAdvancedModel, state.reasoningAdvancedEffort);
+            } else {
+                updateImageAdvancedSelectionUi(state.reasoningAdvancedModel, state.reasoningAdvancedEffort);
+            }
+            const menu = document.getElementById('imageReasoningMenu');
+            document.getElementById('reasoningMenuMainView').hidden = true;
+            document.getElementById('reasoningMenuAdvancedView').hidden = false;
+            menu?.classList.add('is-advanced');
+            if (menu && !menu.hidden) {
+                requestAnimationFrame(() => document.getElementById('advancedMatrix')?.focus({ preventScroll: true }));
+            }
+        }
+
+        function syncImageReasoningMenuView() {
+            if (window.imageEditState.reasoningAdvanced) showImageReasoningAdvancedView(false);
+            else showImageReasoningMainView();
+        }
+
+        function imageAdvancedCellFromPointer(event) {
+            const inner = document.getElementById('advancedPadInner');
+            const rect = inner.getBoundingClientRect();
+            const horizontal = Math.max(0, Math.min(0.9999, (event.clientX - rect.left) / rect.width));
+            const vertical = Math.max(0, Math.min(0.9999, (event.clientY - rect.top) / rect.height));
+            const effortPosition = horizontal * (IMAGE_ADVANCED_EFFORTS.length - 1);
+            const modelPosition = (1 - vertical) * (IMAGE_ADVANCED_MODELS.length - 1);
+            return {
+                modelIndex: Math.max(0, Math.min(
+                    IMAGE_ADVANCED_MODELS.length - 1,
+                    Math.round(modelPosition)
+                )),
+                effortIndex: Math.max(0, Math.min(
+                    IMAGE_ADVANCED_EFFORTS.length - 1,
+                    Math.round(effortPosition)
+                ))
+            };
+        }
+
+        function previewImageAdvancedPointer(event) {
+            const inner = document.getElementById('advancedPadInner');
+            const knob = document.getElementById('advancedKnob');
+            const pad = document.getElementById('advancedPad');
+            const rect = inner.getBoundingClientRect();
+            const pointerX = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+            const pointerY = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+            const effortPosition = pointerX / rect.width * 4;
+            const modelPosition = (1 - pointerY / rect.height) * 2;
+            knob.style.left = `${pointerX / rect.width * 100}%`;
+            knob.style.top = `${pointerY / rect.height * 100}%`;
+            updateImageAdvancedHighlights(effortPosition, modelPosition, true);
+            knob.style.background = `hsl(${imageAdvancedHue(modelPosition, effortPosition)}, 95%, ${68 - effortPosition}%)`;
+            knob.style.boxShadow = `0 1px 3px rgba(0, 0, 0, 0.3), ${imageAdvancedCellGlow(effortPosition, modelPosition)}`;
+            pad.style.boxShadow = imageAdvancedPadGlow(effortPosition, modelPosition);
+            applyImageAdvancedButtonTheme(modelPosition, effortPosition);
+        }
+
+        function initializeImageAdvancedReasoningMatrix() {
+            const rows = document.getElementById('advancedRows');
+            const pad = document.getElementById('advancedPad');
+            const matrix = document.getElementById('advancedMatrix');
+            if (!rows || !pad || !matrix || rows.dataset.initialized === 'true') return;
+            rows.dataset.initialized = 'true';
+            for (let rowIndex = 0; rowIndex < 11; rowIndex += 1) {
+                const row = document.createElement('div');
+                row.className = 'advanced-row';
+                for (let columnIndex = 0; columnIndex < 17; columnIndex += 1) {
+                    const anchor = document.createElement('span');
+                    anchor.className = 'advanced-anchor';
+                    anchor.dataset.row = String(rowIndex);
+                    anchor.dataset.col = String(columnIndex);
+                    anchor.classList.toggle('is-snap', rowIndex % 5 === 0 && columnIndex % 4 === 0);
+                    row.append(anchor);
+                }
+                rows.append(row);
+            }
+            let dragging = false;
+            pad.addEventListener('pointerdown', event => {
+                if (window.imageEditState.busy) return;
+                dragging = true;
+                pad.setPointerCapture(event.pointerId);
+                pad.classList.add('is-dragging');
+                document.getElementById('advancedKnob')?.classList.add('is-dragging');
+                previewImageAdvancedPointer(event);
+            });
+            pad.addEventListener('pointermove', event => {
+                if (dragging && pad.hasPointerCapture(event.pointerId)) previewImageAdvancedPointer(event);
+            });
+            const finishPointer = event => {
+                if (!dragging) return;
+                dragging = false;
+                pad.classList.remove('is-dragging');
+                document.getElementById('advancedKnob')?.classList.remove('is-dragging');
+                if (pad.hasPointerCapture(event.pointerId)) pad.releasePointerCapture(event.pointerId);
+                const cell = imageAdvancedCellFromPointer(event);
+                setImageAdvancedMode(
+                    IMAGE_ADVANCED_MODELS[cell.modelIndex],
+                    IMAGE_ADVANCED_EFFORTS[cell.effortIndex],
+                    true
+                );
+            };
+            pad.addEventListener('pointerup', finishPointer);
+            pad.addEventListener('pointercancel', finishPointer);
+            matrix.addEventListener('keydown', event => {
+                if (window.imageEditState.busy) return;
+                let modelIndex = IMAGE_ADVANCED_MODELS.indexOf(window.imageEditState.reasoningAdvancedModel);
+                let effortIndex = IMAGE_ADVANCED_EFFORTS.indexOf(window.imageEditState.reasoningAdvancedEffort);
+                if (event.key === 'ArrowLeft') effortIndex -= 1;
+                else if (event.key === 'ArrowRight') effortIndex += 1;
+                else if (event.key === 'ArrowUp') modelIndex += 1;
+                else if (event.key === 'ArrowDown') modelIndex -= 1;
+                else if (event.key === 'Home') effortIndex = 0;
+                else if (event.key === 'End') effortIndex = IMAGE_ADVANCED_EFFORTS.length - 1;
+                else return;
+                event.preventDefault();
+                setImageAdvancedMode(
+                    IMAGE_ADVANCED_MODELS[Math.max(0, Math.min(IMAGE_ADVANCED_MODELS.length - 1, modelIndex))],
+                    IMAGE_ADVANCED_EFFORTS[Math.max(0, Math.min(IMAGE_ADVANCED_EFFORTS.length - 1, effortIndex))]
+                );
+            });
+            document.getElementById('advancedEntryButton')?.addEventListener('click', () => showImageReasoningAdvancedView(true));
+            document.getElementById('advancedBackButton')?.addEventListener('click', () => returnToNormalImageReasoningMode(true));
+            updateImageAdvancedSelectionUi(
+                window.imageEditState.reasoningAdvancedModel,
+                window.imageEditState.reasoningAdvancedEffort
+            );
         }
 
         async function polishImagePrompt() {
@@ -392,6 +782,7 @@
                 reasoningMode: normalizeImageReasoningMode(metadata.reasoningMode || window.imageEditState.reasoningMode),
                 reasoningModel: metadata.reasoningModel || '',
                 reasoningEffort: metadata.reasoningEffort || '',
+                reasoningDepth: metadata.reasoningDepth || metadata.reasoningEffort || '',
                 reasoningSummary: metadata.reasoningSummary || '',
                 reasoningTurns: Array.isArray(metadata.reasoningTurns) ? metadata.reasoningTurns.map(turn => ({ ...turn })) : [],
                 reasoningExpanded: metadata.reasoningExpanded === true,

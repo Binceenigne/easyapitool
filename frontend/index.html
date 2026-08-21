@@ -251,45 +251,86 @@
                                 <span class="reasoning-bg-layer" data-layer-mode="high" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
                                 <span class="reasoning-bg-layer" data-layer-mode="extra" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
                                 <span class="reasoning-bg-layer" data-layer-mode="max" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+                                <span class="reasoning-bg-layer" data-layer-mode="advanced" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
                                 <button type="submit" id="generateEditedImageButton" data-reasoning-mode="instant"><span>生成 1 张</span></button>
                                 <button type="button" id="imageReasoningMenuButton" aria-expanded="false" aria-controls="imageReasoningMenu" onclick="toggleImageReasoningMenu()" title="选择思维深度" aria-label="选择思维深度"><i data-lucide="chevron-up" aria-hidden="true"></i></button>
                                 <div id="imageReasoningMenu" class="image-reasoning-menu" hidden aria-label="思维深度设置">
-                                    <div class="web-search-row">
-                                        <label for="imageWebSearchEnabled" class="web-search-label">
-                                            <i data-lucide="globe" aria-hidden="true"></i>
-                                            <span>网络搜索</span>
-                                        </label>
-                                        <label class="toggle-switch">
-                                            <input id="imageWebSearchEnabled" type="checkbox" checked onchange="setImageWebSearchEnabled(this.checked)">
-                                            <span class="toggle-slider"></span>
-                                        </label>
-                                    </div>
-                                    <div class="reasoning-slider-section">
-                                        <div class="reasoning-slider-header">
-                                            <span class="reasoning-slider-title">
-                                                <span>思维深度</span>
-                                                <i data-lucide="chevron-right" aria-hidden="true"></i>
-                                            </span>
-                                            <span id="reasoningBadge" class="reasoning-current-badge">Instant</span>
+                                    <div id="reasoningMenuMainView" class="reasoning-menu-view">
+                                        <div class="web-search-row">
+                                            <label for="imageWebSearchEnabled" class="web-search-label">
+                                                <i data-lucide="globe" aria-hidden="true"></i>
+                                                <span>网络搜索</span>
+                                            </label>
+                                            <label class="toggle-switch">
+                                                <input id="imageWebSearchEnabled" type="checkbox" checked onchange="setImageWebSearchEnabled(this.checked)">
+                                                <span class="toggle-slider"></span>
+                                            </label>
                                         </div>
-                                        <div id="reasoningSliderTrack" class="horizontal-slider-container" role="slider" tabindex="0" aria-label="思维深度" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" aria-valuetext="Instant">
-                                            <div class="slider-track-bg">
-                                                <div id="sliderTrackFill" class="slider-track-fill" style="transform: translate3d(0, 0, 0) scaleX(0);">
-                                                    <span id="sliderGradientCurrent" class="slider-gradient-layer slider-gradient-current"></span>
-                                                    <span id="sliderGradientNext" class="slider-gradient-layer slider-gradient-next"></span>
+                                        <div class="reasoning-slider-section">
+                                            <div class="reasoning-slider-header">
+                                                <span class="reasoning-slider-title">
+                                                    <span>思维深度</span>
+                                                    <i data-lucide="chevron-right" aria-hidden="true"></i>
+                                                </span>
+                                                <span id="reasoningBadge" class="reasoning-current-badge">Instant</span>
+                                            </div>
+                                            <div id="reasoningSliderTrack" class="horizontal-slider-container" role="slider" tabindex="0" aria-label="思维深度" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" aria-valuetext="Instant">
+                                                <div class="slider-track-bg">
+                                                    <div id="sliderTrackFill" class="slider-track-fill" style="transform: translate3d(0, 0, 0) scaleX(0);">
+                                                        <span id="sliderGradientCurrent" class="slider-gradient-layer slider-gradient-current"></span>
+                                                        <span id="sliderGradientNext" class="slider-gradient-layer slider-gradient-next"></span>
+                                                    </div>
+                                                </div>
+                                                <div class="slider-dots" aria-hidden="true">
+                                                    <span class="slider-dot"></span>
+                                                    <span class="slider-dot inactive"></span>
+                                                    <span class="slider-dot inactive"></span>
+                                                    <span class="slider-dot inactive"></span>
+                                                    <span class="slider-dot inactive"></span>
+                                                    <span class="slider-dot inactive"></span>
+                                                </div>
+                                                <div id="sliderThumb" class="slider-thumb" style="left: 0%;" aria-hidden="true"></div>
+                                            </div>
+                                            <div id="reasoningSliderDesc" class="slider-desc">直接生成</div>
+                                        </div>
+                                        <button type="button" id="advancedEntryButton" class="advanced-entry-row" aria-haspopup="true">
+                                            <span class="advanced-entry-label">
+                                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="1.6" y="1.6" width="5.4" height="5.4" rx="1.2"></rect><rect x="9" y="1.6" width="5.4" height="5.4" rx="1.2"></rect><rect x="1.6" y="9" width="5.4" height="5.4" rx="1.2"></rect><rect x="9" y="9" width="5.4" height="5.4" rx="1.2"></rect></svg>
+                                                <span>高级</span>
+                                            </span>
+                                            <span class="advanced-entry-hint">矩阵调控</span>
+                                        </button>
+                                    </div>
+                                    <div id="reasoningMenuAdvancedView" class="reasoning-menu-view" hidden>
+                                        <div class="advanced-header">
+                                            <button type="button" id="advancedBackButton" class="advanced-back">返回</button>
+                                            <span class="advanced-title">高级调控</span>
+                                            <span id="advancedStateBadge" class="advanced-state">luna · low</span>
+                                        </div>
+                                        <div id="advancedMatrix" class="advanced-matrix" tabindex="0" role="application" aria-label="模型与思维深度矩阵">
+                                            <div class="advanced-y-labels">
+                                                <span class="advanced-y-label" data-y-label="2">gpt5.6sol</span>
+                                                <span class="advanced-y-label" data-y-label="1">gpt5.6terra</span>
+                                                <span class="advanced-y-label" data-y-label="0">gpt5.6luna</span>
+                                            </div>
+                                            <div id="advancedPad" class="advanced-pad">
+                                                <span id="advancedPadBgA" class="advanced-pad-bg" aria-hidden="true"></span>
+                                                <span id="advancedPadBgB" class="advanced-pad-bg" aria-hidden="true" style="opacity: 0"></span>
+                                                <span class="advanced-pad-flow" aria-hidden="true"></span>
+                                                <div class="advanced-pad-inner" id="advancedPadInner">
+                                                    <div id="advancedRows" class="advanced-rows" aria-hidden="true"></div>
+                                                    <div id="advancedKnob" class="advanced-knob" aria-hidden="true"></div>
                                                 </div>
                                             </div>
-                                            <div class="slider-dots" aria-hidden="true">
-                                                <span class="slider-dot"></span>
-                                                <span class="slider-dot inactive"></span>
-                                                <span class="slider-dot inactive"></span>
-                                                <span class="slider-dot inactive"></span>
-                                                <span class="slider-dot inactive"></span>
-                                                <span class="slider-dot inactive"></span>
+                                            <div class="advanced-x-labels" aria-hidden="true">
+                                                <span class="advanced-x-label" data-x-label="0">low</span>
+                                                <span class="advanced-x-label" data-x-label="1">medium</span>
+                                                <span class="advanced-x-label" data-x-label="2">high</span>
+                                                <span class="advanced-x-label" data-x-label="3">xhigh</span>
+                                                <span class="advanced-x-label" data-x-label="4">max</span>
                                             </div>
-                                            <div id="sliderThumb" class="slider-thumb" style="left: 0%;" aria-hidden="true"></div>
                                         </div>
-                                        <div id="reasoningSliderDesc" class="slider-desc">直接生成</div>
+                                        <div id="advancedDesc" class="advanced-desc">gpt5.6luna · 轻快响应 · 日常问答首选</div>
                                     </div>
                                 </div>
                             </div>

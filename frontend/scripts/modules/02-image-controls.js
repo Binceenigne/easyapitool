@@ -6,6 +6,10 @@
                 aspectRatio: state.aspectRatio,
                 imageCount: state.imageCount,
                 reasoningMode: state.reasoningMode,
+                reasoningAdvanced: state.reasoningAdvanced,
+                reasoningAdvancedModel: state.reasoningAdvancedModel,
+                reasoningAdvancedEffort: state.reasoningAdvancedEffort,
+                reasoningPreviousMode: state.reasoningPreviousMode,
                 webSearchEnabled: state.webSearchEnabled
             }));
         }
@@ -23,7 +27,7 @@
             setImageAspectRatio(saved.aspectRatio || 'auto', false);
             setImageGenerationCount(saved.imageCount || 1, false);
             setImageWebSearchEnabled(saved.webSearchEnabled !== false, false);
-            setImageReasoningMode(normalizeImageReasoningMode(saved.reasoningMode), false);
+            restoreImageReasoningPreferences(saved, false);
         }
 
         function setWorkspaceMode(mode) {
@@ -174,10 +178,6 @@
         }
 
         async function chooseEditImages() {
-            if (window.imageEditState.editSession) {
-                showToast('续作会自动使用上一轮图片作为参考图', 'info');
-                return;
-            }
             if (!window.pywebview?.api?.choose_edit_images) return;
             try {
                 const result = await window.pywebview.api.choose_edit_images();
@@ -214,10 +214,6 @@
         async function importReferenceFiles(files) {
             const imageFiles = [...files].filter(file => file.type?.startsWith('image/'));
             if (!imageFiles.length) return false;
-            if (window.imageEditState.editSession) {
-                showToast('续作会自动使用上一轮图片作为参考图', 'info');
-                return true;
-            }
             if (!window.pywebview?.api?.import_reference_image) {
                 showToast('图片导入服务尚未就绪', 'error');
                 return true;
