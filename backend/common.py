@@ -34,12 +34,18 @@ from ctypes import wintypes
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
-import winreg
+try:
+    import winreg
+except ImportError:
+    winreg = None
 from multiprocessing.connection import Client, Listener
 
 PROCESS_STARTED_AT = time.perf_counter()
 
-import webview
+try:
+    import webview
+except ImportError:
+    webview = None
 from .image_editor import (
     ImageGenerationService,
     ImageSessionStore,
@@ -47,7 +53,11 @@ from .image_editor import (
     prepare_image_generation,
 )
 from PIL import Image
-from winotify import Notification, audio
+try:
+    from winotify import Notification, audio
+except ImportError:
+    Notification = None
+    audio = None
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"

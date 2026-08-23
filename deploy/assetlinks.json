@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "cn.easyapitool.mobile",
+      "sha256_cert_fingerprints": [
+        "32:6A:8A:CE:34:0D:36:82:68:B0:9B:1C:B4:FE:B3:B5:97:8B:67:DD:AB:58:E9:7A:A4:CD:AE:99:2F:35:FC:14"
+      ]
+    }
+  }
+]

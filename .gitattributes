@@ -1,0 +1,2 @@
+*.sh text eol=lf
+deploy/easyapitool-pair text eol=lf

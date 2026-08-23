@@ -236,3 +236,21 @@
 @media (max-width: $model-single-column-breakpoint) {
     #modelModalList { grid-template-columns: minmax(0, 1fr); }
 }
+
+html[data-platform="android"] #imageEditWorkspace {
+    grid-template-columns: minmax(310px, 0.82fr) minmax(320px, 1.18fr);
+    grid-template-rows: minmax(0, 1fr);
+    min-width: 630px;
+    overflow-y: hidden;
+}
+
+html[data-platform="android"] #imageEditForm {
+    min-height: 0;
+    overflow: hidden;
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+}
+
+html[data-platform="android"] #imageEditResult {
+    min-height: 0;
+}

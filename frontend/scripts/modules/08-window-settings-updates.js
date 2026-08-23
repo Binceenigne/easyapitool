@@ -4,6 +4,19 @@
             const zoomLayer = document.getElementById('pageZoomLayer');
             if (!root || !zoomViewport || !zoomLayer) return;
 
+            if (isAndroidPlatform()) {
+                root.classList.remove(
+                    'height-summary-2', 'height-summary-4', 'height-summary-countdown',
+                    'height-details', 'height-details-metrics', 'height-intervals',
+                    'height-trend', 'width-micro', 'width-narrow'
+                );
+                root.classList.add('height-full', 'width-wide');
+                root.style.setProperty('--content-scale', '1');
+                cancelAnimationFrame(window.__progressResizeFrame || 0);
+                window.__progressResizeFrame = requestAnimationFrame(rerenderProgressBars);
+                return;
+            }
+
             const pageZoom = typeof getPageZoom === 'function' ? getPageZoom() : 1;
             const width = Math.max(0, Math.round(zoomViewport.clientWidth / pageZoom));
             const height = Math.max(0, Math.round(zoomViewport.clientHeight / pageZoom));
@@ -484,6 +497,12 @@
             document.getElementById('declineUpdateButton').hidden = ready;
             document.getElementById('restartLaterButton').hidden = !ready;
             document.getElementById('restartNowButton').hidden = !ready;
+            document.getElementById('restartLaterButton').textContent = isAndroidPlatform()
+                ? '稍后安装'
+                : '稍后重启';
+            document.getElementById('restartNowButton').textContent = isAndroidPlatform()
+                ? '安装更新'
+                : '立刻重启';
             document.getElementById('ignoreUpdateButton').hidden = ready;
             document.getElementById('updateModalTitle').textContent = current.status === 'downloading'
                 ? '正在下载更新'
@@ -536,7 +555,7 @@
         async function checkForUpdates() {
             if (!window.pywebview?.api?.check_for_updates) return;
             window.applyUpdateState({
-                status: 'checking', percent: 8, message: '正在检查 GitHub Release', showPrompt: true
+                status: 'checking', percent: 8, message: '正在检查服务器更新', showPrompt: true
             });
             try {
                 const result = await window.pywebview.api.check_for_updates();
@@ -554,6 +573,10 @@
             try {
                 const result = await window.pywebview.api.download_update();
                 if (!result?.ok) throw new Error(result?.error || '无法下载更新');
+                if (isAndroidPlatform()) {
+                    if (result.update) window.applyUpdateState(result.update);
+                    return;
+                }
                     while (true) {
                         await new Promise(resolve => setTimeout(resolve, 200));
                         const state = await window.pywebview.api.get_state();

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+runtime_dir=/run/imggen-api
+target="$runtime_dir/pairing-code"
+temporary="$runtime_dir/.pairing-code.$$"
+
+install -d -o imggenapi -g imggenapi -m 0750 "$runtime_dir"
+umask 077
+openssl rand -hex 16 > "$temporary"
+chown imggenapi:imggenapi "$temporary"
+chmod 0600 "$temporary"
+mv -f "$temporary" "$target"
+
+printf 'One-time IMGGEN pairing code: '
+cat "$target"

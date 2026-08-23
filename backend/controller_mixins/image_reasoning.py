@@ -46,6 +46,14 @@ class ImageTaskContext:
 
 
 class ImageReasoningMixin:
+    def _image_reasoning_data_root(self) -> Path:
+        configured = getattr(self, "data_root", None)
+        if configured:
+            path = Path(configured).expanduser().resolve()
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        return app_data_dir()
+
     @staticmethod
     def _call_with_task_context(
         method: Any,
@@ -809,7 +817,7 @@ class ImageReasoningMixin:
             getattr(self, "active_image_sets", set()).discard(request_id)
             self._release_image_session_activity(session_id)
             shutil.rmtree(
-                app_data_dir() / "image-search-references" / request_id,
+                self._image_reasoning_data_root() / "image-search-references" / request_id,
                 ignore_errors=True,
             )
             try:
@@ -967,7 +975,7 @@ class ImageReasoningMixin:
         staged_web_references: list[dict[str, Any]] = []
         persisted_web_references: list[dict[str, Any]] = []
         web_reference_paths: tuple[Path, ...] = ()
-        web_reference_dir = app_data_dir() / "image-search-references" / request_id
+        web_reference_dir = self._image_reasoning_data_root() / "image-search-references" / request_id
         continuation_context: dict[str, Any] = {}
         visible_assets: list[dict[str, Any]] = []
         continuation_plan: dict[str, Any] | None = None

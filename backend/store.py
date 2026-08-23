@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from .common import *
 from .platform import normalize_background_ui_mode, normalize_title_bar_mode, normalize_window_size
-from .security import protect_secret, unprotect_secret
+from .security import SecretProtector, default_secret_protector
 from .usage import safe_float
 
 class Store:
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        secret_protector: SecretProtector | None = None,
+    ) -> None:
         self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.secret_protector = secret_protector or default_secret_protector()
         self.lock = threading.RLock()
         self._initialize()
 
@@ -33,7 +39,8 @@ class Store:
                 CREATE TABLE IF NOT EXISTS api_keys (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
-                    secret_dpapi TEXT NOT NULL,
+                    secret_dpapi TEXT NOT NULL DEFAULT '',
+                    secret_encrypted TEXT NOT NULL DEFAULT '',
                     base_url TEXT NOT NULL,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
@@ -80,6 +87,18 @@ class Store:
                 );
                 """
             )
+            columns = {
+                str(row[1])
+                for row in db.execute("PRAGMA table_info(api_keys)").fetchall()
+            }
+            if "secret_encrypted" not in columns:
+                db.execute(
+                    "ALTER TABLE api_keys ADD COLUMN secret_encrypted TEXT NOT NULL DEFAULT ''"
+                )
+            if "secret_dpapi" not in columns:
+                db.execute(
+                    "ALTER TABLE api_keys ADD COLUMN secret_dpapi TEXT NOT NULL DEFAULT ''"
+                )
             invalid_snapshot_ids: list[int] = []
             for row in db.execute("SELECT id,payload_json FROM usage_snapshots").fetchall():
                 try:
@@ -102,8 +121,16 @@ class Store:
         now = time.time()
         with self.lock, self.connect() as db:
             db.execute(
-                "INSERT INTO api_keys(id,name,secret_dpapi,base_url,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                (key_id, name, protect_secret(secret), base_url.rstrip("/"), now, now),
+                "INSERT INTO api_keys(id,name,secret_dpapi,secret_encrypted,base_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (
+                    key_id,
+                    name,
+                    "",
+                    self.secret_protector.protect(secret),
+                    base_url.rstrip("/"),
+                    now,
+                    now,
+                ),
             )
         return key_id
 
@@ -112,12 +139,15 @@ class Store:
         if not secret:
             return
         with self.lock, self.connect() as db:
-            existing = db.execute("SELECT secret_dpapi FROM api_keys").fetchall()
+            existing = db.execute(
+                "SELECT secret_dpapi,secret_encrypted FROM api_keys"
+            ).fetchall()
             for row in existing:
                 try:
-                    if unprotect_secret(row["secret_dpapi"]) == secret:
+                    encrypted = row["secret_encrypted"] or row["secret_dpapi"]
+                    if encrypted and self.secret_protector.unprotect(encrypted) == secret:
                         return
-                except OSError:
+                except (OSError, RuntimeError, ValueError):
                     continue
         self.add_key("环境变量 Key", secret, os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL))
 
@@ -133,7 +163,10 @@ class Store:
         row = self.get_key_record(key_id)
         if row is None:
             raise KeyError("密钥不存在")
-        return unprotect_secret(row["secret_dpapi"])
+        encrypted = row["secret_encrypted"] or row["secret_dpapi"]
+        if not encrypted:
+            raise RuntimeError("密钥存储为空")
+        return self.secret_protector.unprotect(encrypted)
 
     def delete_key(self, key_id: str) -> None:
         with self.lock, self.connect() as db:

@@ -1618,7 +1618,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="styles/app.css?v=34">', page)
+        self.assertIn('<link rel="stylesheet" href="styles/app.css?v=35">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -1913,7 +1913,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn('<script defer src="../vendor/lucide/lucide.min.js"></script>', page)
         self.assertIn(
             '<script src="vendor/lucide/lucide.min.js"></script>\n'
-            '    <script src="scripts/modules/00-core-ui.js?v=1"></script>',
+            '    <script src="scripts/modules/00-core-ui.js?v=2"></script>',
             page,
         )
         self.assertIn("window.addEventListener('load', () => {\n            renderLucideIcons();", page)
@@ -1949,6 +1949,9 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("handlePageZoomShortcut(event)", page)
         self.assertIn("localStorage.setItem(PAGE_ZOOM_STORAGE_KEY", page)
         self.assertIn("restorePageZoom()", page)
+        self.assertIn("const DEFAULT_ANDROID_PAGE_ZOOM = 0.8", page)
+        self.assertIn("isAndroidPlatform() ? DEFAULT_ANDROID_PAGE_ZOOM", page)
+        self.assertIn("html[data-platform=android] #pageZoomLayer {\n  min-width: 0;", stylesheet)
         self.assertIn("#windowTitleBar {\n  z-index: auto", stylesheet)
         self.assertIn("document.getElementById('settingsHeader')?.addEventListener('mousedown', beginWindowDrag)", page)
         self.assertNotIn("fa-solid", page)

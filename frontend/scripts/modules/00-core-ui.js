@@ -3,6 +3,7 @@
         const PAGE_ZOOM_STORAGE_VERSION_KEY = 'api-tools-page-zoom-version';
         const PAGE_ZOOM_STORAGE_VERSION = '2';
         const DEFAULT_PAGE_ZOOM = 1;
+        const DEFAULT_ANDROID_PAGE_ZOOM = 0.8;
         const MIN_PAGE_ZOOM = 0.8;
         const MAX_PAGE_ZOOM = 2;
         const PAGE_ZOOM_STEP = 0.1;
@@ -21,6 +22,10 @@
             return normalizePageZoom(Number.parseFloat(value));
         }
 
+        function isAndroidPlatform() {
+            return document.documentElement.dataset.platform === 'android';
+        }
+
         function pageZoomMetrics() {
             const layer = document.getElementById('pageZoomLayer');
             return {
@@ -31,9 +36,9 @@
         }
 
         function applyPageZoom(value, persist = false, announce = false) {
-            const zoom = normalizePageZoom(value);
+            const zoom = isAndroidPlatform() ? DEFAULT_ANDROID_PAGE_ZOOM : normalizePageZoom(value);
             document.documentElement.style.setProperty('--page-zoom', String(zoom));
-            if (persist) {
+            if (persist && !isAndroidPlatform()) {
                 localStorage.setItem(PAGE_ZOOM_STORAGE_KEY, String(zoom));
                 localStorage.setItem(PAGE_ZOOM_STORAGE_VERSION_KEY, PAGE_ZOOM_STORAGE_VERSION);
             }
@@ -49,6 +54,7 @@
         }
 
         function restorePageZoom() {
+            if (isAndroidPlatform()) return applyPageZoom(DEFAULT_ANDROID_PAGE_ZOOM);
             const savedZoom = localStorage.getItem(PAGE_ZOOM_STORAGE_VERSION_KEY) === PAGE_ZOOM_STORAGE_VERSION
                 ? localStorage.getItem(PAGE_ZOOM_STORAGE_KEY)
                 : DEFAULT_PAGE_ZOOM;
@@ -59,6 +65,7 @@
         }
 
         function handlePageZoomShortcut(event) {
+            if (isAndroidPlatform()) return;
             if (!event.ctrlKey || event.altKey || event.metaKey) return;
             const zoomIn = event.key === '+' || event.key === '=' || event.code === 'NumpadAdd';
             const zoomOut = event.key === '-' || event.key === '_' || event.code === 'NumpadSubtract';

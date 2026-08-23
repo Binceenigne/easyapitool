@@ -51,6 +51,11 @@ html.dark {
   border-radius: 0;
 }
 
+html[data-platform=android],
+html[data-platform=android] * {
+  -webkit-tap-highlight-color: transparent;
+}
+
 html,
 body {
   width: 100%;
@@ -157,6 +162,40 @@ img, svg {
   overflow-x: hidden;
   overflow-y: auto;
   background: var(--bg);
+}
+
+html[data-platform=android] #windowTitleBar,
+html[data-platform=android] .native-resize-handle,
+html[data-platform=android] #titlebarPinButton,
+html[data-platform=android] .always-on-top-button,
+html[data-platform=android] [onclick*=requestWindowAction],
+html[data-platform=android] [onclick*=toggleAlwaysOnTop],
+html[data-platform=android] [onclick*=openGeneratedPictures],
+html[data-platform=android] [onclick*=requestDevTools],
+html[data-platform=android] .settings-title-bar,
+html[data-platform=android] .settings-app-behavior,
+html[data-platform=android] .settings-update {
+  display: none !important;
+}
+
+html[data-platform=android] #pageZoomViewport {
+  top: 0;
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+
+html[data-platform=android] #widget-root {
+  --fixed-titlebar-height: 0px;
+}
+
+html[data-platform=android] #pageZoomViewport {
+  overflow-x: hidden;
+}
+
+html[data-platform=android] #pageZoomLayer {
+  min-width: 0;
 }
 
 #pageZoomLayer {
@@ -4853,6 +4892,14 @@ html.dark #avgMinVal {
   gap: 6px;
 }
 
+.settings-android-service {
+  display: none;
+}
+
+html[data-platform=android] .settings-android-service {
+  display: flex;
+}
+
 .settings-group > label {
   display: block;
   color: var(--muted);
@@ -6029,6 +6076,24 @@ html.dark #toast {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+html[data-platform=android] #imageEditWorkspace {
+  grid-template-columns: minmax(310px, 0.82fr) minmax(320px, 1.18fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 630px;
+  overflow-y: hidden;
+}
+
+html[data-platform=android] #imageEditForm {
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+html[data-platform=android] #imageEditResult {
+  min-height: 0;
+}
+
 @property --adv-h {
   syntax: "<number>";
   inherits: true;

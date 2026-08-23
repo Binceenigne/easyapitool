@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .common import *
+IS_WINDOWS = sys.platform == "win32"
 class NetworkTransportError(RuntimeError):
     pass
 
@@ -191,78 +192,83 @@ def normalize_window_size(width: Any, height: Any) -> dict[str, int]:
 class POINT(ctypes.Structure):
     _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
 
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
-user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
-user32.FindWindowW.restype = wintypes.HWND
-user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
-user32.ShowWindow.restype = wintypes.BOOL
-user32.SetForegroundWindow.argtypes = [wintypes.HWND]
-user32.SetForegroundWindow.restype = wintypes.BOOL
-user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-user32.PostMessageW.restype = wintypes.BOOL
-user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
-user32.GetWindowRect.restype = wintypes.BOOL
-user32.IsZoomed.argtypes = [wintypes.HWND]
-user32.IsZoomed.restype = wintypes.BOOL
-user32.IsIconic.argtypes = [wintypes.HWND]
-user32.IsIconic.restype = wintypes.BOOL
-user32.GetDpiForWindow.argtypes = [wintypes.HWND]
-user32.GetDpiForWindow.restype = wintypes.UINT
-user32.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
-user32.GetCursorPos.restype = wintypes.BOOL
-user32.ReleaseCapture.argtypes = []
-user32.ReleaseCapture.restype = wintypes.BOOL
-user32.SetWindowPos.argtypes = [
-    wintypes.HWND,
-    wintypes.HWND,
-    ctypes.c_int,
-    ctypes.c_int,
-    ctypes.c_int,
-    ctypes.c_int,
-    wintypes.UINT,
-]
-user32.SetWindowPos.restype = wintypes.BOOL
-user32.OpenClipboard.argtypes = [wintypes.HWND]
-user32.OpenClipboard.restype = wintypes.BOOL
-user32.EmptyClipboard.argtypes = []
-user32.EmptyClipboard.restype = wintypes.BOOL
-user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
-user32.SetClipboardData.restype = wintypes.HANDLE
-user32.CloseClipboard.argtypes = []
-user32.CloseClipboard.restype = wintypes.BOOL
-kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
-kernel32.CreateMutexW.restype = wintypes.HANDLE
-kernel32.GetLastError.argtypes = []
-kernel32.GetLastError.restype = wintypes.DWORD
-kernel32.SetLastError.argtypes = [wintypes.DWORD]
-kernel32.SetLastError.restype = None
-kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-kernel32.CloseHandle.restype = wintypes.BOOL
-kernel32.CreateEventW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
-kernel32.CreateEventW.restype = wintypes.HANDLE
-kernel32.OpenEventW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
-kernel32.OpenEventW.restype = wintypes.HANDLE
-kernel32.SetEvent.argtypes = [wintypes.HANDLE]
-kernel32.SetEvent.restype = wintypes.BOOL
-kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-kernel32.WaitForSingleObject.restype = wintypes.DWORD
-kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
-kernel32.GlobalAlloc.restype = wintypes.HANDLE
-kernel32.GlobalLock.argtypes = [wintypes.HANDLE]
-kernel32.GlobalLock.restype = ctypes.c_void_p
-kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
-kernel32.GlobalUnlock.restype = wintypes.BOOL
-kernel32.GlobalFree.argtypes = [wintypes.HANDLE]
-kernel32.GlobalFree.restype = wintypes.HANDLE
-dwmapi = ctypes.windll.dwmapi
-dwmapi.DwmSetWindowAttribute.argtypes = [
-    wintypes.HWND,
-    wintypes.DWORD,
-    ctypes.c_void_p,
-    wintypes.DWORD,
-]
-dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
+
+user32 = None
+kernel32 = None
+dwmapi = None
+if IS_WINDOWS:
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user32.FindWindowW.restype = wintypes.HWND
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.PostMessageW.restype = wintypes.BOOL
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.IsZoomed.argtypes = [wintypes.HWND]
+    user32.IsZoomed.restype = wintypes.BOOL
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsIconic.restype = wintypes.BOOL
+    user32.GetDpiForWindow.argtypes = [wintypes.HWND]
+    user32.GetDpiForWindow.restype = wintypes.UINT
+    user32.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
+    user32.GetCursorPos.restype = wintypes.BOOL
+    user32.ReleaseCapture.argtypes = []
+    user32.ReleaseCapture.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND,
+        wintypes.HWND,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.UINT,
+    ]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.argtypes = []
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype = wintypes.BOOL
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    kernel32.GetLastError.argtypes = []
+    kernel32.GetLastError.restype = wintypes.DWORD
+    kernel32.SetLastError.argtypes = [wintypes.DWORD]
+    kernel32.SetLastError.restype = None
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.CreateEventW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel32.CreateEventW.restype = wintypes.HANDLE
+    kernel32.OpenEventW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel32.OpenEventW.restype = wintypes.HANDLE
+    kernel32.SetEvent.argtypes = [wintypes.HANDLE]
+    kernel32.SetEvent.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HANDLE
+    kernel32.GlobalLock.argtypes = [wintypes.HANDLE]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalFree.argtypes = [wintypes.HANDLE]
+    kernel32.GlobalFree.restype = wintypes.HANDLE
+    dwmapi = ctypes.windll.dwmapi
+    dwmapi.DwmSetWindowAttribute.argtypes = [
+        wintypes.HWND,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
 def activate_ui_window() -> bool:
     hwnd = user32.FindWindowW(None, WINDOW_TITLE)
     if not hwnd:
@@ -346,10 +352,35 @@ def resource_path(relative: str) -> Path:
 
 
 def app_data_dir() -> Path:
-    root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    path = root / "API_TOOLS"
+    configured = os.environ.get("API_TOOLS_DATA_DIR", "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+    elif IS_WINDOWS:
+        root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        path = root / "API_TOOLS"
+    else:
+        root = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+        path = root / "API_TOOLS"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def runtime_data_dir(owner: Any = None) -> Path:
+    configured = getattr(owner, "data_root", None) if owner is not None else None
+    if configured:
+        path = Path(configured).expanduser().resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    return app_data_dir()
+
+
+def runtime_pictures_dir(owner: Any = None) -> Path:
+    configured = getattr(owner, "pictures_root", None) if owner is not None else None
+    if configured:
+        path = Path(configured).expanduser().resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    return generated_pictures_dir()
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -968,6 +999,11 @@ class GUID(ctypes.Structure):
 
 
 def windows_pictures_dir() -> Path:
+    if not IS_WINDOWS:
+        override = os.environ.get("API_TOOLS_PICTURES_DIR", "").strip()
+        path = Path(override) if override else app_data_dir() / "pictures"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
     folder_id = GUID.from_string("33E28130-4E1E-4676-835A-98395C3BC3BB")
     path_pointer = ctypes.c_wchar_p()
     try:

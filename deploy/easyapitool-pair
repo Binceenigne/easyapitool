@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+runtime_dir=/run/easyapitool
+target="$runtime_dir/pairing-code"
+temporary="$runtime_dir/.pairing-code.$$"
+
+install -d -o easyapitool -g easyapitool -m 0750 "$runtime_dir"
+umask 077
+openssl rand -hex 16 > "$temporary"
+chown easyapitool:easyapitool "$temporary"
+chmod 0600 "$temporary"
+mv -f "$temporary" "$target"
+
+printf 'One-time API_TOOLS pairing code: '
+cat "$target"

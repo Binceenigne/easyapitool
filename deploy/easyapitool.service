@@ -1,0 +1,23 @@
+[Unit]
+Description=API_TOOLS stateless image service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=easyapitool
+Group=easyapitool
+WorkingDirectory=/opt/easyapitool
+EnvironmentFile=/etc/easyapitool/easyapitool.env
+ExecStart=/opt/easyapitool/.venv/bin/uvicorn backend.asgi:app --host 127.0.0.1 --port 8765 --workers 1
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/run/easyapitool
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

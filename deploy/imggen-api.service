@@ -1,0 +1,23 @@
+[Unit]
+Description=DJYX IMGGEN stateless image service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=imggenapi
+Group=imggenapi
+WorkingDirectory=/opt/imggen-api
+EnvironmentFile=/etc/imggen-api/imggen-api.env
+ExecStart=/opt/imggen-api/.venv/bin/python -m uvicorn backend.asgi:app --host 127.0.0.1 --port 8766 --workers 1
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/run/imggen-api
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

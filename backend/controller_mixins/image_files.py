@@ -8,6 +8,22 @@ from ..store import Store
 from ..client import EasyClinClient
 
 class ImageFilesMixin:
+    def _image_data_root(self) -> Path:
+        configured = getattr(self, "data_root", None)
+        if configured:
+            path = Path(configured).expanduser().resolve()
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        return app_data_dir()
+
+    def _image_pictures_root(self) -> Path:
+        configured = getattr(self, "pictures_root", None)
+        if configured:
+            path = Path(configured).expanduser().resolve()
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        return generated_pictures_dir()
+
     def choose_edit_images(self) -> dict[str, Any]:
         if not self.window:
             return {"ok": False, "error": "应用窗口尚未就绪"}
@@ -74,7 +90,7 @@ class ImageFilesMixin:
         except (OSError, ValueError):
             return {"ok": False, "error": "图片内容无效"}
 
-        reference_dir = app_data_dir() / "image-references"
+        reference_dir = self._image_data_root() / "image-references"
         reference_dir.mkdir(parents=True, exist_ok=True)
         clean_stem = Path(str(name or "reference")).stem.strip()[:48] or "reference"
         safe_stem = "".join(character for character in clean_stem if character.isalnum() or character in "-_ ").strip() or "reference"
@@ -92,8 +108,8 @@ class ImageFilesMixin:
     def load_generated_image(self, source_path: str) -> dict[str, Any]:
         source = Path(str(source_path or "")).resolve()
         allowed_roots = (
-            (app_data_dir() / "image-generations").resolve(),
-            generated_pictures_dir().resolve(),
+            (self._image_data_root() / "image-generations").resolve(),
+            self._image_pictures_root().resolve(),
         )
         if not source.is_file() or not any(source.is_relative_to(root) for root in allowed_roots):
             return {"ok": False, "error": "只能读取本应用生成的图片"}
@@ -121,7 +137,7 @@ class ImageFilesMixin:
 
     def copy_generated_image(self, source_path: str) -> dict[str, Any]:
         source = Path(str(source_path or "")).resolve()
-        pictures_root = generated_pictures_dir().resolve()
+        pictures_root = self._image_pictures_root().resolve()
         if not source.is_file() or not source.is_relative_to(pictures_root):
             return {"ok": False, "error": "只能复制本应用保存的最终图片"}
         if source.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
@@ -132,9 +148,8 @@ class ImageFilesMixin:
             return {"ok": False, "error": f"复制图片失败：{exc}"}
         return {"ok": True, "path": str(source)}
 
-    @staticmethod
-    def _image_session_store() -> ImageSessionStore:
-        return ImageSessionStore(generated_pictures_dir())
+    def _image_session_store(self) -> ImageSessionStore:
+        return ImageSessionStore(self._image_pictures_root())
 
     def _image_session_activity_state(self) -> tuple[threading.Lock, set[str]]:
         lock = getattr(self, "image_session_activity_lock", None)
@@ -221,7 +236,7 @@ class ImageFilesMixin:
             if len(encoded.encode("utf-8")) <= 128 * 1024:
                 lines.append(encoded + "\n")
 
-        log_path = app_data_dir() / "image-stream-blur.jsonl"
+        log_path = self._image_data_root() / "image-stream-blur.jsonl"
         if not lines:
             return {"ok": True, "written": 0, "path": str(log_path)}
 
@@ -262,8 +277,8 @@ class ImageFilesMixin:
         if not self.window:
             return {"ok": False, "error": "应用窗口尚未就绪"}
         source = Path(str(source_path or "")).resolve()
-        output_root = (app_data_dir() / "image-generations").resolve()
-        pictures_root = generated_pictures_dir().resolve()
+        output_root = (self._image_data_root() / "image-generations").resolve()
+        pictures_root = self._image_pictures_root().resolve()
         if not source.is_file() or not any(
             source.is_relative_to(root) for root in (output_root, pictures_root)
         ):
@@ -282,7 +297,7 @@ class ImageFilesMixin:
         return {"ok": True, "path": str(destination)}
 
     def open_generated_pictures(self) -> dict[str, Any]:
-        output_dir = generated_pictures_dir()
+        output_dir = self._image_pictures_root()
         output_dir.mkdir(parents=True, exist_ok=True)
         try:
             os.startfile(str(output_dir))

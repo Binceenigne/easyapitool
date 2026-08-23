@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="styles/app.css?v=34">
+    <link rel="stylesheet" href="styles/app.css?v=35">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -621,6 +621,28 @@
 
             <!-- 设置核心选项 -->
             <div id="settingsContent">
+                <div class="settings-group settings-android-service">
+                    <label>服务连接 (SERVICE CONNECTION)</label>
+                    <div class="settings-fields">
+                        <label>
+                            <span>服务地址</span>
+                            <input id="androidServiceUrl" type="url" inputmode="url" autocomplete="url" placeholder="https://imggen.djyx.me/v1">
+                        </label>
+                        <label>
+                            <span>设备访问令牌</span>
+                            <input id="androidServiceToken" type="password" autocomplete="off" placeholder="输入设备令牌">
+                        </label>
+                        <label>
+                            <span>一次性配对码</span>
+                            <input id="androidServicePairingCode" type="password" autocomplete="one-time-code" placeholder="没有令牌时输入配对码">
+                        </label>
+                    </div>
+                    <button type="button" onclick="saveAndroidServiceConfig()" id="saveAndroidServiceButton">
+                        <i data-lucide="shield-check" aria-hidden="true"></i> 保存连接
+                    </button>
+                    <span id="androidServiceStatus" class="settings-help">尚未完成服务配对</span>
+                </div>
+
                 <!-- 1. 独立主题设置 -->
                 <div class="settings-group settings-theme">
                     <label>界面色彩主题 (THEME)</label>
@@ -922,7 +944,8 @@
     </div>
 
     <script src="vendor/lucide/lucide.min.js"></script>
-    <script src="scripts/modules/00-core-ui.js?v=1"></script>
+    <script src="scripts/modules/00-core-ui.js?v=2"></script>
+    <script src="scripts/android-bridge.js?v=2"></script>
     <script src="scripts/modules/01-app-state.js?v=1"></script>
     <script src="scripts/modules/02-image-controls.js?v=1"></script>
     <script src="scripts/modules/03-image-reasoning.js?v=1"></script>
