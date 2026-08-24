@@ -281,6 +281,50 @@ class ImageFilesMixin:
         shutil.copy2(source, destination)
         return {"ok": True, "path": str(destination)}
 
+    def export_image_sets(self, selected_sets: Any) -> dict[str, Any]:
+        if not self.window:
+            return {"ok": False, "error": "应用窗口尚未就绪"}
+        selected = selected_sets if isinstance(selected_sets, list) else []
+        destination = self.window.create_file_dialog(
+            webview.FileDialog.FOLDER,
+            directory=str(windows_pictures_dir()),
+        )
+        if not destination:
+            return {"ok": True, "cancelled": True, "exported": 0, "skippedSets": []}
+        destination_root = Path(destination[0]).resolve()
+        destination_root.mkdir(parents=True, exist_ok=True)
+        session_store = self._image_session_store()
+        skipped_sets: list[str] = []
+        exported = 0
+        for set_data in selected:
+            if not isinstance(set_data, dict):
+                continue
+            session_id = str(set_data.get("sessionId") or "")
+            set_id = str(set_data.get("setId") or "")
+            originals = session_store.original_paths_for_set(session_id, set_id)
+            if not originals:
+                skipped_sets.append(set_id)
+                continue
+            clean_prompt = "".join(
+                character if character.isalnum() or character in "-_ " else "_"
+                for character in str(set_data.get("prompt") or "图片生成")[:48]
+            ).strip(" ._") or "图片生成"
+            set_directory = destination_root / f"{clean_prompt}-{set_id[:8]}"
+            set_directory.mkdir(parents=True, exist_ok=True)
+            for original in originals:
+                source = Path(str(original["path"])).resolve()
+                suffix = source.suffix.lower() or ".png"
+                target = set_directory / f"image-{int(original['itemIndex']) + 1:02d}{suffix}"
+                shutil.copy2(source, target)
+                exported += 1
+        return {
+            "ok": True,
+            "cancelled": False,
+            "exported": exported,
+            "skippedSets": skipped_sets,
+            "path": str(destination_root),
+        }
+
     def open_generated_pictures(self) -> dict[str, Any]:
         output_dir = generated_pictures_dir()
         output_dir.mkdir(parents=True, exist_ok=True)

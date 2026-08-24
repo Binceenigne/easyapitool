@@ -151,3 +151,6 @@ class WebApi:
 
     def save_edited_image(self, source_path: str) -> dict[str, Any]:
         return self._controller.save_edited_image(source_path)
+
+    def export_image_sets(self, selected_sets: Any) -> dict[str, Any]:
+        return self._controller.export_image_sets(selected_sets)

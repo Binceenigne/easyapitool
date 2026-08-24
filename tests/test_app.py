@@ -1975,6 +1975,15 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn('.image-generation-set-checkbox', stylesheet)
         self.assertIn('.image-generation-set.is-batch-selected {', stylesheet)
         self.assertIn('background: color-mix(in srgb, #8b5cf6 9%, var(--bg));', stylesheet)
+        self.assertIn('aspect-ratio: 2/1;', stylesheet)
+        self.assertIn("const scrollHost = container;", page)
+        self.assertIn(".find(section => section.getBoundingClientRect().bottom", page)
+        self.assertIn("scrollHost.scrollTop = scrollTop + nextAnchor.getBoundingClientRect().top", page)
+        self.assertIn("viewer.touchPointers = viewer.touchPointers || new Map();", page)
+        self.assertIn("viewer.scale * distance / viewer.pinchDistance", page)
+        self.assertIn("function reasoningToolIcon(tool)", page)
+        self.assertNotIn("'search-check'", page)
+        self.assertIn("current.webReferences = set.webReferences.map", page)
 
     def test_image_prompt_assistance_controls_and_streaming_summary(self):
         self.maxDiff = 600
@@ -5349,6 +5358,7 @@ class ControllerTests(unittest.TestCase):
                 "defer_update_restart",
                 "dismiss_update_prompt",
                 "download_update",
+                "export_image_sets",
                 "generate_image",
                 "get_asset_status",
                 "get_state",
@@ -5580,6 +5590,43 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(listed["sets"][0]["effectivePrompt"], "专业产品图，三分构图")
         self.assertTrue(deleted["ok"])
         self.assertEqual(listed_after["sets"], [])
+
+    def test_controller_exports_selected_image_set_originals(self):
+        controller = app.AppController.__new__(app.AppController)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pictures_root = root / "Pictures" / app.APP_NAME
+            export_root = root / "export"
+            source = root / "source.png"
+            Image.new("RGB", (12, 8), "teal").save(source)
+            store = image_editor.ImageSessionStore(pictures_root)
+            store.begin_round("session-1", "set-1", "产品图", 1, 0, {})
+            store.persist_result(
+                "session-1",
+                "set-1",
+                0,
+                source,
+                {"width": 12, "height": 8, "format": "png", "actualSize": "12x8"},
+            )
+            store.complete_round("session-1", "set-1")
+            controller.window = SimpleNamespace(
+                create_file_dialog=Mock(return_value=(str(export_root),))
+            )
+
+            with patch.object(
+                controller_image_files, "generated_pictures_dir", return_value=pictures_root
+            ):
+                result = controller.export_image_sets([
+                    {"sessionId": "session-1", "setId": "set-1", "prompt": "产品图"},
+                    {"sessionId": "session-1", "setId": "missing", "prompt": "空集"},
+                ])
+
+            exported_files = list(export_root.rglob("*.png"))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["exported"], 1)
+        self.assertEqual(result["skippedSets"], ["missing"])
+        self.assertEqual(len(exported_files), 1)
 
     def test_controller_rejects_deleting_running_image_set(self):
         controller = app.AppController.__new__(app.AppController)

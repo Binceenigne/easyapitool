@@ -493,6 +493,16 @@
             return '调用工具';
         }
 
+        function reasoningToolIcon(tool) {
+            if (tool.status === 'running') return 'loader-circle';
+            if (tool.status === 'failed') return 'info';
+            if (tool.name === 'search_web') return 'globe';
+            if (tool.name === 'search_visual_references') return 'images';
+            if (tool.name === 'select_visual_references') return 'list-checks';
+            if (tool.name === 'plan_image_continuation') return 'corner-down-left';
+            return 'circle-check';
+        }
+
         function reasoningPanelTitle(set, activeTurn, activeTool) {
             const mode = normalizeImageReasoningMode(set.reasoningMode);
             const modeLabel = imageReasoningModeLabel(
@@ -525,9 +535,9 @@
             toggle.setAttribute('aria-expanded', String(set.reasoningExpanded));
             toggle.addEventListener('click', () => toggleReasoningPanel(set.setId));
             const statusIcon = set.reasoningStatus === 'running'
-                ? 'clock-3'
+                ? 'clock'
                 : set.reasoningStatus === 'failed'
-                    ? 'triangle-alert'
+                    ? 'info'
                     : set.reasoningStatus === 'cancelled' ? 'square' : 'circle-check';
             const title = reasoningPanelTitle(set, activeTurn, activeTool);
             toggle.innerHTML = `${iconMarkup(statusIcon, 'icon-12')}<strong>${escapeHtml(title)}</strong><span class="image-reasoning-usage" data-reasoning-elapsed="${escapeHtml(set.setId)}" title="${escapeHtml(reasoningUsageTitle(set))}">${totalReasoningElapsed(set)} · ${formatReasoningUsage(set)}</span>${iconMarkup(set.reasoningExpanded ? 'chevron-up' : 'chevron-right', 'icon-12')}`;
@@ -566,7 +576,7 @@
                     const resultSuffix = tool.status === 'completed' && Number(tool.resultCount) > 0
                         ? ` · ${Number(tool.resultCount)} 项结果`
                         : tool.status === 'failed' ? ' · 已跳过' : '';
-                    toolRow.innerHTML = `${iconMarkup(tool.status === 'running' ? 'loader-circle' : tool.status === 'failed' ? 'triangle-alert' : 'search-check', `icon-11${tool.status === 'running' ? ' is-spinning' : ''}`)}<span>${escapeHtml(reasoningToolLabel(tool) + resultSuffix)}</span>`;
+                    toolRow.innerHTML = `${iconMarkup(reasoningToolIcon(tool), `icon-11${tool.status === 'running' ? ' is-spinning' : ''}`)}<span>${escapeHtml(reasoningToolLabel(tool) + resultSuffix)}</span>`;
                     turnBlock.append(toolRow);
                 });
                 log.append(turnBlock);
@@ -690,6 +700,15 @@
         function renderImageGenerationSets() {
             const container = document.getElementById('imageGenerationSets');
             const sets = window.imageEditState.resultSets;
+            const scrollHost = container;
+            const scrollTop = scrollHost?.scrollTop || 0;
+            const scrollBounds = scrollHost?.getBoundingClientRect();
+            const scrollAnchor = [...(container?.querySelectorAll('.image-generation-set') || [])]
+                .find(section => section.getBoundingClientRect().bottom > (scrollBounds?.top || 0));
+            const anchorId = scrollAnchor?.dataset.setId || '';
+            const anchorOffset = scrollAnchor && scrollHost
+                ? scrollAnchor.getBoundingClientRect().top - scrollHost.getBoundingClientRect().top
+                : 0;
             const availableSetIds = new Set(sets.map(set => set.setId));
             window.imageEditState.selectedSetIds = new Set(
                 [...window.imageEditState.selectedSetIds].filter(setId => availableSetIds.has(setId))
@@ -904,6 +923,17 @@
                 const reasoningLog = section.querySelector('.image-reasoning-log:not(.is-fully-expanded)');
                 if (reasoningLog) reasoningLog.scrollTop = reasoningLog.scrollHeight;
             });
+            if (scrollHost) {
+                const nextAnchor = anchorId
+                    ? container.querySelector(`.image-generation-set[data-set-id="${CSS.escape(anchorId)}"]`)
+                    : null;
+                if (nextAnchor) {
+                    scrollHost.scrollTop = scrollTop + nextAnchor.getBoundingClientRect().top
+                        - scrollHost.getBoundingClientRect().top - anchorOffset;
+                } else {
+                    scrollHost.scrollTop = scrollTop;
+                }
+            }
             const latestSet = sets[0];
             if (latestSet && !latestSet.originalsLoaded && !latestSet.loadingOriginals) {
                 void loadImageGenerationSetOriginals(latestSet);

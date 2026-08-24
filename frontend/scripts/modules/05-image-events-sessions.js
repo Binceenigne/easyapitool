@@ -219,6 +219,10 @@
             if (event.type === 'set_completed') {
                 const wasRunning = set.status === 'running';
                 set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage);
+                if (Array.isArray(event.webReferences)) {
+                    set.webReferences = event.webReferences.map(reference => ({ ...reference }));
+                    set.webReferenceCount = set.webReferences.length;
+                }
                 if (Array.isArray(event.items)) {
                     event.items.forEach((result, itemIndex) => {
                         if (!set.items[itemIndex]) return;
@@ -559,7 +563,8 @@
                 if (!result.ok) throw new Error(result.error || '无法读取图片集历史');
                 const existing = new Map(window.imageEditState.resultSets.map(set => [set.setId, set]));
                 (result.sets || []).forEach(set => {
-                    if (!existing.has(set.setId)) {
+                    const current = existing.get(set.setId);
+                    if (!current) {
                         existing.set(set.setId, {
                             ...set,
                             reasoningTurns: Array.isArray(set.reasoningTurns) ? set.reasoningTurns : [],
@@ -576,6 +581,9 @@
                             originalsLoaded: false,
                             loadingOriginals: false
                         });
+                    } else if (Array.isArray(set.webReferences) && set.webReferences.length) {
+                        current.webReferences = set.webReferences.map(reference => ({ ...reference }));
+                        current.webReferenceCount = current.webReferences.length;
                     }
                 });
                 window.imageEditState.resultSets = [...existing.values()].sort((left, right) =>
@@ -600,7 +608,14 @@
         }
 
         function resetImageViewer() {
-            Object.assign(window.imageEditState.viewer, { scale: 1, x: 0, y: 0, dragging: false });
+            Object.assign(window.imageEditState.viewer, {
+                scale: 1,
+                x: 0,
+                y: 0,
+                dragging: false,
+                pinchDistance: 0,
+                touchPointers: new Map()
+            });
             document.getElementById('imageResultModalCanvas')?.classList.remove('is-dragging');
             applyImageViewerTransform();
         }
@@ -705,6 +720,17 @@
             canvas.addEventListener('pointerdown', event => {
                 if (event.button !== 0) return;
                 const viewer = window.imageEditState.viewer;
+                if (event.pointerType === 'touch') {
+                    viewer.touchPointers = viewer.touchPointers || new Map();
+                    viewer.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+                    if (viewer.touchPointers.size >= 2) {
+                        const points = [...viewer.touchPointers.values()];
+                        viewer.pinchDistance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+                        viewer.dragging = false;
+                    }
+                    canvas.setPointerCapture(event.pointerId);
+                    return;
+                }
                 viewer.dragging = true;
                 viewer.pointerX = event.clientX;
                 viewer.pointerY = event.clientY;
@@ -713,6 +739,22 @@
             });
             canvas.addEventListener('pointermove', event => {
                 const viewer = window.imageEditState.viewer;
+                if (event.pointerType === 'touch' && viewer.touchPointers?.has(event.pointerId)) {
+                    viewer.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+                    if (viewer.touchPointers.size >= 2) {
+                        const points = [...viewer.touchPointers.values()];
+                        const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+                        if (viewer.pinchDistance > 0) {
+                            setImageViewerScale(
+                                viewer.scale * distance / viewer.pinchDistance,
+                                (points[0].x + points[1].x) / 2,
+                                (points[0].y + points[1].y) / 2
+                            );
+                        }
+                        viewer.pinchDistance = distance;
+                    }
+                    return;
+                }
                 if (!viewer.dragging) return;
                 viewer.x += event.clientX - viewer.pointerX;
                 viewer.y += event.clientY - viewer.pointerY;
@@ -722,6 +764,12 @@
             });
             const endDrag = event => {
                 const viewer = window.imageEditState.viewer;
+                if (event.pointerType === 'touch' && viewer.touchPointers?.has(event.pointerId)) {
+                    viewer.touchPointers.delete(event.pointerId);
+                    viewer.pinchDistance = 0;
+                    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+                    return;
+                }
                 viewer.dragging = false;
                 canvas.classList.remove('is-dragging');
                 if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);

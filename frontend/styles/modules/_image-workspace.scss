@@ -1341,7 +1341,7 @@
     contain: layout paint style;
     isolation: isolate;
 }
-.image-generation-item:is(.is-queued, .is-running) { background: #fff; }
+.image-generation-item:is(.is-queued, .is-running) { aspect-ratio: 2 / 1; background: #fff; }
 .image-generation-item:not(button) { user-select: none; }
 .image-generation-item img {
     position: absolute;

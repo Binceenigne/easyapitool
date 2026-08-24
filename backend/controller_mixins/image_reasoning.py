@@ -1415,5 +1415,11 @@ class ImageReasoningMixin:
             continuation=continuation_enabled,
             continuationRationale=str((continuation_plan or {}).get("rationale") or ""),
             selectedAssetIds=selected_asset_ids,
+            webSearchEnabled=web_search_enabled,
+            webSearchUsed=web_search_used,
+            webSearchFailed=web_search_failed,
+            webSearchResultCount=web_search_result_count,
+            webReferenceCount=len(persisted_web_references),
+            webReferences=persisted_web_references,
         )
         return result

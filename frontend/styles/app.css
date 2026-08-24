@@ -3619,6 +3619,7 @@ html.dark #keySwitcherMenu {
 }
 
 .image-generation-item:is(.is-queued, .is-running) {
+  aspect-ratio: 2/1;
   background: #fff;
 }
 
