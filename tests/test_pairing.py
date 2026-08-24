@@ -42,6 +42,8 @@ class PairingTests(unittest.TestCase):
         self.assertIn('android:allowBackup="false"', manifest)
         self.assertIn('"CREATE TABLE IF NOT EXISTS api_keys ("', plugin)
         self.assertIn("database.upsertKey(keyId, name, encrypt(value));", plugin)
+        self.assertIn("getSecureKeyStore().edit().clear().apply();", plugin)
+        self.assertNotIn("migrateSecureKeys", plugin)
         self.assertIn('Environment.DIRECTORY_DCIM + "/API_TOOLS"', plugin)
         self.assertIn("WindowInsetsCompat.Type.ime()", activity_source)
         self.assertIn("async function exportImageSets(selected)", bridge)

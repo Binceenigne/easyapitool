@@ -67,7 +67,7 @@ public class AndroidStoragePlugin extends Plugin {
     @Override
     public void load() {
         database = new StorageDatabase();
-        database.migrateSecureKeys(getSecureKeyStore());
+        getSecureKeyStore().edit().clear().apply();
     }
 
     @PluginMethod
@@ -839,22 +839,6 @@ public class AndroidStoragePlugin extends Plugin {
                 "secret_encrypted TEXT NOT NULL," +
                 "created_at INTEGER NOT NULL)"
             );
-        }
-
-        void migrateSecureKeys(android.content.SharedPreferences preferences) {
-            if (preferences.getAll().isEmpty()) return;
-            for (String keyId : preferences.getAll().keySet()) {
-                if (keyId.endsWith(".name") || keyId.endsWith(".baseUrl")) continue;
-                String encrypted = preferences.getString(keyId, "");
-                if (encrypted.isEmpty()) continue;
-                try {
-                    decrypt(encrypted);
-                    upsertKey(keyId, preferences.getString(keyId + ".name", "API Key"), encrypted);
-                } catch (Exception ignored) {
-                    // Android backup may restore ciphertext without its non-exportable Keystore key.
-                }
-            }
-            preferences.edit().clear().apply();
         }
 
         void upsertKey(String keyId, String name, String encrypted) {
