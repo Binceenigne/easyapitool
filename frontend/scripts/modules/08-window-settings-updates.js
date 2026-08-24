@@ -302,21 +302,20 @@
             const html = document.documentElement;
             const btnLight = document.getElementById('themeBtnLight');
             const btnDark = document.getElementById('themeBtnDark');
-            const normalizedMode = mode === 'light' ? 'light' : 'dark';
+            const btnSystem = document.getElementById('themeBtnSystem');
+            const normalizedMode = ['light', 'dark', 'system'].includes(mode) ? mode : 'system';
+            const resolvedMode = normalizedMode === 'system'
+                ? (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+                : normalizedMode;
 
-            if (normalizedMode === 'light') {
-                html.classList.remove('dark');
-                localStorage.setItem('theme', 'light');
-                btnLight.classList.add('is-active');
-                btnDark.classList.remove('is-active');
-            } else {
-                html.classList.add('dark');
-                localStorage.setItem('theme', 'dark');
-                btnDark.classList.add('is-active');
-                btnLight.classList.remove('is-active');
-            }
-            window.__pendingNativeTheme = normalizedMode;
-            window.pywebview?.api?.set_window_background(normalizedMode);
+            html.classList.toggle('dark', resolvedMode === 'dark');
+            html.dataset.themeMode = normalizedMode;
+            localStorage.setItem('theme', normalizedMode);
+            btnLight?.classList.toggle('is-active', normalizedMode === 'light');
+            btnDark?.classList.toggle('is-active', normalizedMode === 'dark');
+            btnSystem?.classList.toggle('is-active', normalizedMode === 'system');
+            window.__pendingNativeTheme = resolvedMode;
+            window.pywebview?.api?.set_window_background(resolvedMode);
         }
 
         function updateRateLimitModeButtons() {
@@ -429,6 +428,7 @@
         }
 
         async function updateRefreshIntervals() {
+            if (isAndroidPlatform()) return;
             const foregroundInput = document.getElementById('foregroundRefreshMinutes');
             const backgroundInput = document.getElementById('backgroundRefreshMinutes');
             const foregroundMinutes = Math.max(1, Math.round(Number(foregroundInput.value) || 1));

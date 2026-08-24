@@ -10,6 +10,7 @@ import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.security.keystore.KeyGenParameterSpec;
@@ -66,6 +67,7 @@ public class AndroidStoragePlugin extends Plugin {
     @Override
     public void load() {
         database = new StorageDatabase();
+        database.migrateSecureKeys(getSecureKeyStore());
     }
 
     @PluginMethod
@@ -314,7 +316,7 @@ public class AndroidStoragePlugin extends Plugin {
         values.put(MediaStore.Images.Media.DISPLAY_NAME, displayName);
         values.put(MediaStore.Images.Media.MIME_TYPE, mimeType);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/API_TOOLS");
+            values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/API_TOOLS");
             values.put(MediaStore.Images.Media.IS_PENDING, 1);
         }
         Uri target = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
@@ -331,7 +333,11 @@ public class AndroidStoragePlugin extends Plugin {
                 ready.put(MediaStore.Images.Media.IS_PENDING, 0);
                 resolver.update(target, ready, null, null);
             }
-            call.resolve(new JSObject().put("ok", true).put("uri", target.toString()).put("name", displayName));
+            call.resolve(new JSObject()
+                .put("ok", true)
+                .put("uri", target.toString())
+                .put("name", displayName)
+                .put("path", "DCIM/API_TOOLS/" + displayName));
         } catch (Exception exception) {
             resolver.delete(target, null, null);
             call.reject("图片保存失败", exception);
@@ -357,10 +363,7 @@ public class AndroidStoragePlugin extends Plugin {
             return;
         }
         try {
-            getSecureKeyStore().edit()
-                .putString(keyId, encrypt(value))
-                .putString(keyId + ".name", name)
-                .apply();
+            database.upsertKey(keyId, name, encrypt(value));
             call.resolve(new JSObject().put("keyId", keyId));
         } catch (Exception exception) {
             call.reject("无法保存安全密钥", exception);
@@ -375,12 +378,12 @@ public class AndroidStoragePlugin extends Plugin {
             return;
         }
         try {
-            String encrypted = getSecureKeyStore().getString(keyId, null);
-            if (encrypted == null) throw new IOException("安全密钥不存在");
+            JSObject storedKey = database.key(keyId);
+            if (storedKey == null) throw new IOException("安全密钥不存在");
             JSObject result = new JSObject();
             result.put("keyId", keyId);
-            result.put("name", getSecureKeyStore().getString(keyId + ".name", "API Key"));
-            result.put("value", decrypt(encrypted));
+            result.put("name", storedKey.getString("name", "API Key"));
+            result.put("value", decrypt(storedKey.getString("encrypted", "")));
             call.resolve(result);
         } catch (Exception exception) {
             call.reject("无法读取安全密钥", exception);
@@ -394,11 +397,7 @@ public class AndroidStoragePlugin extends Plugin {
             call.reject("安全密钥编号无效");
             return;
         }
-        getSecureKeyStore().edit()
-            .remove(keyId)
-            .remove(keyId + ".name")
-            .remove(keyId + ".baseUrl")
-            .apply();
+        database.deleteKey(keyId);
         call.resolve(new JSObject().put("keyId", keyId));
     }
 
@@ -426,6 +425,16 @@ public class AndroidStoragePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getOrCreateDeviceId(PluginCall call) {
+        String deviceId = getServiceStore().getString("deviceId", "");
+        if (deviceId.isEmpty()) {
+            deviceId = UUID.randomUUID().toString();
+            getServiceStore().edit().putString("deviceId", deviceId).apply();
+        }
+        call.resolve(new JSObject().put("deviceId", deviceId));
+    }
+
+    @PluginMethod
     public void readServiceConfig(PluginCall call) {
         try {
             String serviceUrl = getServiceStore().getString("serviceUrl", "");
@@ -443,7 +452,8 @@ public class AndroidStoragePlugin extends Plugin {
 
     @PluginMethod
     public void clearServiceConfig(PluginCall call) {
-        getServiceStore().edit().clear().apply();
+        String deviceId = getServiceStore().getString("deviceId", "");
+        getServiceStore().edit().clear().putString("deviceId", deviceId).apply();
         call.resolve(new JSObject().put("ok", true));
     }
 
@@ -476,15 +486,7 @@ public class AndroidStoragePlugin extends Plugin {
     }
 
     private JSArray secureKeysMetadata() {
-        JSArray keys = new JSArray();
-        for (String key : getSecureKeyStore().getAll().keySet()) {
-            if (key.endsWith(".name") || key.endsWith(".baseUrl")) continue;
-            JSObject metadata = new JSObject();
-            metadata.put("id", key);
-            metadata.put("name", getSecureKeyStore().getString(key + ".name", "API Key"));
-            keys.put(metadata);
-        }
-        return keys;
+        return database.listKeys();
     }
 
     private SecretKey getMasterKey() throws Exception {
@@ -804,7 +806,7 @@ public class AndroidStoragePlugin extends Plugin {
     private class StorageDatabase extends SQLiteOpenHelper {
 
         StorageDatabase() {
-            super(getContext(), "easyapitool-index.db", null, 1);
+            super(getContext(), "easyapitool-index.db", null, 2);
         }
 
         @Override
@@ -821,10 +823,92 @@ public class AndroidStoragePlugin extends Plugin {
                 "created_at INTEGER NOT NULL)"
             );
             db.execSQL("CREATE INDEX idx_assets_session ON assets(session_id, created_at)");
+            createKeyTable(db);
         }
 
         @Override
-        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {}
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            if (oldVersion < 2) createKeyTable(db);
+        }
+
+        private void createKeyTable(SQLiteDatabase db) {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS api_keys (" +
+                "key_id TEXT PRIMARY KEY," +
+                "name TEXT NOT NULL," +
+                "secret_encrypted TEXT NOT NULL," +
+                "created_at INTEGER NOT NULL)"
+            );
+        }
+
+        void migrateSecureKeys(android.content.SharedPreferences preferences) {
+            if (preferences.getAll().isEmpty()) return;
+            for (String keyId : preferences.getAll().keySet()) {
+                if (keyId.endsWith(".name") || keyId.endsWith(".baseUrl")) continue;
+                String encrypted = preferences.getString(keyId, "");
+                if (encrypted.isEmpty()) continue;
+                try {
+                    decrypt(encrypted);
+                    upsertKey(keyId, preferences.getString(keyId + ".name", "API Key"), encrypted);
+                } catch (Exception ignored) {
+                    // Android backup may restore ciphertext without its non-exportable Keystore key.
+                }
+            }
+            preferences.edit().clear().apply();
+        }
+
+        void upsertKey(String keyId, String name, String encrypted) {
+            ContentValues values = new ContentValues();
+            values.put("key_id", keyId);
+            values.put("name", name);
+            values.put("secret_encrypted", encrypted);
+            values.put("created_at", System.currentTimeMillis());
+            getWritableDatabase().insertWithOnConflict(
+                "api_keys", null, values, SQLiteDatabase.CONFLICT_REPLACE
+            );
+        }
+
+        JSObject key(String keyId) {
+            try (Cursor cursor = getReadableDatabase().query(
+                "api_keys",
+                new String[] { "name", "secret_encrypted" },
+                "key_id=?",
+                new String[] { keyId },
+                null,
+                null,
+                null,
+                "1"
+            )) {
+                if (!cursor.moveToFirst()) return null;
+                return new JSObject()
+                    .put("name", cursor.getString(0))
+                    .put("encrypted", cursor.getString(1));
+            }
+        }
+
+        JSArray listKeys() {
+            JSArray keys = new JSArray();
+            try (Cursor cursor = getReadableDatabase().query(
+                "api_keys",
+                new String[] { "key_id", "name" },
+                null,
+                null,
+                null,
+                null,
+                "created_at ASC"
+            )) {
+                while (cursor.moveToNext()) {
+                    keys.put(new JSObject()
+                        .put("id", cursor.getString(0))
+                        .put("name", cursor.getString(1)));
+                }
+            }
+            return keys;
+        }
+
+        void deleteKey(String keyId) {
+            getWritableDatabase().delete("api_keys", "key_id=?", new String[] { keyId });
+        }
 
         void upsert(String resourceId, ContentValues values) {
             SQLiteDatabase db = getWritableDatabase();

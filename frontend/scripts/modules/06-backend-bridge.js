@@ -30,7 +30,39 @@
 
         window.applyBackendState = function(state) {
             const previousActiveId = window.appState.activeKeyId;
-            window.appState.keys = Array.isArray(state.keys) ? state.keys : [];
+            const finiteNumber = (value, fallback = 0) => {
+                const numeric = Number(value);
+                return Number.isFinite(numeric) ? numeric : fallback;
+            };
+            const normalizeWindow = value => {
+                const source = value && typeof value === 'object' ? value : {};
+                return {
+                    ...source,
+                    limit: Math.max(0, finiteNumber(source.limit)),
+                    used: Math.max(0, finiteNumber(source.used)),
+                    remaining: Math.max(0, finiteNumber(source.remaining))
+                };
+            };
+            window.appState.keys = Array.isArray(state.keys) ? state.keys.map(key => {
+                const totalQuota = Math.max(0, finiteNumber(key?.totalQuota));
+                const usedQuota = Math.max(0, finiteNumber(key?.usedQuota));
+                return {
+                    ...key,
+                    totalQuota,
+                    usedQuota,
+                    remainingQuota: Math.max(0, finiteNumber(key?.remainingQuota, totalQuota - usedQuota)),
+                    todayCost: Math.max(0, finiteNumber(key?.todayCost)),
+                    totalCost: Math.max(0, finiteNumber(key?.totalCost)),
+                    todayRequests: Math.max(0, Math.trunc(finiteNumber(key?.todayRequests))),
+                    totalRequests: Math.max(0, Math.trunc(finiteNumber(key?.totalRequests))),
+                    expireTimestamp: Math.max(0, finiteNumber(key?.expireTimestamp)),
+                    win5h: normalizeWindow(key?.win5h),
+                    win1d: normalizeWindow(key?.win1d),
+                    win7d: normalizeWindow(key?.win7d),
+                    rates: key?.rates && typeof key.rates === 'object' ? key.rates : {},
+                    models: Array.isArray(key?.models) ? key.models : []
+                };
+            }) : [];
             window.appState.thresholds = state.thresholds || window.appState.thresholds;
             window.appState.rateLimitProgressMode = state.rateLimitProgressMode === 'used' ? 'used' : 'remaining';
             window.appState.appVersion = state.appVersion || window.appState.appVersion;
@@ -47,13 +79,19 @@
                 : window.appState.activeTitleBarMode;
             window.appState.startupEnabled = state.startupEnabled === true;
             window.appState.update = state.update || window.appState.update;
-            window.appState.refreshIntervals = state.refreshIntervals || window.appState.refreshIntervals;
-            window.appState.refreshCounter = Number(state.nextRefreshSeconds) || (
-                state.isForeground
-                    ? window.appState.refreshIntervals.foreground
-                    : window.appState.refreshIntervals.background
-            );
-            window.appState.isTabActive = state.isForeground !== false;
+            if (isAndroidPlatform()) {
+                window.appState.refreshIntervals = { foreground: 60, background: 0 };
+                window.appState.refreshCounter = 60;
+                window.appState.isTabActive = document.visibilityState !== 'hidden';
+            } else {
+                window.appState.refreshIntervals = state.refreshIntervals || window.appState.refreshIntervals;
+                window.appState.refreshCounter = Number(state.nextRefreshSeconds) || (
+                    state.isForeground
+                        ? window.appState.refreshIntervals.foreground
+                        : window.appState.refreshIntervals.background
+                );
+                window.appState.isTabActive = state.isForeground !== false;
+            }
 
             if (previousActiveId && window.appState.keys.some(key => key.id === previousActiveId)) {
                 window.appState.activeKeyId = previousActiveId;
@@ -65,10 +103,12 @@
             document.getElementById('thDanger').value = window.appState.thresholds.danger;
             document.getElementById('thCritical').value = window.appState.thresholds.critical;
             updateRateLimitModeButtons();
-            document.getElementById('foregroundRefreshMinutes').value = Math.max(
+            const foregroundRefreshInput = document.getElementById('foregroundRefreshMinutes');
+            const backgroundRefreshInput = document.getElementById('backgroundRefreshMinutes');
+            if (foregroundRefreshInput) foregroundRefreshInput.value = Math.max(
                 1, Math.round(window.appState.refreshIntervals.foreground / 60)
             );
-            document.getElementById('backgroundRefreshMinutes').value = Math.max(
+            if (backgroundRefreshInput) backgroundRefreshInput.value = Math.max(
                 5, Math.round(window.appState.refreshIntervals.background / 60)
             );
             document.getElementById('closeAction').value = window.appState.closeAction;
@@ -154,5 +194,21 @@
                 window.applyBackendState(state);
             } catch (error) {
                 console.warn('后台状态同步失败:', error);
+            }
+        }
+
+        let androidForegroundRefreshInFlight = false;
+        async function refreshAndroidForegroundState() {
+            if (!isAndroidPlatform() || document.visibilityState !== 'visible' || !window.pywebview?.api?.refresh_now) return;
+            if (androidForegroundRefreshInFlight) return;
+            androidForegroundRefreshInFlight = true;
+            try {
+                const result = await window.pywebview.api.refresh_now('android-foreground');
+                if (result?.state) window.applyBackendState(result.state);
+                else await syncVisibleBackendState();
+            } catch (error) {
+                console.warn('Android 前台刷新失败:', error);
+            } finally {
+                androidForegroundRefreshInFlight = false;
             }
         }

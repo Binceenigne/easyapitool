@@ -1341,7 +1341,7 @@
     contain: layout paint style;
     isolation: isolate;
 }
-.image-generation-item:is(.is-queued, .is-running) { background: #fff; }
+.image-generation-item:is(.is-queued, .is-running) { aspect-ratio: 2 / 1; background: #fff; }
 .image-generation-item:not(button) { user-select: none; }
 .image-generation-item img {
     position: absolute;
@@ -1398,6 +1398,7 @@
 .image-set-delete-modal-actions svg { width: 13px; height: 13px; }
 
 #appMain > #imageResultModal { position: absolute; inset: 0; padding: 0; }
+html[data-platform="android"] #appMain > #imageResultModal { inset: 4px; border: 1px solid var(--border); }
 .app-modal > .image-result-modal-panel { position: absolute; inset: 0; width: auto; height: auto; max-height: none; border: 0; transform: none !important; }
 .image-result-modal-header { flex: 0 0 48px; padding: 7px 10px; background: var(--surface); }
 .image-result-modal-actions { display: flex; align-items: center; gap: 6px; }

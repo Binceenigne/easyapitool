@@ -117,9 +117,21 @@
 
             // 实时倒计时
             setInterval(updateClockCountdowns, 1000);
-            setInterval(syncVisibleBackendState, 5000);
+            if (isAndroidPlatform()) {
+                window.setInterval(() => {
+                    void refreshAndroidForegroundState();
+                }, 60 * 1000);
+            } else {
+                setInterval(syncVisibleBackendState, 5000);
+            }
             document.addEventListener('visibilitychange', () => {
-                if (document.visibilityState === 'visible') void syncVisibleBackendState();
+                window.appState.isTabActive = document.visibilityState === 'visible';
+                if (document.visibilityState === 'visible') {
+                    window.appState.refreshCounter = 60;
+                    if (isAndroidPlatform()) void refreshAndroidForegroundState();
+                    else void syncVisibleBackendState();
+                }
+                updateRefreshBadge();
             });
 
             // 响应式高宽监测

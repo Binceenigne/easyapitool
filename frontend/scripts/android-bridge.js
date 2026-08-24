@@ -35,26 +35,45 @@
         bearerToken: String(window.__EASYAPITOOL_SERVICE_TOKEN__ || '').trim()
     };
     let serviceConfigLoad = null;
+    let serviceConfigError = '';
+    let deviceRegistrationPromise = null;
+
+    function isDeviceToken(token) {
+        return /^device-v1\./.test(String(token || '').trim());
+    }
 
     async function loadServiceConfig() {
-        if (serviceConfig.baseUrl && serviceConfig.bearerToken) return serviceConfig;
+        if (serviceConfig.baseUrl && isDeviceToken(serviceConfig.bearerToken)) {
+            serviceConfigError = '';
+            return serviceConfig;
+        }
         if (serviceConfigLoad) return serviceConfigLoad;
         serviceConfigLoad = pluginCall('readServiceConfig')
             .then(config => {
                 const savedBaseUrl = String(config.serviceUrl || '').trim().replace(/\/$/, '');
+                const savedBearerToken = String(config.bearerToken || '').trim();
                 if (/^https:\/\/clife\.djyx\.me(?:\/|$)/i.test(savedBaseUrl)) {
                     void pluginCall('clearServiceConfig').catch(() => {});
                     serviceConfig = { baseUrl: DEFAULT_ANDROID_SERVICE_URL, bearerToken: '' };
+                    serviceConfigError = '';
+                    return serviceConfig;
+                }
+                if (savedBearerToken && !isDeviceToken(savedBearerToken)) {
+                    void pluginCall('clearServiceConfig').catch(() => {});
+                    serviceConfig = { baseUrl: DEFAULT_ANDROID_SERVICE_URL, bearerToken: '' };
+                    serviceConfigError = '';
                     return serviceConfig;
                 }
                 serviceConfig = {
                     baseUrl: savedBaseUrl || DEFAULT_ANDROID_SERVICE_URL,
-                    bearerToken: String(config.bearerToken || '').trim()
+                    bearerToken: savedBearerToken
                 };
+                serviceConfigError = '';
                 return serviceConfig;
             })
-            .catch(() => {
+            .catch(error => {
                 serviceConfig = { baseUrl: DEFAULT_ANDROID_SERVICE_URL, bearerToken: '' };
+                serviceConfigError = error?.message || '无法读取设备连接配置';
                 return serviceConfig;
             })
             .finally(() => { serviceConfigLoad = null; });
@@ -71,11 +90,13 @@
 
     async function hydrateServiceForm() {
         const config = await loadServiceConfig();
-        const address = document.getElementById('androidServiceUrl');
-        if (address) address.value = config.baseUrl;
         setServiceStatus(
-            config.baseUrl && config.bearerToken ? '已安全保存设备连接' : '尚未完成服务配对',
-            false
+            config.baseUrl && config.bearerToken
+                ? '设备连接已自动配置'
+                : serviceConfigError
+                    ? serviceConfigError
+                    : '添加 API Key 后将自动配置设备连接',
+            Boolean(serviceConfigError)
         );
     }
 
@@ -131,7 +152,10 @@
     function requireService() {
         const settings = serviceSettings();
         if (!settings.baseUrl) throw new Error('尚未配置 API_TOOLS 服务地址');
-        if (!settings.bearerToken) throw new Error('尚未配置设备访问令牌');
+        if (!settings.bearerToken) {
+            const detail = serviceConfigError ? `：${serviceConfigError}` : '';
+            throw new Error(`设备连接尚未自动配置${detail}。请先添加有效的 API Key`);
+        }
         return settings;
     }
 
@@ -160,7 +184,7 @@
             : `${baseUrl}${cleanPath}`;
     }
 
-    async function requestJson(path, options = {}) {
+    async function requestJson(path, options = {}, retryAuthentication = true) {
         const settings = requireService();
         const response = await fetch(resolveUrl(path), {
             ...options,
@@ -171,25 +195,16 @@
             }
         });
         const body = await response.json().catch(() => ({}));
+        if (response.status === 401 && retryAuthentication) {
+            serviceConfig.bearerToken = '';
+            await pluginCall('clearServiceConfig').catch(() => {});
+            await ensureDeviceRegistration();
+            return requestJson(path, options, false);
+        }
         if (!response.ok) {
             throw new Error(body.detail || body.error || `HTTP ${response.status}`);
         }
         return body;
-    }
-
-    async function pairService(serviceUrl, pairingCode) {
-        const baseUrl = String(serviceUrl || '').trim().replace(/\/$/, '');
-        if (!baseUrl.startsWith('https://')) throw new Error('服务地址必须使用 HTTPS');
-        const response = await fetch(`${baseUrl}/pair`, {
-            method: 'POST',
-            headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pairingCode: String(pairingCode || '').trim() })
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok || !body.bearerToken) {
-            throw new Error(body.detail || '配对码无效或已过期');
-        }
-        return body.bearerToken;
     }
 
     async function pluginCall(method, options = {}) {
@@ -206,8 +221,53 @@
         return pluginCall('readSecureKey', { keyId: String(keyId) });
     }
 
-    async function registerKey(metadata) {
+    async function ensureDeviceRegistration(preferredKeyId = '') {
         await loadServiceConfig();
+        if (serviceConfig.bearerToken) return serviceConfig;
+        if (deviceRegistrationPromise) return deviceRegistrationPromise;
+        deviceRegistrationPromise = (async () => {
+            const metadata = await secureKeyMetadata();
+            const selected = metadata.find(key => String(key.id) === String(preferredKeyId)) || metadata[0];
+            if (!selected) throw new Error('请先添加有效的 API Key');
+            const [secret, device] = await Promise.all([
+                readSecureKey(selected.id),
+                pluginCall('getOrCreateDeviceId')
+            ]);
+            const response = await fetch(`${DEFAULT_ANDROID_SERVICE_URL}/device/register`, {
+                method: 'POST',
+                headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    deviceId: String(device.deviceId || ''),
+                    keyId: String(selected.id),
+                    name: secret.name || selected.name || 'API Key',
+                    value: secret.value
+                })
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok || !body.bearerToken) {
+                throw new Error(body.detail || '设备连接自动配置失败');
+            }
+            await pluginCall('saveServiceConfig', {
+                serviceUrl: DEFAULT_ANDROID_SERVICE_URL,
+                bearerToken: body.bearerToken
+            });
+            serviceConfig = {
+                baseUrl: DEFAULT_ANDROID_SERVICE_URL,
+                bearerToken: String(body.bearerToken)
+            };
+            serviceConfigError = '';
+            setServiceStatus('设备连接已自动配置');
+            return serviceConfig;
+        })().catch(error => {
+            serviceConfigError = error?.message || '设备连接自动配置失败';
+            setServiceStatus(serviceConfigError, true);
+            throw error;
+        }).finally(() => { deviceRegistrationPromise = null; });
+        return deviceRegistrationPromise;
+    }
+
+    async function registerKey(metadata) {
+        await ensureDeviceRegistration(metadata.id);
         const secret = await readSecureKey(metadata.id);
         return requestJson('/api/v1/keys', {
             method: 'POST',
@@ -240,6 +300,9 @@
     async function getState() {
         await loadServiceConfig();
         const metadata = await secureKeyMetadata();
+        if (!serviceConfig.bearerToken && metadata.length) {
+            await ensureDeviceRegistration(metadata[0].id).catch(() => {});
+        }
         let remote = {};
         let registrationErrors = [];
         try {
@@ -299,6 +362,7 @@
             originalPrompt: String(result.originalPrompt || pending?.prompt || ''),
             createdAt: result.createdAt || pending?.createdAt || new Date().toISOString(),
             status: result.cancelled ? 'cancelled' : result.ok ? 'completed' : 'failed',
+            error: String(result.error || ''),
             requestedCount: Number(result.requestedCount || pending?.requestedCount || 1),
             items: (result.items || []).map((item, itemIndex) => ({
                 itemIndex: Number(item.itemIndex ?? itemIndex),
@@ -429,8 +493,22 @@
         if (event.type === 'task_failed') {
             const requestId = String(event.requestId || '');
             const pending = pendingTasks.get(requestId);
+            const failed = persistFailedGeneration(
+                {
+                    requestId,
+                    sessionId: pending?.sessionId || requestId,
+                    parentSetId: pending?.parentSetId || '',
+                    roundNumber: pending?.roundNumber || 1,
+                    imageCount: pending?.requestedCount || 1
+                },
+                pending?.prompt || '',
+                new Error(event.error || '图片生成失败'),
+                pending
+            );
+            window.applyImageGenerationEvent?.({ ...failed, type: 'set_completed' });
             if (pending) {
                 pendingTasks.delete(requestId);
+                pending.failurePersisted = true;
                 pending.reject(new Error(event.error || '图片生成失败'));
             }
             return;
@@ -500,6 +578,12 @@
                         headers: { Authorization: `Bearer ${settings.bearerToken}`, Accept: 'text/event-stream' },
                         cache: 'no-store'
                     });
+                    if (response.status === 401) {
+                        serviceConfig.bearerToken = '';
+                        await pluginCall('clearServiceConfig').catch(() => {});
+                        await ensureDeviceRegistration();
+                        continue;
+                    }
                     if (!response.ok) throw new Error(`SSE HTTP ${response.status}`);
                     await readSseResponse(response);
                 } catch (error) {
@@ -551,29 +635,54 @@
         return new Promise((resolve, reject) => pendingTasks.set(String(requestId), { resolve, reject, ...metadata }));
     }
 
-    async function generateImage(keyId, prompt, paths, options = {}) {
-        await loadServiceConfig();
-        const settings = requireService();
-        try {
-            await registerKey({ id: String(keyId), name: 'API Key' });
-        } catch (error) {
-            throw new Error(`无法恢复设备密钥：${error.message || String(error)}`);
-        }
-        startEventStream();
-        const references = [];
-        for (const path of paths || []) references.push(await uploadReference(path));
-        const requestId = String(options.requestId || newRequestId());
-        const resultPromise = taskResult(requestId, {
+    function persistFailedGeneration(options, prompt, error, pending = null) {
+        const requestId = String(options?.requestId || pending?.requestId || newRequestId());
+        const requestedCount = Math.max(1, Number(options?.imageCount || pending?.requestedCount) || 1);
+        const message = error?.message || String(error || '图片生成失败');
+        const result = {
+            ok: false,
             requestId,
-            setId: requestId,
-            sessionId: String(options.sessionId || requestId),
-            parentSetId: String(options.parentSetId || ''),
-            roundNumber: Number(options.roundNumber) || 1,
-            prompt,
-            requestedCount: Number(options.imageCount) || 1,
-            createdAt: new Date().toISOString()
-        });
+            setId: String(pending?.setId || requestId),
+            sessionId: String(options?.sessionId || pending?.sessionId || requestId),
+            parentSetId: String(options?.parentSetId || pending?.parentSetId || ''),
+            roundNumber: Number(options?.roundNumber || pending?.roundNumber) || 1,
+            prompt: String(prompt || pending?.prompt || ''),
+            originalPrompt: String(prompt || pending?.prompt || ''),
+            createdAt: pending?.createdAt || new Date().toISOString(),
+            requestedCount,
+            error: message,
+            items: Array.from({ length: requestedCount }, (_, itemIndex) => ({
+                itemIndex,
+                ok: false,
+                status: 'failed',
+                error: message
+            }))
+        };
+        persistLocalSet(result, pending);
+        return result;
+    }
+
+    async function generateImage(keyId, prompt, paths, options = {}) {
+        let pending = null;
         try {
+            await ensureDeviceRegistration(keyId);
+            const settings = requireService();
+            await registerKey({ id: String(keyId), name: 'API Key' });
+            startEventStream();
+            const references = [];
+            for (const path of paths || []) references.push(await uploadReference(path));
+            const requestId = String(options.requestId || newRequestId());
+            const resultPromise = taskResult(requestId, {
+                requestId,
+                setId: requestId,
+                sessionId: String(options.sessionId || requestId),
+                parentSetId: String(options.parentSetId || ''),
+                roundNumber: Number(options.roundNumber) || 1,
+                prompt,
+                requestedCount: Number(options.imageCount) || 1,
+                createdAt: new Date().toISOString()
+            });
+            pending = pendingTasks.get(requestId) || null;
             await requestJson('/api/v1/image-generations', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -586,7 +695,12 @@
             });
             return await resultPromise;
         } catch (error) {
-            pendingTasks.delete(requestId);
+            const requestId = String(options.requestId || pending?.requestId || '');
+            if (requestId) pendingTasks.delete(requestId);
+            if (!pending?.failurePersisted) {
+                const failed = persistFailedGeneration(options, prompt, error, pending);
+                window.applyImageGenerationEvent?.({ ...failed, type: 'set_completed' });
+            }
             throw error;
         }
     }
@@ -616,12 +730,33 @@
         return pluginCall('saveAssetToGallery', { path });
     }
 
+    async function exportImageSets(selected) {
+        const selectedIds = new Set((selected || []).map(set => String(set.setId || '')));
+        const localSets = await listLocalImageSets();
+        const skippedSets = [];
+        let exported = 0;
+        for (const set of localSets) {
+            if (!selectedIds.has(String(set.setId || ''))) continue;
+            let setExported = 0;
+            for (const item of set.items || []) {
+                const path = item.path || item.result?.path || '';
+                if (!path || item.status !== 'completed') continue;
+                await saveEditedImage(path);
+                exported += 1;
+                setExported += 1;
+            }
+            if (!setExported) skippedSets.push(set.setId);
+        }
+        return { ok: true, exported, skippedSets, path: 'DCIM/API_TOOLS' };
+    }
+
     const api = {
         get_state: getState,
         add_key: async (name, value) => {
             const keyId = newRequestId('android-key');
             await pluginCall('saveSecureKey', { keyId, name, value, baseUrl: '' });
             try {
+                await ensureDeviceRegistration(keyId);
                 await registerKey({ id: keyId, name });
             } catch (error) {
                 throw new Error(`密钥已安全保存，但服务注册失败：${error.message}`);
@@ -643,15 +778,7 @@
         list_image_sets: async () => ({ ok: true, sets: await listLocalImageSets(), source: 'android-local' }),
         delete_image_set: deleteImageSet,
         open_generated_pictures: async () => ({ ok: true }),
-        export_image_sets: async selected => {
-            let exported = 0;
-            for (const set of selected || []) {
-                for (const item of set.items || []) {
-                    if (item.path && item.status === 'completed') { await saveEditedImage(item.path); exported++; }
-                }
-            }
-            return { ok: true, exported, skippedSets: [] };
-        },
+        export_image_sets: exportImageSets,
         polish_prompt: async (keyId, prompt) => requestJson('/api/v1/prompts/polish', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -659,7 +786,11 @@
         }),
         append_image_stream_debug: async () => ({ ok: true }),
         report_startup: async () => ({ ok: true }),
-        refresh_now: async () => ({ ok: true, valid: true, state: await getState(), refreshed: [], failed: [] }),
+        refresh_now: async () => {
+            await ensureDeviceRegistration();
+            await registerAllKeys();
+            return requestJson('/api/v1/refresh', { method: 'POST' });
+        },
         update_thresholds: async thresholds => { localPreferences.set('thresholds', thresholds); return { ok: true, thresholds }; },
         update_rate_limit_progress_mode: async mode => { localPreferences.set('rate-mode', mode); return { rateLimitProgressMode: mode }; },
         update_refresh_intervals: async (foreground, background) => {
@@ -716,44 +847,6 @@
         resolve_close_action: async () => ({ ok: true })
     };
 
-    window.configureAndroidService = async (serviceUrl, bearerToken) => {
-        await pluginCall('saveServiceConfig', { serviceUrl, bearerToken });
-        serviceConfig = {
-            baseUrl: String(serviceUrl || '').trim().replace(/\/$/, ''),
-            bearerToken: String(bearerToken || '').trim()
-        };
-        eventStreamPromise = null;
-        startEventStream();
-        return { ok: true };
-    };
-    window.saveAndroidServiceConfig = async () => {
-        const address = document.getElementById('androidServiceUrl');
-        const token = document.getElementById('androidServiceToken');
-        const pairingCode = document.getElementById('androidServicePairingCode');
-        const button = document.getElementById('saveAndroidServiceButton');
-        const serviceUrl = String(address?.value || '').trim();
-        let bearerToken = String(token?.value || '').trim();
-        const requestedPairingCode = String(pairingCode?.value || '').trim();
-        if (!serviceUrl || (!bearerToken && !requestedPairingCode)) {
-            setServiceStatus('请输入服务地址，以及设备令牌或一次性配对码', true);
-            return;
-        }
-        if (button) button.disabled = true;
-        try {
-            if (!bearerToken) bearerToken = await pairService(serviceUrl, requestedPairingCode);
-            await window.configureAndroidService(serviceUrl, bearerToken);
-            if (token) token.value = '';
-            if (pairingCode) pairingCode.value = '';
-            setServiceStatus('已安全保存设备连接');
-            const state = await window.pywebview.api.get_state();
-            window.applyBackendState?.(state);
-            window.showToast?.('服务连接已保存');
-        } catch (error) {
-            setServiceStatus(error.message || '服务连接保存失败', true);
-        } finally {
-            if (button) button.disabled = false;
-        }
-    };
     window.clearAndroidService = async () => {
         await pluginCall('clearServiceConfig');
         serviceConfig = { baseUrl: DEFAULT_ANDROID_SERVICE_URL, bearerToken: '' };

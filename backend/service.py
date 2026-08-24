@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import io
+import base64
 import hmac
+import hashlib
+import json
 import os
 import secrets
 import shutil
@@ -18,12 +21,14 @@ from .client import EasyClinClient
 from .common import APP_NAME, DEFAULT_BASE_URL
 from .headless import HeadlessController, MemoryCredentialStore
 from .image_editor import ImageGenerationService, image_preview_bytes
+from .usage import parse_timestamp, safe_float
 from .web_search import WebSearchService
 
 
 MAX_REFERENCE_COUNT = 16
 MAX_REFERENCE_BYTES = 50 * 1024 * 1024
 RESOURCE_TTL_SECONDS = 30 * 60
+DEVICE_TOKEN_TTL_SECONDS = 365 * 24 * 60 * 60
 PAIRING_CODE_FILENAME = "pairing-code"
 SUPPORTED_UPLOAD_TYPES = {
     "image/png": ".png",
@@ -145,6 +150,9 @@ class HeadlessService:
         self.task_owners: dict[str, str] = {}
         self.task_lock = threading.RLock()
         self.pair_lock = threading.RLock()
+        self.quota_payloads: dict[str, dict[str, Any]] = {}
+        self.quota_errors: dict[str, str] = {}
+        self.quota_lock = threading.RLock()
         self.controller = controller or HeadlessController(
             credential_store=self.credentials,
             data_root=self.instance_root,
@@ -196,20 +204,184 @@ class HeadlessService:
                 raise PermissionError("配对码无效") from None
         return {"ok": True, "bearerToken": self.config.bearer_token}
 
+    @staticmethod
+    def _token_part(value: bytes) -> str:
+        return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+    @staticmethod
+    def _decode_token_part(value: str) -> bytes:
+        decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        if HeadlessService._token_part(decoded) != value:
+            raise ValueError("设备令牌编码无效")
+        return decoded
+
+    def issue_device_token(self, device_id: str) -> str:
+        clean_device_id = str(device_id or "").strip()
+        if not 16 <= len(clean_device_id) <= 128:
+            raise ValueError("设备标识无效")
+        payload = json.dumps(
+            {
+                "deviceId": clean_device_id,
+                "expiresAt": int(time.time()) + DEVICE_TOKEN_TTL_SECONDS,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        encoded_payload = self._token_part(payload)
+        signature = hmac.new(
+            self.config.bearer_token.encode("utf-8"),
+            encoded_payload.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        return f"device-v1.{encoded_payload}.{self._token_part(signature)}"
+
+    def device_owner(self, token: str) -> str | None:
+        try:
+            version, encoded_payload, encoded_signature = str(token or "").split(".", 2)
+            if version != "device-v1":
+                return None
+            expected = hmac.new(
+                self.config.bearer_token.encode("utf-8"),
+                encoded_payload.encode("ascii"),
+                hashlib.sha256,
+            ).digest()
+            supplied = self._decode_token_part(encoded_signature)
+            if not hmac.compare_digest(expected, supplied):
+                return None
+            payload = json.loads(self._decode_token_part(encoded_payload))
+            device_id = str(payload.get("deviceId") or "").strip()
+            expires_at = int(payload.get("expiresAt") or 0)
+            if not 16 <= len(device_id) <= 128 or expires_at <= int(time.time()):
+                return None
+            return f"device:{device_id}"
+        except (TypeError, ValueError, UnicodeError, json.JSONDecodeError):
+            return None
+
+    def register_device(
+        self,
+        device_id: str,
+        key_id: str,
+        name: str,
+        value: str,
+        base_url: str | None = None,
+    ) -> dict[str, Any]:
+        clean_device_id = str(device_id or "").strip()
+        clean_key_id = str(key_id or "").strip()
+        clean_name = str(name or "").strip()
+        clean_value = str(value or "").strip()
+        clean_base_url = str(base_url or self.config.base_url).strip().rstrip("/")
+        if not 16 <= len(clean_device_id) <= 128:
+            raise ValueError("设备标识无效")
+        if not clean_key_id or not clean_name or not clean_value:
+            raise ValueError("API Key 信息不完整")
+        try:
+            payload, models = self.client.fetch(clean_base_url, clean_value)
+        except Exception as exc:
+            raise PermissionError(f"API Key 验证失败：{str(exc)[:300]}") from None
+        result = self.controller.add_key(
+            clean_name,
+            clean_value,
+            clean_base_url,
+            clean_key_id,
+        )
+        if not result.get("ok"):
+            raise ValueError(str(result.get("error") or "无法登记 API Key"))
+        clean_payload = dict(payload or {})
+        clean_payload["_models"] = list(models or [])
+        clean_payload["_models_count"] = len(clean_payload["_models"])
+        with self.quota_lock:
+            self.quota_payloads[clean_key_id] = clean_payload
+            self.quota_errors.pop(clean_key_id, None)
+        return {
+            "ok": True,
+            "bearerToken": self.issue_device_token(clean_device_id),
+            "expiresIn": DEVICE_TOKEN_TTL_SECONDS,
+        }
+
+    @staticmethod
+    def _window_state(payload: dict[str, Any], name: str) -> dict[str, Any]:
+        windows = {
+            str(item.get("window")): item
+            for item in payload.get("rate_limits") or []
+            if isinstance(item, dict)
+        }
+        item = windows.get(name) or {}
+        limit = max(0.0, safe_float(item.get("limit")))
+        used = max(0.0, safe_float(item.get("used")))
+        remaining = item.get("remaining")
+        remaining_value = (
+            max(0.0, limit - used)
+            if remaining is None
+            else min(limit, max(0.0, safe_float(remaining)))
+        )
+        return {
+            "limit": limit,
+            "used": used,
+            "remaining": remaining_value,
+            "resetTime": item.get("reset_at"),
+            "windowStart": item.get("window_start"),
+            "limitChange": None,
+        }
+
+    def _key_state(self, record: dict[str, Any]) -> dict[str, Any]:
+        key_id = str(record["id"])
+        secret = self.credentials.get_secret(key_id)
+        masked = "*" * len(secret) if len(secret) <= 8 else f"{secret[:4]}...{secret[-4:]}"
+        with self.quota_lock:
+            payload = dict(self.quota_payloads.get(key_id) or {})
+            last_error = self.quota_errors.get(key_id)
+        quota = payload.get("quota") or {}
+        usage = payload.get("usage") or {}
+        today = usage.get("today") or {}
+        total = usage.get("total") or {}
+        limit = max(0.0, safe_float(quota.get("limit")))
+        remaining = safe_float(quota.get("remaining"), safe_float(payload.get("remaining")))
+        used = safe_float(quota.get("used"), max(0.0, limit - remaining))
+        if limit <= 0 and payload.get("balance") is not None:
+            remaining = max(0.0, safe_float(payload.get("balance")))
+            used = max(0.0, safe_float(total.get("cost")))
+            limit = remaining + used
+        expires = payload.get("expires_at") or (payload.get("subscription") or {}).get("expires_at")
+        return {
+            "id": key_id,
+            "name": str(record["name"]),
+            "value": masked,
+            "baseUrl": str(record["base_url"]),
+            "status": payload.get("status") or (
+                "active" if payload.get("isValid") else "error" if last_error else "unknown"
+            ),
+            "mode": payload.get("mode") or "unknown",
+            "planName": payload.get("planName") or "",
+            "expireDateStr": expires or "",
+            "expireTimestamp": (parse_timestamp(expires) or 0) * 1000,
+            "totalQuota": limit,
+            "usedQuota": used,
+            "remainingQuota": remaining,
+            "quotaLimitChange": None,
+            "win5h": self._window_state(payload, "5h"),
+            "win1d": self._window_state(payload, "1d"),
+            "win7d": self._window_state(payload, "7d"),
+            "todayRequests": int(today.get("requests") or 0),
+            "totalRequests": int(total.get("requests") or 0),
+            "todayCost": safe_float(today.get("cost")),
+            "totalCost": safe_float(total.get("cost")),
+            "modelsCount": int(payload.get("_models_count") or 0),
+            "models": [str(model) for model in payload.get("_models") or [] if str(model).strip()],
+            "rates": {
+                "speed10m": None,
+                "speed1h": None,
+                "intervals": {
+                    "10m": {"value": None, "status": "unrecorded", "observedSeconds": 0},
+                    "1h": {"value": None, "status": "unrecorded", "observedSeconds": 0},
+                },
+                "averages": {},
+                "trend": [],
+            },
+            "lastError": last_error,
+        }
+
     def state(self) -> dict[str, Any]:
-        keys: list[dict[str, Any]] = []
-        for record in self.credentials.list_key_records():
-            secret = self.credentials.get_secret(record["id"])
-            masked = "*" * len(secret) if len(secret) <= 8 else f"{secret[:4]}...{secret[-4:]}"
-            keys.append(
-                {
-                    "id": str(record["id"]),
-                    "name": str(record["name"]),
-                    "value": masked,
-                    "baseUrl": str(record["base_url"]),
-                    "lastError": None,
-                }
-            )
+        keys = [self._key_state(record) for record in self.credentials.list_key_records()]
         with self.task_lock:
             active_tasks = list(self.tasks)
         return {
@@ -218,6 +390,36 @@ class HeadlessService:
             "activeTasks": active_tasks,
             "storageMode": "android-filesystem-sqlite-index",
             "serverPersistence": False,
+        }
+
+    def refresh_quota(self, owner: str) -> dict[str, Any]:
+        del owner
+        refreshed: list[str] = []
+        failed: list[str] = []
+        for record in self.credentials.list_key_records():
+            key_id = str(record["id"])
+            try:
+                payload, models = self.client.fetch(
+                    str(record["base_url"]),
+                    self.credentials.get_secret(key_id),
+                )
+                payload = dict(payload or {})
+                payload["_models"] = list(models or [])
+                payload["_models_count"] = len(payload["_models"])
+                with self.quota_lock:
+                    self.quota_payloads[key_id] = payload
+                    self.quota_errors.pop(key_id, None)
+                refreshed.append(key_id)
+            except Exception as exc:
+                with self.quota_lock:
+                    self.quota_errors[key_id] = str(exc)[:500]
+                failed.append(key_id)
+        return {
+            "ok": True,
+            "valid": bool(refreshed) and not failed,
+            "refreshed": refreshed,
+            "failed": failed,
+            "state": self.state(),
         }
 
     def add_key(
@@ -240,6 +442,9 @@ class HeadlessService:
 
     def delete_key(self, owner: str, key_id: str) -> dict[str, Any]:
         result = self.controller.delete_key(key_id)
+        with self.quota_lock:
+            self.quota_payloads.pop(str(key_id or ""), None)
+            self.quota_errors.pop(str(key_id or ""), None)
         return {**result, "state": self.state()}
 
     @staticmethod

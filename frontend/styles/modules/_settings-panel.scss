@@ -54,10 +54,11 @@
 }
 .settings-group { display: flex; flex-direction: column; gap: 6px; }
 .settings-android-service { display: none; }
-html[data-platform="android"] .settings-android-service { display: flex; }
+html[data-platform="android"] .settings-android-service,
+html[data-platform="android"] .settings-refresh { display: none !important; }
 .settings-group > label { display: block; color: var(--muted); font-size: var(--fs-9, 9px); font-weight: 700; text-transform: uppercase; }
 .settings-group > div { display: grid; gap: 6px; }
-.settings-theme > div,
+.settings-theme > div { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .settings-progress-mode > div,
 .refresh-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .settings-title-bar > div:first-of-type { grid-template-columns: repeat(3, minmax(0, 1fr)); }

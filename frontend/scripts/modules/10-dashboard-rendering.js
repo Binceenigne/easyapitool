@@ -868,16 +868,16 @@
             const activeKey = getActiveKey();
             if (!activeKey) return;
 
-            // 仅显示后端调度倒计时，实际刷新由 Python 后台线程执行。
+            // Android 只在前台由页面定时器刷新；桌面端仍显示后端调度倒计时。
             if (window.appState.refreshCounter > 1) {
                 window.appState.refreshCounter--;
-                document.getElementById('refreshTimerVal').textContent = window.appState.refreshCounter + "s";
+                document.getElementById('refreshTimerVal')?.replaceChildren(`${window.appState.refreshCounter}s`);
             } else {
                 const intervals = window.appState.refreshIntervals;
-                window.appState.refreshCounter = window.appState.isTabActive
-                    ? intervals.foreground
-                    : intervals.background;
-                document.getElementById('refreshTimerVal').textContent = window.appState.refreshCounter + "s";
+                window.appState.refreshCounter = isAndroidPlatform()
+                    ? 60
+                    : (window.appState.isTabActive ? intervals.foreground : intervals.background);
+                document.getElementById('refreshTimerVal')?.replaceChildren(`${window.appState.refreshCounter}s`);
             }
 
             ['5h', '1d', '7d'].forEach(windowName => {

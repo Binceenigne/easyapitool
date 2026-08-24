@@ -224,10 +224,10 @@ html.dark #keySwitcherMenu {
 #manualRefreshButton.is-refresh-cooldown [data-lucide] { display: none !important; }
 #manualRefreshButton.is-refresh-cooldown.is-refresh-success { color: var(--good) !important; }
 #manualRefreshButton.is-refresh-cooldown.is-refresh-error { color: var(--critical) !important; }
-.toolbar-action-button[title="添加密钥"] { border-color: var(--brand); background: var(--brand); color: #fff; }
-.toolbar-action-button[title="添加密钥"]:hover { background: var(--brand-strong); }
-.toolbar-action-button[title="删除当前密钥"] { color: var(--muted); }
-.toolbar-action-button[title="删除当前密钥"]:hover { background: rgba(244, 63, 94, 0.08); color: var(--critical); }
+#addKeyButton { border-color: var(--brand); background: var(--brand); color: #fff; }
+#addKeyButton:hover { background: var(--brand-strong); }
+#deleteKeyButton { color: var(--muted); }
+#deleteKeyButton:hover { background: rgba(244, 63, 94, 0.08); color: var(--critical); }
 .toolbar-action-button:hover { background: var(--surface-strong); }
 .toolbar-button-text { font-size: 10px; }
 
@@ -310,8 +310,9 @@ html.dark #keySwitcherMenu {
     .toolbar-actions { position: relative; z-index: 101; gap: 1px; }
 
     .toolbar-action-button,
-    .toolbar-action-button:first-child,
-    .toolbar-action-button:nth-child(3) {
+    #addKeyButton,
+    #deleteKeyButton,
+    #settingsButton {
         flex: 0 0 20px;
         width: 20px;
         height: 20px;
@@ -322,7 +323,7 @@ html.dark #keySwitcherMenu {
         color: var(--text-soft);
     }
 
-    .toolbar-action-button:nth-child(2) {
+    #manualRefreshButton {
         border: 0;
         background: transparent;
         color: var(--brand);

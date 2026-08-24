@@ -1,10 +1,19 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="styles/app.css?v=35">
+    <script>
+        (() => {
+            const theme = localStorage.getItem('theme');
+            const dark = theme === 'dark'
+                || (theme !== 'light' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+            document.documentElement.classList.toggle('dark', dark);
+            document.documentElement.dataset.themeMode = ['light', 'dark', 'system'].includes(theme) ? theme : 'system';
+        })();
+    </script>
+    <link rel="stylesheet" href="styles/app.css?v=37">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -64,14 +73,14 @@
                     <i id="manualRefreshIcon" data-lucide="refresh-cw" aria-hidden="true"></i>
                     <span id="manualRefreshCountdown" aria-hidden="true" hidden></span>
                 </button>
-                <button onclick="toggleFormPanel()" class="toolbar-action-button" title="添加密钥">
+                <button type="button" id="addKeyButton" onclick="toggleFormPanel()" class="toolbar-action-button" title="添加密钥" aria-label="添加密钥">
                     <i data-lucide="plus" aria-hidden="true"></i>
                     <span class="toolbar-button-text">添加</span>
                 </button>
-                <button onclick="deleteActiveKey()" class="toolbar-action-button" title="删除当前密钥">
+                <button type="button" id="deleteKeyButton" onclick="deleteActiveKey()" class="toolbar-action-button" title="删除当前密钥" aria-label="删除当前密钥">
                     <i data-lucide="trash-2" aria-hidden="true"></i>
                 </button>
-                <button onclick="toggleSettingsPanel()" class="toolbar-action-button" title="小工具设置">
+                <button type="button" id="settingsButton" onclick="toggleSettingsPanel()" class="toolbar-action-button" title="小工具设置" aria-label="小工具设置">
                     <i data-lucide="sliders-horizontal" aria-hidden="true"></i>
                     <span class="toolbar-button-text">设置</span>
                 </button>
@@ -623,24 +632,7 @@
             <div id="settingsContent">
                 <div class="settings-group settings-android-service">
                     <label>服务连接 (SERVICE CONNECTION)</label>
-                    <div class="settings-fields">
-                        <label>
-                            <span>服务地址</span>
-                            <input id="androidServiceUrl" type="url" inputmode="url" autocomplete="url" placeholder="https://imggen.djyx.me/v1">
-                        </label>
-                        <label>
-                            <span>设备访问令牌</span>
-                            <input id="androidServiceToken" type="password" autocomplete="off" placeholder="输入设备令牌">
-                        </label>
-                        <label>
-                            <span>一次性配对码</span>
-                            <input id="androidServicePairingCode" type="password" autocomplete="one-time-code" placeholder="没有令牌时输入配对码">
-                        </label>
-                    </div>
-                    <button type="button" onclick="saveAndroidServiceConfig()" id="saveAndroidServiceButton">
-                        <i data-lucide="shield-check" aria-hidden="true"></i> 保存连接
-                    </button>
-                    <span id="androidServiceStatus" class="settings-help">尚未完成服务配对</span>
+                    <span id="androidServiceStatus" class="settings-help">添加 API Key 后将自动配置设备连接</span>
                 </div>
 
                 <!-- 1. 独立主题设置 -->
@@ -652,6 +644,9 @@
                         </button>
                         <button onclick="changeThemeMode('dark')" id="themeBtnDark">
                             <i data-lucide="moon" aria-hidden="true"></i> 深色模式
+                        </button>
+                        <button onclick="changeThemeMode('system')" id="themeBtnSystem">
+                            <i data-lucide="smartphone" aria-hidden="true"></i> 跟随系统
                         </button>
                     </div>
                 </div>
@@ -696,34 +691,6 @@
                         </div>
                     </div>
                     <span class="settings-help">当剩余比例小于阈值时，进度条自动切换为黄色、橙色或红色闪烁预警。</span>
-                </div>
-
-                <!-- 3. 自定义自动刷新速度 -->
-                <div class="settings-group settings-refresh">
-                    <label>自适应后台刷新机制 (AUTO REFRESH)</label>
-                    <div class="refresh-cards">
-                        <div>
-                            <span>前台活跃模式</span>
-                            <div>
-                                <span>每</span>
-                                <input type="number" id="foregroundRefreshMinutes" min="1" step="1" value="1" onchange="updateRefreshIntervals()">
-                                <span>分钟</span>
-                            </div>
-                        </div>
-                        <div>
-                            <span>后台闲置模式</span>
-                            <div>
-                                <span>每</span>
-                                <input type="number" id="backgroundRefreshMinutes" min="5" step="1" value="5" onchange="updateRefreshIntervals()">
-                                <span>分钟</span>
-                            </div>
-                        </div>
-                    </div>
-                    <span class="settings-help">允许延长周期；前台不得短于 1 分钟，后台不得短于 5 分钟。</span>
-                    <div>
-                        <span>下一次检测预计在：<span id="refreshTimerVal">60s</span> 后</span>
-                        <span id="tabStatusBadge" class="refresh-state is-foreground">前台监控中</span>
-                    </div>
                 </div>
 
                 <div class="settings-group settings-title-bar">
@@ -945,18 +912,18 @@
 
     <script src="vendor/lucide/lucide.min.js"></script>
     <script src="scripts/modules/00-core-ui.js?v=2"></script>
-    <script src="scripts/android-bridge.js?v=2"></script>
+    <script src="scripts/android-bridge.js?v=3"></script>
     <script src="scripts/modules/01-app-state.js?v=1"></script>
     <script src="scripts/modules/02-image-controls.js?v=1"></script>
     <script src="scripts/modules/03-image-reasoning.js?v=1"></script>
     <script src="scripts/modules/04-image-stream-rendering.js?v=1"></script>
-    <script src="scripts/modules/05-image-events-sessions.js?v=1"></script>
-    <script src="scripts/modules/06-backend-bridge.js?v=1"></script>
-    <script src="scripts/modules/07-page-initializer.js?v=1"></script>
-    <script src="scripts/modules/08-window-settings-updates.js?v=1"></script>
+    <script src="scripts/modules/05-image-events-sessions.js?v=2"></script>
+    <script src="scripts/modules/06-backend-bridge.js?v=2"></script>
+    <script src="scripts/modules/07-page-initializer.js?v=2"></script>
+    <script src="scripts/modules/08-window-settings-updates.js?v=2"></script>
     <script src="scripts/modules/09-modals-input-refresh.js?v=1"></script>
     <script src="scripts/modules/10-dashboard-rendering.js?v=1"></script>
-    <script src="scripts/modules/11-theme-bootstrap.js?v=1"></script>
+    <script src="scripts/modules/11-theme-bootstrap.js?v=2"></script>
     <script src="scripts/modules/12-bootstrap.js?v=1"></script>
 
 

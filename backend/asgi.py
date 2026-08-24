@@ -44,6 +44,14 @@ class PairingRequest(BaseModel):
     pairingCode: str = Field(min_length=16, max_length=128)
 
 
+class DeviceRegistrationRequest(BaseModel):
+    deviceId: str = Field(min_length=16, max_length=128)
+    keyId: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=120)
+    value: str = Field(min_length=1, max_length=4096)
+    baseUrl: str | None = Field(default=None, max_length=2048)
+
+
 class ServiceApp:
     def __init__(
         self,
@@ -64,9 +72,14 @@ class ServiceApp:
 
     def owner(self, authorization: str | None) -> str:
         expected = f"Bearer {self.service.config.bearer_token}"
-        if authorization != expected:
+        if authorization == expected:
+            return "paired-device"
+        prefix = "Bearer "
+        token = authorization[len(prefix):] if authorization and authorization.startswith(prefix) else ""
+        owner = self.service.device_owner(token)
+        if owner is None:
             raise HTTPException(status_code=401, detail="未授权")
-        return "paired-device"
+        return owner
 
     def _register_routes(self) -> None:
         app = self.app
@@ -88,6 +101,21 @@ class ServiceApp:
                 return self.service.pair_device(request.pairingCode)
             except PermissionError as exc:
                 raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+        @app.post("/api/v1/device/register")
+        def register_device(request: DeviceRegistrationRequest) -> dict:
+            try:
+                return self.service.register_device(
+                    request.deviceId,
+                    request.keyId,
+                    request.name,
+                    request.value,
+                    request.baseUrl,
+                )
+            except PermissionError as exc:
+                raise HTTPException(status_code=401, detail=str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         @app.get("/api/v1/app/update")
         def check_app_update(
@@ -124,6 +152,11 @@ class ServiceApp:
         def state(authorization: str | None = Header(default=None)) -> dict:
             self.owner(authorization)
             return self.service.state()
+
+        @app.post("/api/v1/refresh")
+        def refresh(authorization: str | None = Header(default=None)) -> dict:
+            owner = self.owner(authorization)
+            return self.service.refresh_quota(owner)
 
         @app.post("/api/v1/keys")
         def add_key(
