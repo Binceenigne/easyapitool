@@ -997,10 +997,6 @@ html.dark #keySwitcherMenu {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-#keyForm > div:nth-child(2) {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
 #keyForm label {
   display: block;
   margin-bottom: 2px;
@@ -1022,7 +1018,7 @@ html.dark #keySwitcherMenu {
   font-size: 12px;
 }
 
-#keyValue, #keyTotal, #keyUsed, #keyTodayUsed {
+#keyValue {
   font-family: var(--font-mono);
 }
 
@@ -6124,31 +6120,68 @@ html[data-platform=android] #usageAnalysisPanel {
   flex: 0 0 auto;
 }
 
+html[data-platform=android][data-keyboard-visible=true] #imageEditWorkspace {
+  position: relative;
+}
+
 html[data-platform=android][data-keyboard-visible=true] #imageEditForm {
-  padding: 6px 8px;
-  gap: 5px;
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 70;
+  display: flex;
+  width: 41%;
+  min-width: 310px;
+  max-width: calc(100% - 320px);
+  padding: 0;
+  gap: 0;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  background: var(--surface);
 }
 
 html[data-platform=android][data-keyboard-visible=true] .image-edit-header,
+html[data-platform=android][data-keyboard-visible=true] .image-edit-selection,
 html[data-platform=android][data-keyboard-visible=true] #imageEditStatus {
   display: none;
 }
 
-html[data-platform=android][data-keyboard-visible=true] .image-edit-selection {
-  min-height: 58px;
-  padding: 4px 6px;
-  gap: 3px;
+html[data-platform=android][data-keyboard-visible=true] .image-edit-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px 8px 16px;
+  overflow: hidden;
+  background: var(--surface);
 }
 
-html[data-platform=android][data-keyboard-visible=true] .image-edit-file,
-html[data-platform=android][data-keyboard-visible=true] #editImageAddTile {
-  width: 36px;
-  height: 36px;
-  flex-basis: 36px;
+html[data-platform=android][data-keyboard-visible=true] .image-edit-prompt-shell {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  overflow: visible;
+  border: 1px solid var(--brand);
+  background: var(--bg);
 }
 
-html[data-platform=android][data-keyboard-visible=true] .image-generation-footer {
-  gap: 3px;
+html[data-platform=android][data-keyboard-visible=true] .image-edit-prompt textarea {
+  width: 100%;
+  height: 100% !important;
+  min-height: 0;
+  max-height: none;
+  padding: 10px;
+  overflow-y: auto !important;
+  border: 0;
+  background: var(--bg);
+}
+
+html[data-platform=android][data-keyboard-visible=true] #expandImagePromptButton,
+html[data-platform=android][data-keyboard-visible=true] #polishImagePromptButton {
+  display: none !important;
 }
 
 @property --adv-h {

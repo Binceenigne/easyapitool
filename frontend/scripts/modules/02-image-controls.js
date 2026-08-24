@@ -285,7 +285,9 @@
             textarea.style.height = `${nextHeight}px`;
             const overflowing = contentHeight > metrics.maximum + 1;
             textarea.style.overflowY = overflowing ? 'auto' : 'hidden';
-            document.getElementById('expandImagePromptButton').hidden = contentHeight < metrics.expandThreshold;
+            document.getElementById('expandImagePromptButton').hidden = !(
+                isAndroidPlatform() && document.documentElement.dataset.keyboardVisible === 'true'
+            ) && contentHeight < metrics.expandThreshold;
         }
 
         function openImagePromptModal() {

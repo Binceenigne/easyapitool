@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>DJYX_APITOOL</title>
     <script>
         (() => {
@@ -13,7 +13,7 @@
             document.documentElement.dataset.themeMode = ['light', 'dark', 'system'].includes(theme) ? theme : 'system';
         })();
     </script>
-    <link rel="stylesheet" href="styles/app.css?v=38">
+    <link rel="stylesheet" href="styles/app.css?v=42">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -106,27 +106,12 @@
             <form id="keyForm" onsubmit="saveKey(event)">
                 <div>
                     <div>
-                        <label>昵称 / 标签 *</label>
+                        <label>Key 名称 *</label>
                         <input type="text" id="keyNickname" required placeholder="例如：我的主 Key">
                     </div>
                     <div>
-                        <label>密钥值 *</label>
+                        <label>API Key *</label>
                         <input type="text" id="keyValue" required placeholder="sk-...">
-                    </div>
-                </div>
-
-                <div>
-                    <div>
-                        <label>总额度 (USD)</label>
-                        <input type="number" step="any" id="keyTotal" required value="0">
-                    </div>
-                    <div>
-                        <label>已用 (USD)</label>
-                        <input type="number" step="any" id="keyUsed" required value="0">
-                    </div>
-                    <div>
-                        <label>今日已用 (USD)</label>
-                        <input type="number" step="any" id="keyTodayUsed" required value="0">
                     </div>
                 </div>
 
@@ -914,12 +899,12 @@
     <script src="scripts/modules/00-core-ui.js?v=2"></script>
     <script src="scripts/android-bridge.js?v=3"></script>
     <script src="scripts/modules/01-app-state.js?v=1"></script>
-    <script src="scripts/modules/02-image-controls.js?v=1"></script>
+    <script src="scripts/modules/02-image-controls.js?v=3"></script>
     <script src="scripts/modules/03-image-reasoning.js?v=1"></script>
     <script src="scripts/modules/04-image-stream-rendering.js?v=1"></script>
     <script src="scripts/modules/05-image-events-sessions.js?v=3"></script>
     <script src="scripts/modules/06-backend-bridge.js?v=2"></script>
-    <script src="scripts/modules/07-page-initializer.js?v=3"></script>
+    <script src="scripts/modules/07-page-initializer.js?v=6"></script>
     <script src="scripts/modules/08-window-settings-updates.js?v=2"></script>
     <script src="scripts/modules/09-modals-input-refresh.js?v=1"></script>
     <script src="scripts/modules/10-dashboard-rendering.js?v=1"></script>

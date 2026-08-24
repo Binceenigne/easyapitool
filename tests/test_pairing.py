@@ -36,6 +36,9 @@ class PairingTests(unittest.TestCase):
         manifest = (
             PROJECT_ROOT / "mobile" / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
         ).read_text(encoding="utf-8")
+        android_styles = (
+            PROJECT_ROOT / "mobile" / "android" / "app" / "src" / "main" / "res" / "values" / "styles.xml"
+        ).read_text(encoding="utf-8")
         capacitor_config = (PROJECT_ROOT / "mobile" / "capacitor.config.ts").read_text(
             encoding="utf-8"
         )
@@ -45,12 +48,16 @@ class PairingTests(unittest.TestCase):
         viewer = (
             PROJECT_ROOT / "frontend" / "scripts" / "modules" / "05-image-events-sessions.js"
         ).read_text(encoding="utf-8")
+        image_controls = (
+            PROJECT_ROOT / "frontend" / "scripts" / "modules" / "02-image-controls.js"
+        ).read_text(encoding="utf-8")
         initializer = (
             PROJECT_ROOT / "frontend" / "scripts" / "modules" / "07-page-initializer.js"
         ).read_text(encoding="utf-8")
         base_scss = (
             PROJECT_ROOT / "frontend" / "styles" / "modules" / "_base.scss"
         ).read_text(encoding="utf-8")
+        page = (PROJECT_ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
         responsive_scss = (
             PROJECT_ROOT / "frontend" / "styles" / "modules" / "_responsive.scss"
         ).read_text(encoding="utf-8")
@@ -64,6 +71,10 @@ class PairingTests(unittest.TestCase):
         self.assertIn('Environment.DIRECTORY_DCIM + "/API_TOOLS"', plugin)
         self.assertIn("resizeOnFullScreen: true", capacitor_config)
         self.assertNotIn("setOnApplyWindowInsetsListener", activity_source)
+        self.assertIn('android:windowLayoutInDisplayCutoutMode">shortEdges', android_styles)
+        self.assertIn("viewport-fit=cover", page)
+        self.assertIn("left: 4px", base_scss)
+        self.assertIn("right: 4px", base_scss)
         self.assertIn('html[data-platform="android"] #usageTrendSection', base_scss)
         self.assertNotIn('html[data-platform="android"] #speedPanel', base_scss)
         self.assertIn('html[data-platform="android"] #speedPanel {', responsive_scss)
@@ -71,7 +82,15 @@ class PairingTests(unittest.TestCase):
         self.assertIn("viewer.x += event.clientX - previous.x", viewer)
         self.assertIn("viewer.touchPointers.size >= 2", viewer)
         self.assertIn("keyboardWillShow", initializer)
+        self.assertNotIn("dataset.promptFocused", initializer)
+        self.assertIn("resetKeyboardLayoutScroll", initializer)
+        self.assertIn("pageZoomViewport').scrollTop = 0", initializer)
+        self.assertIn("dataset.keyboardVisible === 'true'", image_controls)
         self.assertIn('data-keyboard-visible="true"', responsive_scss)
+        self.assertIn("z-index: 70", responsive_scss)
+        self.assertIn("z-index: 100", responsive_scss)
+        self.assertIn("display: none !important", responsive_scss)
+        self.assertNotIn("box-shadow: 12px 0 24px", responsive_scss)
         self.assertEqual(lucide.stat().st_size, 357796)
         self.assertEqual(
             hashlib.sha256(lucide.read_bytes()).hexdigest(),

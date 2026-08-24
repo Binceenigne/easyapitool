@@ -52,11 +52,18 @@
             const modalPromptTextarea = document.getElementById('imagePromptModalTextarea');
             if (isAndroidPlatform()) {
                 const keyboard = window.Capacitor?.Plugins?.Keyboard;
+                const resetKeyboardLayoutScroll = () => {
+                    window.scrollTo(0, 0);
+                    document.getElementById('pageZoomViewport').scrollTop = 0;
+                    document.getElementById('imageEditForm').scrollTop = 0;
+                };
                 const setKeyboardVisible = visible => {
                     document.documentElement.dataset.keyboardVisible = visible ? 'true' : 'false';
                     requestAnimationFrame(() => {
                         handleResponsiveLayout();
                         resizeImagePrompt();
+                        resetKeyboardLayoutScroll();
+                        requestAnimationFrame(resetKeyboardLayoutScroll);
                     });
                 };
                 keyboard?.addListener?.('keyboardWillShow', () => setKeyboardVisible(true));

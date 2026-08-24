@@ -28,7 +28,6 @@
 #keyForm { display: flex; flex-direction: column; gap: 8px; }
 #keyForm > div { display: grid; gap: 6px; }
 #keyForm > div:first-child { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-#keyForm > div:nth-child(2) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 #keyForm label {
     display: block;
     margin-bottom: 2px;
@@ -48,7 +47,7 @@
     color: var(--text);
     font-size: 12px;
 }
-#keyValue, #keyTotal, #keyUsed, #keyTodayUsed { font-family: var(--font-mono); }
+#keyValue { font-family: var(--font-mono); }
 #keyForm > button {
     width: 100%;
     padding: 4px 8px;
