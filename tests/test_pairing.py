@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 import os
@@ -35,9 +36,25 @@ class PairingTests(unittest.TestCase):
         manifest = (
             PROJECT_ROOT / "mobile" / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
         ).read_text(encoding="utf-8")
+        capacitor_config = (PROJECT_ROOT / "mobile" / "capacitor.config.ts").read_text(
+            encoding="utf-8"
+        )
         bridge = (PROJECT_ROOT / "frontend" / "scripts" / "android-bridge.js").read_text(
             encoding="utf-8"
         )
+        viewer = (
+            PROJECT_ROOT / "frontend" / "scripts" / "modules" / "05-image-events-sessions.js"
+        ).read_text(encoding="utf-8")
+        initializer = (
+            PROJECT_ROOT / "frontend" / "scripts" / "modules" / "07-page-initializer.js"
+        ).read_text(encoding="utf-8")
+        base_scss = (
+            PROJECT_ROOT / "frontend" / "styles" / "modules" / "_base.scss"
+        ).read_text(encoding="utf-8")
+        responsive_scss = (
+            PROJECT_ROOT / "frontend" / "styles" / "modules" / "_responsive.scss"
+        ).read_text(encoding="utf-8")
+        lucide = PROJECT_ROOT / "frontend" / "vendor" / "lucide" / "lucide.min.js"
 
         self.assertIn('android:allowBackup="false"', manifest)
         self.assertIn('"CREATE TABLE IF NOT EXISTS api_keys ("', plugin)
@@ -45,7 +62,21 @@ class PairingTests(unittest.TestCase):
         self.assertIn("getSecureKeyStore().edit().clear().apply();", plugin)
         self.assertNotIn("migrateSecureKeys", plugin)
         self.assertIn('Environment.DIRECTORY_DCIM + "/API_TOOLS"', plugin)
-        self.assertIn("WindowInsetsCompat.Type.ime()", activity_source)
+        self.assertIn("resizeOnFullScreen: true", capacitor_config)
+        self.assertNotIn("setOnApplyWindowInsetsListener", activity_source)
+        self.assertIn('html[data-platform="android"] #usageTrendSection', base_scss)
+        self.assertNotIn('html[data-platform="android"] #speedPanel', base_scss)
+        self.assertIn('html[data-platform="android"] #speedPanel {', responsive_scss)
+        self.assertIn('grid-template-rows: minmax(0, 1fr) auto !important;', responsive_scss)
+        self.assertIn("viewer.x += event.clientX - previous.x", viewer)
+        self.assertIn("viewer.touchPointers.size >= 2", viewer)
+        self.assertIn("keyboardWillShow", initializer)
+        self.assertIn('data-keyboard-visible="true"', responsive_scss)
+        self.assertEqual(lucide.stat().st_size, 357796)
+        self.assertEqual(
+            hashlib.sha256(lucide.read_bytes()).hexdigest(),
+            "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e",
+        )
         self.assertIn("async function exportImageSets(selected)", bridge)
         self.assertIn("const localSets = await listLocalImageSets();", bridge)
 

@@ -7,6 +7,11 @@ const config: CapacitorConfig = {
   bundledWebRuntime: false,
   android: {
     allowMixedContent: false
+  },
+  plugins: {
+    Keyboard: {
+      resizeOnFullScreen: true
+    }
   }
 };
 

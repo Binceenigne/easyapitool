@@ -50,6 +50,20 @@
 
             const promptTextarea = document.getElementById('imageEditPrompt');
             const modalPromptTextarea = document.getElementById('imagePromptModalTextarea');
+            if (isAndroidPlatform()) {
+                const keyboard = window.Capacitor?.Plugins?.Keyboard;
+                const setKeyboardVisible = visible => {
+                    document.documentElement.dataset.keyboardVisible = visible ? 'true' : 'false';
+                    requestAnimationFrame(() => {
+                        handleResponsiveLayout();
+                        resizeImagePrompt();
+                    });
+                };
+                keyboard?.addListener?.('keyboardWillShow', () => setKeyboardVisible(true));
+                keyboard?.addListener?.('keyboardDidShow', () => setKeyboardVisible(true));
+                keyboard?.addListener?.('keyboardWillHide', () => setKeyboardVisible(false));
+                keyboard?.addListener?.('keyboardDidHide', () => setKeyboardVisible(false));
+            }
             promptTextarea.addEventListener('input', resizeImagePrompt);
             modalPromptTextarea.addEventListener('input', () => {
                 promptTextarea.value = modalPromptTextarea.value;

@@ -1,9 +1,7 @@
 package cn.easyapitool.mobile;
 
 import android.os.Bundle;
-import android.view.View;
 import android.view.WindowManager;
-import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -19,15 +17,6 @@ public class MainActivity extends BridgeActivity {
 			WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
 				| WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED
 		);
-		View webView = getBridge().getWebView();
-		ViewCompat.setOnApplyWindowInsetsListener(webView, (view, insets) -> {
-			int keyboardBottom = insets.isVisible(WindowInsetsCompat.Type.ime())
-				? insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-				: 0;
-			view.setPadding(0, 0, 0, keyboardBottom);
-			return insets;
-		});
-		ViewCompat.requestApplyInsets(webView);
 		applyImmersiveMode();
 	}
 

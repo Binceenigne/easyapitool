@@ -1418,6 +1418,7 @@ html[data-platform="android"] #appMain > #imageResultModal { inset: 4px; border:
 .image-result-modal-canvas.is-dragging { cursor: grabbing; }
 .image-result-modal-canvas img { max-width: calc(100% - 32px); max-height: calc(100% - 32px); object-fit: contain; pointer-events: none; user-select: none; transform-origin: center; will-change: transform; transition: transform 100ms ease-out; }
 .image-result-modal-canvas.is-dragging img { transition: none; }
+html[data-platform="android"] .image-result-modal-canvas img { transition: none; }
 
 @media (max-width: 600px) {
     #imageGenerationControlPanel { padding: 12px; gap: 10px; }

@@ -254,3 +254,38 @@ html[data-platform="android"] #imageEditForm {
 html[data-platform="android"] #imageEditResult {
     min-height: 0;
 }
+
+html[data-platform="android"] #speedPanel {
+    grid-template-rows: minmax(0, 1fr) auto !important;
+}
+
+html[data-platform="android"] #usageAnalysisPanel {
+    flex: 0 0 auto;
+}
+
+html[data-platform="android"][data-keyboard-visible="true"] #imageEditForm {
+    padding: 6px 8px;
+    gap: 5px;
+}
+
+html[data-platform="android"][data-keyboard-visible="true"] .image-edit-header,
+html[data-platform="android"][data-keyboard-visible="true"] #imageEditStatus {
+    display: none;
+}
+
+html[data-platform="android"][data-keyboard-visible="true"] .image-edit-selection {
+    min-height: 58px;
+    padding: 4px 6px;
+    gap: 3px;
+}
+
+html[data-platform="android"][data-keyboard-visible="true"] .image-edit-file,
+html[data-platform="android"][data-keyboard-visible="true"] #editImageAddTile {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+}
+
+html[data-platform="android"][data-keyboard-visible="true"] .image-generation-footer {
+    gap: 3px;
+}

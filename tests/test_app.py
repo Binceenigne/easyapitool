@@ -1618,7 +1618,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="styles/app.css?v=37">', page)
+        self.assertIn('<link rel="stylesheet" href="styles/app.css?v=38">', page)
         self.assertIn("container-type: size", stylesheet)
         self.assertIn("cqi", stylesheet)
         self.assertIn("renderUsageTrend", page)
@@ -1913,7 +1913,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn("tailwind", build_script.lower())
         self.assertNotIn('<script defer src="../vendor/lucide/lucide.min.js"></script>', page)
         self.assertIn(
-            '<script src="vendor/lucide/lucide.min.js"></script>\n'
+            '<script src="vendor/lucide/lucide.min.js?v=0.468.0"></script>\n'
             '    <script src="scripts/modules/00-core-ui.js?v=2"></script>',
             page,
         )
