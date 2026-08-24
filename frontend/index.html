@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="styles/app.css?v=34">
+    <link rel="stylesheet" href="styles/app.css?v=35">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -97,27 +97,12 @@
             <form id="keyForm" onsubmit="saveKey(event)">
                 <div>
                     <div>
-                        <label>昵称 / 标签 *</label>
+                        <label>Key 名称 *</label>
                         <input type="text" id="keyNickname" required placeholder="例如：我的主 Key">
                     </div>
                     <div>
-                        <label>密钥值 *</label>
+                        <label>API Key *</label>
                         <input type="text" id="keyValue" required placeholder="sk-...">
-                    </div>
-                </div>
-
-                <div>
-                    <div>
-                        <label>总额度 (USD)</label>
-                        <input type="number" step="any" id="keyTotal" required value="0">
-                    </div>
-                    <div>
-                        <label>已用 (USD)</label>
-                        <input type="number" step="any" id="keyUsed" required value="0">
-                    </div>
-                    <div>
-                        <label>今日已用 (USD)</label>
-                        <input type="number" step="any" id="keyTodayUsed" required value="0">
                     </div>
                 </div>
 

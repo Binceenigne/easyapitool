@@ -950,10 +950,6 @@ html.dark #keySwitcherMenu {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-#keyForm > div:nth-child(2) {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
 #keyForm label {
   display: block;
   margin-bottom: 2px;
@@ -975,7 +971,7 @@ html.dark #keySwitcherMenu {
   font-size: 12px;
 }
 
-#keyValue, #keyTotal, #keyUsed, #keyTodayUsed {
+#keyValue {
   font-family: var(--font-mono);
 }
 
