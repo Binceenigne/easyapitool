@@ -119,6 +119,26 @@ class PairingTests(unittest.TestCase):
         self.assertIn("async function exportImageSets(selected)", bridge)
         self.assertIn("const localSets = await listLocalImageSets();", bridge)
 
+    def test_android_branding_uses_generated_djyx_imgentool_assets(self) -> None:
+        config = (PROJECT_ROOT / "mobile" / "capacitor.config.ts").read_text(encoding="utf-8")
+        strings = (
+            PROJECT_ROOT / "mobile" / "android" / "app" / "src" / "main" / "res" / "values" / "strings.xml"
+        ).read_text(encoding="utf-8")
+        manifest = (
+            PROJECT_ROOT / "mobile" / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
+        ).read_text(encoding="utf-8")
+        resources = PROJECT_ROOT / "mobile" / "resources" / "icon.png"
+        adaptive = (
+            PROJECT_ROOT / "mobile" / "android" / "app" / "src" / "main" / "res" / "mipmap-anydpi-v26" / "ic_launcher.xml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("appName: 'DJYX_IMGenTool'", config)
+        self.assertIn('<string name="app_name">DJYX_IMGenTool</string>', strings)
+        self.assertIn('<string name="title_activity_main">DJYX_IMGenTool</string>', strings)
+        self.assertIn('android:icon="@mipmap/ic_launcher"', manifest)
+        self.assertTrue(resources.is_file())
+        self.assertIn("mipmap/ic_launcher_foreground", adaptive)
+
     def test_android_generation_restores_current_key_before_request(self) -> None:
         bridge = (PROJECT_ROOT / "frontend" / "scripts" / "android-bridge.js").read_text(
             encoding="utf-8"
