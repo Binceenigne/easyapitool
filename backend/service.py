@@ -29,6 +29,7 @@ MAX_REFERENCE_COUNT = 16
 MAX_REFERENCE_BYTES = 50 * 1024 * 1024
 RESOURCE_TTL_SECONDS = 30 * 60
 DEVICE_TOKEN_TTL_SECONDS = 365 * 24 * 60 * 60
+MAX_TASK_HISTORY = 2000
 PAIRING_CODE_FILENAME = "pairing-code"
 SUPPORTED_UPLOAD_TYPES = {
     "image/png": ".png",
@@ -88,29 +89,54 @@ class EventBus:
         self._events: list[dict[str, Any]] = []
         self._next_id = 1
         self._max_events = max_events
+        self.epoch = uuid.uuid4().hex
 
-    def publish(self, event: dict[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _public_event(event: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in event.items() if key != "_owner"}
+
+    def publish(self, event: dict[str, Any], owner: str) -> dict[str, Any]:
         with self._condition:
-            payload = {"eventId": self._next_id, **event}
+            payload = {"eventId": self._next_id, **event, "_owner": owner}
             self._next_id += 1
             self._events.append(payload)
             if len(self._events) > self._max_events:
                 del self._events[: len(self._events) - self._max_events]
             self._condition.notify_all()
-            return dict(payload)
+            return self._public_event(payload)
 
-    def wait_since(self, cursor: int, timeout: float = 15.0) -> list[dict[str, Any]]:
+    def normalize_cursor(self, cursor: int) -> int:
+        with self._condition:
+            latest = self._next_id - 1
+            return 0 if cursor > latest else max(0, cursor)
+
+    def wait_since(
+        self,
+        owner: str,
+        cursor: int,
+        timeout: float = 15.0,
+    ) -> tuple[list[dict[str, Any]], int]:
         deadline = time.monotonic() + timeout
         with self._condition:
+            observed_cursor = cursor
             while True:
-                events = [
-                    event for event in self._events if int(event["eventId"]) > cursor
+                observed = [
+                    event
+                    for event in self._events
+                    if int(event["eventId"]) > observed_cursor
                 ]
-                if events:
-                    return events
+                if observed:
+                    observed_cursor = int(observed[-1]["eventId"])
+                    events = [
+                        self._public_event(event)
+                        for event in observed
+                        if event.get("_owner") == owner
+                    ]
+                    if events:
+                        return events, observed_cursor
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    return []
+                    return [], observed_cursor
                 self._condition.wait(remaining)
 
 
@@ -148,10 +174,12 @@ class HeadlessService:
         self.task_cancel: dict[str, threading.Event] = {}
         self.task_states: dict[str, dict[str, Any]] = {}
         self.task_owners: dict[str, str] = {}
+        self.task_keys: dict[str, str] = {}
         self.task_lock = threading.RLock()
         self.pair_lock = threading.RLock()
         self.quota_payloads: dict[str, dict[str, Any]] = {}
         self.quota_errors: dict[str, str] = {}
+        self.key_owners: dict[str, str] = {}
         self.quota_lock = threading.RLock()
         self.controller = controller or HeadlessController(
             credential_store=self.credentials,
@@ -278,7 +306,9 @@ class HeadlessService:
             payload, models = self.client.fetch(clean_base_url, clean_value)
         except Exception as exc:
             raise PermissionError(f"API Key 验证失败：{str(exc)[:300]}") from None
-        result = self.controller.add_key(
+        owner = f"device:{clean_device_id}"
+        result = self.add_key(
+            owner,
             clean_name,
             clean_value,
             clean_base_url,
@@ -380,10 +410,24 @@ class HeadlessService:
             "lastError": last_error,
         }
 
-    def state(self) -> dict[str, Any]:
-        keys = [self._key_state(record) for record in self.credentials.list_key_records()]
+    def owns_key(self, owner: str, key_id: str) -> bool:
+        clean_key_id = str(key_id or "")
+        with self.quota_lock:
+            owned = self.key_owners.get(clean_key_id) == owner
+        return owned and self.credentials.get_key_record(clean_key_id) is not None
+
+    def state(self, owner: str) -> dict[str, Any]:
+        keys = [
+            self._key_state(record)
+            for record in self.credentials.list_key_records()
+            if self.owns_key(owner, str(record["id"]))
+        ]
         with self.task_lock:
-            active_tasks = list(self.tasks)
+            active_tasks = [
+                request_id
+                for request_id in self.tasks
+                if self.task_owners.get(request_id) == owner
+            ]
         return {
             "appName": APP_NAME,
             "keys": keys,
@@ -393,20 +437,23 @@ class HeadlessService:
         }
 
     def refresh_quota(self, owner: str) -> dict[str, Any]:
-        del owner
         refreshed: list[str] = []
         failed: list[str] = []
         for record in self.credentials.list_key_records():
             key_id = str(record["id"])
+            with self.task_lock:
+                if not self.owns_key(owner, key_id):
+                    continue
+                base_url = str(record["base_url"])
+                secret = self.credentials.get_secret(key_id)
             try:
-                payload, models = self.client.fetch(
-                    str(record["base_url"]),
-                    self.credentials.get_secret(key_id),
-                )
+                payload, models = self.client.fetch(base_url, secret)
                 payload = dict(payload or {})
                 payload["_models"] = list(models or [])
                 payload["_models_count"] = len(payload["_models"])
                 with self.quota_lock:
+                    if self.key_owners.get(key_id) != owner:
+                        continue
                     self.quota_payloads[key_id] = payload
                     self.quota_errors.pop(key_id, None)
                 refreshed.append(key_id)
@@ -419,7 +466,7 @@ class HeadlessService:
             "valid": bool(refreshed) and not failed,
             "refreshed": refreshed,
             "failed": failed,
-            "state": self.state(),
+            "state": self.state(owner),
         }
 
     def add_key(
@@ -430,22 +477,45 @@ class HeadlessService:
         base_url: str | None = None,
         key_id: str | None = None,
     ) -> dict[str, Any]:
-        result = self.controller.add_key(
-            name,
-            value,
-            base_url or self.config.base_url,
-            key_id,
-        )
-        if not result.get("ok"):
-            return result
-        return {**result, "state": self.state()}
+        clean_key_id = str(key_id or "").strip() or uuid.uuid4().hex
+        with self.task_lock:
+            if clean_key_id in self.task_keys.values():
+                raise ValueError("API Key 正在生成图片")
+            with self.quota_lock:
+                existing_owner = self.key_owners.get(clean_key_id)
+                if existing_owner is not None and existing_owner != owner:
+                    raise ValueError("API Key 编号已被其他设备使用")
+                result = self.controller.add_key(
+                    name,
+                    value,
+                    base_url or self.config.base_url,
+                    clean_key_id,
+                )
+                if not result.get("ok"):
+                    return result
+                self.key_owners[clean_key_id] = owner
+        return {**result, "state": self.state(owner)}
 
     def delete_key(self, owner: str, key_id: str) -> dict[str, Any]:
-        result = self.controller.delete_key(key_id)
-        with self.quota_lock:
-            self.quota_payloads.pop(str(key_id or ""), None)
-            self.quota_errors.pop(str(key_id or ""), None)
-        return {**result, "state": self.state()}
+        clean_key_id = str(key_id or "")
+        with self.task_lock:
+            if clean_key_id in self.task_keys.values():
+                return {"ok": False, "error": "API Key 正在生成图片", "state": self.state(owner)}
+            if not self.owns_key(owner, clean_key_id):
+                return {"ok": False, "error": "API Key 不存在", "state": self.state(owner)}
+            with self.quota_lock:
+                result = self.controller.delete_key(clean_key_id)
+                self.key_owners.pop(clean_key_id, None)
+                self.quota_payloads.pop(clean_key_id, None)
+                self.quota_errors.pop(clean_key_id, None)
+        return {**result, "state": self.state(owner)}
+
+    def polish_prompt(self, owner: str, key_id: str, prompt: str) -> dict[str, Any]:
+        clean_key_id = str(key_id or "")
+        with self.task_lock:
+            if not self.owns_key(owner, clean_key_id):
+                raise KeyError("请选择有效的 API Key")
+            return self.controller.polish_prompt(clean_key_id, prompt)
 
     @staticmethod
     def _safe_filename(name: str, suffix: str) -> str:
@@ -592,7 +662,7 @@ class HeadlessService:
         if request_id:
             with self.task_lock:
                 self.task_states[request_id] = dict(clean)
-        return self.events.publish(clean)
+        return self.events.publish(clean, owner)
 
     def task_state(self, owner: str, request_id: str) -> dict[str, Any]:
         clean_id = str(request_id or "")
@@ -613,24 +683,28 @@ class HeadlessService:
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         clean_key_id = str(key_id or "")
-        if self.credentials.get_key_record(clean_key_id) is None:
-            raise KeyError("请选择有效的 API Key")
         clean_ids = list(dict.fromkeys(str(item) for item in reference_ids))
         if len(clean_ids) > MAX_REFERENCE_COUNT:
             raise ValueError("参考图片不能超过 16 张")
         records = [self.resource(owner, resource_id) for resource_id in clean_ids]
-        requested_id = str((options or {}).get("requestId") or "").strip()
-        request_id = requested_id[:80] if requested_id else uuid.uuid4().hex
-        if not request_id:
-            request_id = uuid.uuid4().hex
+        raw_request_id = str((options or {}).get("requestId") or "")
+        requested_id = raw_request_id.strip()
+        if raw_request_id and (requested_id != raw_request_id or len(requested_id) > 80):
+            raise ValueError("任务编号无效")
+        request_id = requested_id or uuid.uuid4().hex
         cancel_event = threading.Event()
         clean_options = dict(options or {})
         # Android owns continuation history; the server runs each request independently.
         clean_options["continuation"] = False
         clean_options.pop("parentSetId", None)
         with self.task_lock:
+            if not self.owns_key(owner, clean_key_id):
+                raise KeyError("请选择有效的 API Key")
+            if request_id in self.task_owners:
+                raise ValueError("任务编号重复")
             self.task_cancel[request_id] = cancel_event
             self.task_owners[request_id] = owner
+            self.task_keys[request_id] = clean_key_id
         self.publish_task_event({"type": "task_created", "requestId": request_id})
         worker = threading.Thread(
             target=self._run_generation,
@@ -675,6 +749,23 @@ class HeadlessService:
             with self.task_lock:
                 self.tasks.pop(request_id, None)
                 self.task_cancel.pop(request_id, None)
+                self.task_keys.pop(request_id, None)
+                self._trim_task_history_locked()
+
+    def _trim_task_history_locked(self) -> None:
+        while len(self.task_owners) > MAX_TASK_HISTORY:
+            expired_id = next(
+                (
+                    request_id
+                    for request_id in self.task_owners
+                    if request_id not in self.tasks
+                ),
+                None,
+            )
+            if expired_id is None:
+                return
+            self.task_owners.pop(expired_id, None)
+            self.task_states.pop(expired_id, None)
 
     def cancel_task(self, owner: str, request_id: str) -> dict[str, Any]:
         clean_id = str(request_id or "")

@@ -11,7 +11,10 @@
     const DEFAULT_ANDROID_SERVICE_URL = 'https://imggen.djyx.me/v1';
     const ANDROID_UPDATE_SERVICE_URL = 'https://imggen.djyx.me/v1';
     const EVENT_CURSOR_KEY = 'api-tools-android-event-cursor';
+    const EVENT_EPOCH_KEY = 'api-tools-android-event-epoch';
     const IMAGE_SETS_KEY = 'image-sets';
+    const IMAGE_HISTORY_SCHEMA_KEY = 'image-history-schema';
+    const IMAGE_HISTORY_SCHEMA_VERSION = 2;
     const localPreferences = {
         get(key, fallback) {
             try {
@@ -22,13 +25,20 @@
             }
         },
         set(key, value) {
-            try { localStorage.setItem(`api-tools-android-${key}`, JSON.stringify(value)); } catch {}
+            try {
+                localStorage.setItem(`api-tools-android-${key}`, JSON.stringify(value));
+                return true;
+            } catch {
+                return false;
+            }
         }
     };
     const eventQueue = [];
     const pendingTasks = new Map();
     const downloadCache = new Map();
     let eventStreamPromise = null;
+    let eventStreamGeneration = 0;
+    let eventStreamAbortController = null;
     let appUpdateState = { status: 'idle', percent: 0, message: '尚未检查服务器更新' };
     let serviceConfig = {
         baseUrl: String(window.__EASYAPITOOL_SERVICE_URL__ || DEFAULT_ANDROID_SERVICE_URL).trim().replace(/\/$/, ''),
@@ -37,6 +47,22 @@
     let serviceConfigLoad = null;
     let serviceConfigError = '';
     let deviceRegistrationPromise = null;
+
+    function migrateLocalImageHistory() {
+        const currentVersion = Number(localPreferences.get(IMAGE_HISTORY_SCHEMA_KEY, 0));
+        if (currentVersion >= IMAGE_HISTORY_SCHEMA_VERSION) return;
+        const storedRecords = localPreferences.get(IMAGE_SETS_KEY, []);
+        const records = Array.isArray(storedRecords) ? storedRecords : [];
+        const migrated = localPreferences.set(
+            IMAGE_SETS_KEY,
+            records.filter(record => record?.status !== 'failed')
+        );
+        if (migrated) {
+            localPreferences.set(IMAGE_HISTORY_SCHEMA_KEY, IMAGE_HISTORY_SCHEMA_VERSION);
+        }
+    }
+
+    migrateLocalImageHistory();
 
     function isDeviceToken(token) {
         return /^device-v1\./.test(String(token || '').trim());
@@ -463,13 +489,18 @@
 
     async function handleServerEvent(event) {
         if (!event || typeof event !== 'object') return;
+        const requestId = String(event.requestId || event.result?.requestId || '');
+        const pending = pendingTasks.get(requestId);
+        if (requestId && !pending) return;
+        const terminal = event.type === 'task_result' || event.type === 'task_failed';
+        if (terminal && pending?.processingTerminal) return;
+        if (terminal && pending) pending.processingTerminal = true;
+        try {
         if (event.type === 'task_result') {
             const result = await hydrateAsset(event.result || {}, {
                 sessionId: event.sessionId,
                 setId: event.setId || event.requestId
             });
-            const requestId = String(event.requestId || result.requestId || '');
-            const pending = pendingTasks.get(requestId);
             result.requestId = requestId;
             result.setId = pending?.setId || result.setId || requestId;
             result.sessionId = pending?.sessionId || result.sessionId || requestId;
@@ -491,8 +522,6 @@
             return;
         }
         if (event.type === 'task_failed') {
-            const requestId = String(event.requestId || '');
-            const pending = pendingTasks.get(requestId);
             const failed = persistFailedGeneration(
                 {
                     requestId,
@@ -513,7 +542,6 @@
             }
             return;
         }
-        const pending = pendingTasks.get(String(event.requestId || ''));
         const hydrated = await hydrateAsset({
             ...event,
             sessionId: pending?.sessionId || event.sessionId,
@@ -523,6 +551,10 @@
             setId: event.setId || event.requestId
         });
         window.applyImageGenerationEvent?.(hydrated);
+        } catch (error) {
+            if (terminal && pending) pending.processingTerminal = false;
+            throw error;
+        }
     }
 
     function queueServerEvent(event) {
@@ -569,14 +601,18 @@
 
     function startEventStream() {
         if (eventStreamPromise) return;
+        const generation = ++eventStreamGeneration;
         eventStreamPromise = (async () => {
-            while (true) {
+            while (generation === eventStreamGeneration) {
+                const abortController = new AbortController();
+                eventStreamAbortController = abortController;
                 try {
                     const settings = requireService();
                     const cursor = Number(localStorage.getItem(EVENT_CURSOR_KEY) || 0);
                     const response = await fetch(resolveUrl(`/api/v1/events?cursor=${cursor}`), {
                         headers: { Authorization: `Bearer ${settings.bearerToken}`, Accept: 'text/event-stream' },
-                        cache: 'no-store'
+                        cache: 'no-store',
+                        signal: abortController.signal
                     });
                     if (response.status === 401) {
                         serviceConfig.bearerToken = '';
@@ -585,14 +621,31 @@
                         continue;
                     }
                     if (!response.ok) throw new Error(`SSE HTTP ${response.status}`);
+                    const eventEpoch = String(response.headers.get('X-Event-Epoch') || '');
+                    const savedEpoch = String(localStorage.getItem(EVENT_EPOCH_KEY) || '');
+                    if (eventEpoch && eventEpoch !== savedEpoch && (savedEpoch || cursor > 0)) {
+                        localStorage.setItem(EVENT_CURSOR_KEY, '0');
+                        localStorage.setItem(EVENT_EPOCH_KEY, eventEpoch);
+                        await response.body?.cancel?.();
+                        continue;
+                    }
+                    if (eventEpoch) localStorage.setItem(EVENT_EPOCH_KEY, eventEpoch);
                     await readSseResponse(response);
                 } catch (error) {
+                    if (generation !== eventStreamGeneration || error.name === 'AbortError') return;
                     if (error.message.includes('尚未配置')) return;
                     await new Promise(resolve => setTimeout(resolve, 2000));
+                } finally {
+                    if (eventStreamAbortController === abortController) {
+                        eventStreamAbortController = null;
+                    }
                 }
             }
         })();
-        eventStreamPromise.catch(() => {});
+        const running = eventStreamPromise;
+        void running.finally(() => {
+            if (eventStreamPromise === running) eventStreamPromise = null;
+        }).catch(() => {});
     }
 
     async function chooseEditImages() {
@@ -632,7 +685,31 @@
     }
 
     function taskResult(requestId, metadata) {
+        if (pendingTasks.has(String(requestId))) throw new Error('同一任务正在生成');
         return new Promise((resolve, reject) => pendingTasks.set(String(requestId), { resolve, reject, ...metadata }));
+    }
+
+    function normalizeRequestId(value) {
+        const requestId = String(value || '').trim();
+        if (!requestId || requestId.length > 80) throw new Error('任务编号无效');
+        return requestId;
+    }
+
+    async function pollTaskState(requestId) {
+        while (pendingTasks.has(requestId)) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            if (!pendingTasks.has(requestId)) return;
+            try {
+                const response = await requestJson(`/api/v1/image-generations/${encodeURIComponent(requestId)}`);
+                const event = response.event || {};
+                if (event.type === 'task_result' || event.type === 'task_failed') {
+                    await handleServerEvent(event);
+                }
+            } catch (error) {
+                if (!pendingTasks.has(requestId)) return;
+                console.warn('Android 任务状态轮询失败:', error);
+            }
+        }
     }
 
     function persistFailedGeneration(options, prompt, error, pending = null) {
@@ -663,6 +740,9 @@
     }
 
     async function generateImage(keyId, prompt, paths, options = {}) {
+        const requestId = normalizeRequestId(options.requestId || newRequestId());
+        if (pendingTasks.has(requestId)) throw new Error('同一任务正在生成');
+        options = { ...options, requestId };
         let pending = null;
         try {
             await ensureDeviceRegistration(keyId);
@@ -671,7 +751,6 @@
             startEventStream();
             const references = [];
             for (const path of paths || []) references.push(await uploadReference(path));
-            const requestId = String(options.requestId || newRequestId());
             const resultPromise = taskResult(requestId, {
                 requestId,
                 setId: requestId,
@@ -683,7 +762,7 @@
                 createdAt: new Date().toISOString()
             });
             pending = pendingTasks.get(requestId) || null;
-            await requestJson('/api/v1/image-generations', {
+            const creation = await requestJson('/api/v1/image-generations', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -693,6 +772,10 @@
                     options: { ...options, requestId }
                 })
             });
+            if (String(creation.requestId || '') !== requestId) {
+                throw new Error('服务端任务编号不一致');
+            }
+            void pollTaskState(requestId);
             return await resultPromise;
         } catch (error) {
             const requestId = String(options.requestId || pending?.requestId || '');
@@ -848,9 +931,14 @@
     };
 
     window.clearAndroidService = async () => {
+        eventStreamGeneration += 1;
+        eventStreamAbortController?.abort();
+        eventStreamAbortController = null;
         await pluginCall('clearServiceConfig');
         serviceConfig = { baseUrl: DEFAULT_ANDROID_SERVICE_URL, bearerToken: '' };
         eventStreamPromise = null;
+        localStorage.removeItem(EVENT_CURSOR_KEY);
+        localStorage.removeItem(EVENT_EPOCH_KEY);
         return { ok: true };
     };
     window.pywebview = { api };

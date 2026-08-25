@@ -67,6 +67,7 @@ class ServiceApp:
             allow_credentials=False,
             allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
             allow_headers=["Accept", "Authorization", "Content-Type"],
+            expose_headers=["X-Event-Epoch"],
         )
         self._register_routes()
 
@@ -150,8 +151,8 @@ class ServiceApp:
 
         @app.get("/api/v1/state")
         def state(authorization: str | None = Header(default=None)) -> dict:
-            self.owner(authorization)
-            return self.service.state()
+            owner = self.owner(authorization)
+            return self.service.state(owner)
 
         @app.post("/api/v1/refresh")
         def refresh(authorization: str | None = Header(default=None)) -> dict:
@@ -186,9 +187,10 @@ class ServiceApp:
             authorization: str | None = Header(default=None),
         ) -> dict:
             owner = self.owner(authorization)
-            if self.service.credentials.get_key_record(request.keyId) is None:
-                raise HTTPException(status_code=404, detail="请选择有效的 API Key")
-            return self.service.controller.polish_prompt(request.keyId, request.prompt)
+            try:
+                return self.service.polish_prompt(owner, request.keyId, request.prompt)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         @app.post("/api/v1/uploads/references")
         async def upload(
@@ -270,18 +272,23 @@ class ServiceApp:
             cursor: int = 0,
             authorization: str | None = Header(default=None),
         ) -> StreamingResponse:
-            self.owner(authorization)
+            owner = self.owner(authorization)
 
             async def stream() -> AsyncIterator[str]:
-                current = max(0, cursor)
+                current = self.service.events.normalize_cursor(cursor)
                 while True:
-                    batch = await asyncio.to_thread(self.service.events.wait_since, current, 15.0)
+                    batch, current = await asyncio.to_thread(
+                        self.service.events.wait_since,
+                        owner,
+                        current,
+                        15.0,
+                    )
                     if not batch:
                         yield ": keep-alive\n\n"
                         continue
                     for event in batch:
-                        current = int(event["eventId"])
-                        yield f"id: {current}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                        event_id = int(event["eventId"])
+                        yield f"id: {event_id}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
 
             return StreamingResponse(
                 stream(),
@@ -290,6 +297,7 @@ class ServiceApp:
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
                     "X-Accel-Buffering": "no",
+                    "X-Event-Epoch": self.service.events.epoch,
                 },
             )
 

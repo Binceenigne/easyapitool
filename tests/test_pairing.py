@@ -10,13 +10,29 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from backend.asgi import create_app
-from backend.service import HeadlessService, ServiceConfig
+from backend.service import MAX_TASK_HISTORY, EventBus, HeadlessService, ServiceConfig
 
 
 PROJECT_ROOT = Path(__file__).parents[1]
 
 
 class PairingTests(unittest.TestCase):
+    def test_events_are_isolated_by_device_owner_and_reset_stale_cursors(self) -> None:
+        events = EventBus()
+        first = events.publish({"type": "task_failed", "requestId": "request-a"}, "device:a")
+        events.publish({"type": "task_failed", "requestId": "request-b"}, "device:b")
+
+        device_a, cursor_a = events.wait_since("device:a", 0, timeout=0.01)
+        device_b, cursor_b = events.wait_since("device:b", 0, timeout=0.01)
+
+        self.assertEqual(first, {"eventId": 1, "type": "task_failed", "requestId": "request-a"})
+        self.assertEqual([event["requestId"] for event in device_a], ["request-a"])
+        self.assertEqual([event["requestId"] for event in device_b], ["request-b"])
+        self.assertEqual(cursor_a, 2)
+        self.assertEqual(cursor_b, 2)
+        self.assertEqual(events.normalize_cursor(999), 0)
+        self.assertNotIn("_owner", device_a[0])
+
     def test_android_native_storage_uses_database_dcim_and_ime_insets(self) -> None:
         plugin_path = (
             PROJECT_ROOT
@@ -61,6 +77,7 @@ class PairingTests(unittest.TestCase):
         responsive_scss = (
             PROJECT_ROOT / "frontend" / "styles" / "modules" / "_responsive.scss"
         ).read_text(encoding="utf-8")
+        asgi = (PROJECT_ROOT / "backend" / "asgi.py").read_text(encoding="utf-8")
         lucide = PROJECT_ROOT / "frontend" / "vendor" / "lucide" / "lucide.min.js"
 
         self.assertIn('android:allowBackup="false"', manifest)
@@ -86,6 +103,9 @@ class PairingTests(unittest.TestCase):
         self.assertIn("resetKeyboardLayoutScroll", initializer)
         self.assertIn("pageZoomViewport').scrollTop = 0", initializer)
         self.assertIn("dataset.keyboardVisible === 'true'", image_controls)
+        self.assertIn("self.service.events.wait_since", asgi)
+        self.assertIn("owner,", asgi)
+        self.assertIn('"X-Event-Epoch": self.service.events.epoch', asgi)
         self.assertIn('data-keyboard-visible="true"', responsive_scss)
         self.assertIn("z-index: 70", responsive_scss)
         self.assertIn("z-index: 100", responsive_scss)
@@ -124,6 +144,14 @@ class PairingTests(unittest.TestCase):
         self.assertNotIn("androidServicePairingCode", page)
         self.assertIn("function persistFailedGeneration(options, prompt, error, pending = null)", bridge)
         self.assertIn("persistLocalSet(result, pending);", bridge)
+        self.assertIn("if (requestId && !pending) return;", bridge)
+        self.assertIn("EVENT_EPOCH_KEY", bridge)
+        self.assertIn("async function pollTaskState(requestId)", bridge)
+        self.assertIn("void pollTaskState(requestId);", bridge)
+        self.assertIn("function normalizeRequestId(value)", bridge)
+        self.assertIn("eventStreamAbortController?.abort();", bridge)
+        self.assertIn("function migrateLocalImageHistory()", bridge)
+        self.assertIn("record?.status !== 'failed'", bridge)
         self.assertIn("window.applyImageGenerationEvent?.({ ...failed, type: 'set_completed' });", bridge)
 
     def test_valid_provider_key_automatically_registers_signed_device_token(self) -> None:
@@ -160,6 +188,102 @@ class PairingTests(unittest.TestCase):
         self.assertEqual(state.status_code, 200)
         self.assertEqual(state.json()["keys"][0]["id"], "phone-key")
         self.assertEqual(tampered.status_code, 401)
+
+    def test_device_state_and_keys_are_isolated_by_owner(self) -> None:
+        payload = {"isValid": True, "quota": {"limit": 10, "remaining": 10}}
+        provider = SimpleNamespace(fetch=lambda _base_url, _secret: (payload, []))
+        with tempfile.TemporaryDirectory() as temporary:
+            service = HeadlessService(
+                ServiceConfig(work_root=Path(temporary), bearer_token="x" * 32),
+                client=provider,
+            )
+            token_a = service.register_device(
+                "device-a-1234567890",
+                "key-a",
+                "Device A",
+                "secret-a",
+            )["bearerToken"]
+            token_b = service.register_device(
+                "device-b-1234567890",
+                "key-b",
+                "Device B",
+                "secret-b",
+            )["bearerToken"]
+            client = TestClient(create_app(service))
+
+            state_a = client.get("/api/v1/state", headers={"Authorization": f"Bearer {token_a}"})
+            state_b = client.get("/api/v1/state", headers={"Authorization": f"Bearer {token_b}"})
+            foreign_generation = client.post(
+                "/api/v1/image-generations",
+                headers={"Authorization": f"Bearer {token_b}"},
+                json={"keyId": "key-a", "prompt": "test", "options": {}},
+            )
+
+        self.assertEqual([key["id"] for key in state_a.json()["keys"]], ["key-a"])
+        self.assertEqual([key["id"] for key in state_b.json()["keys"]], ["key-b"])
+        self.assertEqual(foreign_generation.status_code, 404)
+
+    def test_duplicate_request_id_cannot_reassign_task_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            service = HeadlessService(
+                ServiceConfig(work_root=Path(temporary), bearer_token="x" * 32)
+            )
+            service.add_key("device:a", "A", "secret-a", key_id="key-a")
+            service.add_key("device:b", "B", "secret-b", key_id="key-b")
+            service.task_owners["shared-request"] = "device:a"
+
+            with self.assertRaisesRegex(ValueError, "任务编号重复"):
+                service.create_generation(
+                    "device:b",
+                    "key-b",
+                    "test",
+                    [],
+                    {"requestId": "shared-request"},
+                )
+
+        self.assertEqual(service.task_owners["shared-request"], "device:a")
+
+    def test_request_ids_are_not_silently_truncated_and_history_is_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            service = HeadlessService(
+                ServiceConfig(work_root=Path(temporary), bearer_token="x" * 32)
+            )
+            service.add_key("device:a", "A", "secret-a", key_id="key-a")
+
+            with self.assertRaisesRegex(ValueError, "任务编号无效"):
+                service.create_generation(
+                    "device:a",
+                    "key-a",
+                    "test",
+                    [],
+                    {"requestId": "x" * 81},
+                )
+
+            for index in range(MAX_TASK_HISTORY + 5):
+                request_id = f"finished-{index}"
+                service.task_owners[request_id] = "device:a"
+                service.task_states[request_id] = {"requestId": request_id}
+            with service.task_lock:
+                service._trim_task_history_locked()
+
+        self.assertEqual(len(service.task_owners), MAX_TASK_HISTORY)
+        self.assertEqual(len(service.task_states), MAX_TASK_HISTORY)
+
+    def test_active_generation_key_cannot_be_rebound_or_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            service = HeadlessService(
+                ServiceConfig(work_root=Path(temporary), bearer_token="x" * 32)
+            )
+            service.add_key("device:a", "A", "secret-a", key_id="key-a")
+            service.task_keys["running-request"] = "key-a"
+
+            with self.assertRaisesRegex(ValueError, "API Key 正在生成图片"):
+                service.add_key("device:b", "B", "secret-b", key_id="key-a")
+            deleted = service.delete_key("device:a", "key-a")
+
+        self.assertFalse(deleted["ok"])
+        self.assertEqual(deleted["error"], "API Key 正在生成图片")
+        self.assertEqual(service.credentials.get_secret("key-a"), "secret-a")
 
     def test_android_failed_continuation_keeps_the_next_round_number(self) -> None:
         events = (
