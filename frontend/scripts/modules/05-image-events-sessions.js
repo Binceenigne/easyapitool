@@ -828,6 +828,13 @@
             const status = document.getElementById('imageEditStatus');
             const requestId = globalThis.crypto?.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`;
             const imageCount = window.imageEditState.imageCount;
+            const aspectRatio = window.imageEditState.aspectRatio;
+            const aspectRatioSuffix = aspectRatio && aspectRatio !== 'auto'
+                ? `以以下比例要求为准：强制生成比例为${aspectRatio}的图片`
+                : '';
+            const finalPrompt = aspectRatioSuffix
+                ? `${prompt}\n${aspectRatioSuffix}`
+                : prompt;
             const reasoningOptions = currentImageReasoningRequestOptions();
             const requestOptions = {
                 size: document.getElementById('imageEditSize').value,
@@ -846,7 +853,7 @@
                     ? true
                     : window.imageEditState.webSearchEnabled
             };
-            createImageGenerationSet(requestId, imageCount, prompt, {
+            createImageGenerationSet(requestId, imageCount, finalPrompt, {
                 sessionId: session?.sessionId || requestId,
                 parentSetId: session?.setId || '',
                 roundNumber: session ? session.roundNumber + 1 : 1,
@@ -895,7 +902,7 @@
             try {
                 const result = await window.pywebview.api.generate_image(
                     activeKey.id,
-                    prompt,
+                    finalPrompt,
                     files.map(file => file.path),
                     requestOptions
                 );

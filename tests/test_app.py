@@ -2437,6 +2437,18 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn("@keyframes imageFinalReveal", stylesheet)
         self.assertIn("@media (prefers-reduced-motion: reduce)", stylesheet)
 
+    def test_selected_aspect_ratio_is_appended_to_generation_prompt(self):
+        page = frontend_source()
+
+        self.assertIn("const aspectRatio = window.imageEditState.aspectRatio;", page)
+        self.assertIn(
+            "`以以下比例要求为准：强制生成比例为${aspectRatio}的图片`",
+            page,
+        )
+        self.assertIn("? `${prompt}\\n${aspectRatioSuffix}`", page)
+        self.assertIn("createImageGenerationSet(requestId, imageCount, finalPrompt", page)
+        self.assertIn("activeKey.id,\n                    finalPrompt,", page)
+
     def test_main_page_window_controls_use_lucide_icons(self):
         page = frontend_source()
         stylesheet = frontend_stylesheet()
