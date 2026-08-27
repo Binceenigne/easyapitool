@@ -47,6 +47,7 @@
     let serviceConfigLoad = null;
     let serviceConfigError = '';
     let deviceRegistrationPromise = null;
+    const keyRegistrationPromises = new Map();
 
     function migrateLocalImageHistory() {
         const currentVersion = Number(localPreferences.get(IMAGE_HISTORY_SCHEMA_KEY, 0));
@@ -293,17 +294,27 @@
     }
 
     async function registerKey(metadata) {
-        await ensureDeviceRegistration(metadata.id);
-        const secret = await readSecureKey(metadata.id);
-        return requestJson('/api/v1/keys', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                keyId: metadata.id,
-                name: secret.name || metadata.name || 'API Key',
-                value: secret.value
-            })
-        });
+        const keyId = String(metadata.id || '');
+        const existing = keyRegistrationPromises.get(keyId);
+        if (existing) return existing;
+        const registration = (async () => {
+            await ensureDeviceRegistration(keyId);
+            const secret = await readSecureKey(keyId);
+            return requestJson('/api/v1/keys', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    keyId,
+                    name: secret.name || metadata.name || 'API Key',
+                    value: secret.value
+                })
+            });
+        })();
+        keyRegistrationPromises.set(keyId, registration);
+        void registration.finally(() => {
+            if (keyRegistrationPromises.get(keyId) === registration) keyRegistrationPromises.delete(keyId);
+        }).catch(() => {});
+        return registration;
     }
 
     async function registerAllKeys() {
@@ -348,7 +359,7 @@
                 status: remoteKeys.get(String(key.id))?.status || (registrationErrors.length ? 'unknown' : 'active'),
                 lastError: registrationErrors.length ? registrationErrors[0].message : null
             })),
-            appName: 'DJYX_APITOOL Android',
+            appName: 'Mirra(觅然)',
             appVersion: (await getAppUpdateInfo().catch(() => ({ versionName: 'android' }))).versionName || 'android',
             storageMode: 'android-filesystem-sqlite-index',
             serverPersistence: false,

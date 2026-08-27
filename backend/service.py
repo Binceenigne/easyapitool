@@ -479,18 +479,33 @@ class HeadlessService:
     ) -> dict[str, Any]:
         clean_key_id = str(key_id or "").strip() or uuid.uuid4().hex
         with self.task_lock:
-            if clean_key_id in self.task_keys.values():
-                raise ValueError("API Key 正在生成图片")
             with self.quota_lock:
                 existing_owner = self.key_owners.get(clean_key_id)
+                active = clean_key_id in self.task_keys.values()
+                if active and existing_owner != owner:
+                    raise ValueError("API Key 正在生成图片")
                 if existing_owner is not None and existing_owner != owner:
                     raise ValueError("API Key 编号已被其他设备使用")
-                result = self.controller.add_key(
-                    name,
-                    value,
-                    base_url or self.config.base_url,
-                    clean_key_id,
-                )
+                clean_base_url = (base_url or self.config.base_url).rstrip("/")
+                if active:
+                    record = self.credentials.get_key_record(clean_key_id)
+                    same_key = (
+                        existing_owner == owner
+                        and record is not None
+                        and str(record.get("name") or "") == str(name or "")
+                        and str(record.get("base_url") or "").rstrip("/") == clean_base_url
+                        and self.credentials.get_secret(clean_key_id) == str(value or "")
+                    )
+                    if not same_key:
+                        raise ValueError("API Key 正在生成图片")
+                    result = {"ok": True, "keyId": clean_key_id}
+                else:
+                    result = self.controller.add_key(
+                        name,
+                        value,
+                        clean_base_url,
+                        clean_key_id,
+                    )
                 if not result.get("ok"):
                     return result
                 self.key_owners[clean_key_id] = owner

@@ -119,7 +119,7 @@ class PairingTests(unittest.TestCase):
         self.assertIn("async function exportImageSets(selected)", bridge)
         self.assertIn("const localSets = await listLocalImageSets();", bridge)
 
-    def test_android_branding_uses_generated_djyx_imgentool_assets(self) -> None:
+    def test_android_branding_uses_generated_mirra_assets(self) -> None:
         config = (PROJECT_ROOT / "mobile" / "capacitor.config.ts").read_text(encoding="utf-8")
         strings = (
             PROJECT_ROOT / "mobile" / "android" / "app" / "src" / "main" / "res" / "values" / "strings.xml"
@@ -132,9 +132,9 @@ class PairingTests(unittest.TestCase):
             PROJECT_ROOT / "mobile" / "android" / "app" / "src" / "main" / "res" / "mipmap-anydpi-v26" / "ic_launcher.xml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("appName: 'DJYX_IMGenTool'", config)
-        self.assertIn('<string name="app_name">DJYX_IMGenTool</string>', strings)
-        self.assertIn('<string name="title_activity_main">DJYX_IMGenTool</string>', strings)
+        self.assertIn("appName: 'Mirra(觅然)'", config)
+        self.assertIn('<string name="app_name">Mirra(觅然)</string>', strings)
+        self.assertIn('<string name="title_activity_main">Mirra(觅然)</string>', strings)
         self.assertIn('android:icon="@mipmap/ic_launcher"', manifest)
         self.assertTrue(resources.is_file())
         self.assertIn("mipmap/ic_launcher_foreground", adaptive)
@@ -304,6 +304,46 @@ class PairingTests(unittest.TestCase):
         self.assertFalse(deleted["ok"])
         self.assertEqual(deleted["error"], "API Key 正在生成图片")
         self.assertEqual(service.credentials.get_secret("key-a"), "secret-a")
+
+    def test_active_generation_key_can_be_registered_again_by_its_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            service = HeadlessService(
+                ServiceConfig(work_root=Path(temporary), bearer_token="x" * 32)
+            )
+            service.add_key("device:a", "A", "secret-a", key_id="key-a")
+            service.task_keys["running-request"] = "key-a"
+
+            repeated = service.add_key(
+                "device:a",
+                "A",
+                "secret-a",
+                key_id="key-a",
+            )
+            with self.assertRaisesRegex(ValueError, "API Key 正在生成图片"):
+                service.add_key(
+                    "device:a",
+                    "Changed",
+                    "secret-a",
+                    key_id="key-a",
+                )
+
+        self.assertTrue(repeated["ok"])
+        self.assertEqual(repeated["keyId"], "key-a")
+        self.assertEqual(service.credentials.get_secret("key-a"), "secret-a")
+
+    def test_selected_aspect_ratio_is_appended_to_generation_prompt(self) -> None:
+        events = (
+            PROJECT_ROOT / "frontend" / "scripts" / "modules" / "05-image-events-sessions.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("const aspectRatio = window.imageEditState.aspectRatio;", events)
+        self.assertIn(
+            "`以以下比例要求为准：强制生成比例为${aspectRatio}的图片`",
+            events,
+        )
+        self.assertIn("? `${prompt}\\n${aspectRatioSuffix}`", events)
+        self.assertIn("createImageGenerationSet(requestId, imageCount, finalPrompt", events)
+        self.assertIn("activeKey.id,\n                    finalPrompt,", events)
 
     def test_android_failed_continuation_keeps_the_next_round_number(self) -> None:
         events = (
