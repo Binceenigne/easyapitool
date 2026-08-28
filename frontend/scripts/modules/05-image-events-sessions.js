@@ -31,6 +31,7 @@
                 set.sessionId = event.sessionId || set.sessionId;
                 set.parentSetId = event.parentSetId || set.parentSetId;
                 set.roundNumber = Number(event.roundNumber) || set.roundNumber;
+                if (['auto', 'opaque', 'transparent'].includes(event.transparency)) set.transparency = event.transparency;
                 set.operation = event.operation || set.operation;
                 set.continuation = event.continuation === true || set.continuation;
                 set.continuationRationale = event.continuationRationale || set.continuationRationale;
@@ -291,6 +292,7 @@
             set.sessionId = result.sessionId || set.sessionId;
             set.parentSetId = result.parentSetId || set.parentSetId;
             set.roundNumber = Number(result.roundNumber) || set.roundNumber;
+            if (['auto', 'opaque', 'transparent'].includes(result.transparency)) set.transparency = result.transparency;
             set.originalPrompt = result.originalPrompt || set.originalPrompt || result.prompt || '';
             set.reasoningDurationMs = Math.max(0, Number(result.reasoningDurationMs) || set.reasoningDurationMs);
             set.reasoningUsage = normalizeReasoningUsage(result.reasoningUsage || set.reasoningUsage);
@@ -375,6 +377,7 @@
                 window.imageEditState.draftBeforeSession = {
                     files: [...window.imageEditState.files],
                     prompt: document.getElementById('imageEditPrompt').value,
+                    transparency: window.imageEditState.transparency,
                     reasoningMode: window.imageEditState.reasoningMode,
                     reasoningAdvancedModel: window.imageEditState.reasoningAdvancedModel,
                     reasoningAdvancedEffort: window.imageEditState.reasoningAdvancedEffort,
@@ -397,6 +400,7 @@
                 set.reasoningDepth || set.reasoningEffort,
                 false
             );
+            setImageTransparency(set.transparency || 'auto', false);
             setImageWebSearchEnabled(set.webSearchEnabled === true, false);
             setImageEditSessionUi(true);
             window.imageEditState.files = [];
@@ -417,6 +421,7 @@
             if (draft) {
                 window.imageEditState.files = [...draft.files];
                 document.getElementById('imageEditPrompt').value = draft.prompt || '';
+                setImageTransparency(draft.transparency || 'auto', false);
                 window.imageEditState.reasoningPreviousMode = normalizeImageReasoningPreset(draft.reasoningPreviousMode);
                 setImageReasoningSelection(
                     draft.reasoningMode,
@@ -643,6 +648,10 @@
         async function setImageViewerSource(result, preferFullImage = false) {
             if (!result) return;
             window.imageEditState.viewerResult = result;
+            document.getElementById('imageResultModalCanvas')?.classList.toggle(
+                'is-transparency-preview',
+                result.transparency === 'transparent'
+            );
             const image = document.getElementById('imageResultModalImage');
             image.src = browserImageSource(result.previewUri, result.uri);
             document.getElementById('imageResultModalMeta').textContent = result.status === 'partial'
@@ -697,8 +706,8 @@
             const item = set.items[itemIndex];
             if (!item) return;
             const result = item.status === 'completed'
-                ? item.result
-                : { path: item.path, previewUri: item.previewUri, uri: item.uri, status: 'partial' };
+                ? { ...item.result, transparency: set.transparency }
+                : { path: item.path, previewUri: item.previewUri, uri: item.uri, status: 'partial', transparency: set.transparency };
             void setImageViewerSource(result, item.status === 'completed');
         }
 
@@ -786,6 +795,7 @@
         async function closeImageResultModal() {
             window.imageEditState.viewer.setId = '';
             window.imageEditState.viewer.itemIndex = -1;
+            document.getElementById('imageResultModalCanvas')?.classList.remove('is-transparency-preview');
             await closeAnimatedModal(document.getElementById('imageResultModal'));
             document.getElementById('imageResultModalImage').removeAttribute('src');
             window.imageEditState.viewerResult = null;
@@ -829,15 +839,16 @@
             const requestId = globalThis.crypto?.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`;
             const imageCount = window.imageEditState.imageCount;
             const aspectRatio = window.imageEditState.aspectRatio;
-            const aspectRatioSuffix = aspectRatio && aspectRatio !== 'auto'
-                ? `以以下比例要求为准：强制生成比例为${aspectRatio}的图片`
-                : '';
-            const finalPrompt = aspectRatioSuffix
-                ? `${prompt}\n${aspectRatioSuffix}`
+            const transparency = window.imageEditState.transparency;
+            const constraintSuffixes = imageGenerationConstraintSuffixes(aspectRatio, transparency);
+            const finalPrompt = constraintSuffixes.length
+                ? `${prompt}\n${constraintSuffixes.join('\n')}`
                 : prompt;
             const reasoningOptions = currentImageReasoningRequestOptions();
             const requestOptions = {
                 size: document.getElementById('imageEditSize').value,
+                aspectRatio,
+                transparency,
                 quality: document.getElementById('imageEditQuality').value,
                 outputPreset: document.getElementById('imageEditOutputPreset').value,
                 imageCount,
@@ -845,6 +856,8 @@
                 sessionId: session?.sessionId || requestId,
                 parentSetId: session?.setId || '',
                 continuation: Boolean(session),
+                aspectRatio,
+                transparency,
                 ...reasoningOptions,
                 reasoningDepth: window.imageEditState.reasoningAdvanced
                     ? window.imageEditState.reasoningAdvancedEffort

@@ -766,6 +766,9 @@
                 requestedCount,
                 prompt,
                 originalPrompt: metadata.originalPrompt || prompt,
+                transparency: ['auto', 'opaque', 'transparent'].includes(metadata.transparency)
+                    ? metadata.transparency
+                    : 'auto',
                 operation: metadata.operation || 'generate',
                 continuation: metadata.continuation === true,
                 continuationRationale: metadata.continuationRationale || '',

@@ -47,15 +47,18 @@ def image_preview_bytes(
         source_image.load()
         preview_image = source_image.copy()
     preview_image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
-    if preview_image.mode in {"RGBA", "LA"} or "transparency" in preview_image.info:
-        rgba_image = preview_image.convert("RGBA")
-        flattened = Image.new("RGB", rgba_image.size, "white")
-        flattened.paste(rgba_image, mask=rgba_image.getchannel("A"))
-        preview_image = flattened
+    has_alpha = preview_image.mode in {"RGBA", "LA"} or "transparency" in preview_image.info
+    if has_alpha:
+        preview_image = preview_image.convert("RGBA")
     else:
         preview_image = preview_image.convert("RGB")
     preview_buffer = io.BytesIO()
-    preview_image.save(preview_buffer, format="JPEG", quality=78, optimize=optimize)
+    preview_image.save(
+        preview_buffer,
+        format="PNG" if has_alpha else "JPEG",
+        quality=None if has_alpha else 78,
+        optimize=optimize,
+    )
     return preview_buffer.getvalue()
 
 
@@ -64,10 +67,24 @@ def image_preview_data_url(
     max_side: int = 720,
     optimize: bool = True,
 ) -> str:
-    encoded = base64.b64encode(
-        image_preview_bytes(image_bytes, max_side, optimize)
-    ).decode("ascii")
-    return f"data:image/jpeg;base64,{encoded}"
+    preview_bytes = image_preview_bytes(image_bytes, max_side, optimize)
+    with Image.open(io.BytesIO(preview_bytes)) as preview_image:
+        preview_format = preview_image.format
+    encoded = base64.b64encode(preview_bytes).decode("ascii")
+    mime_type = "image/png" if preview_format == "PNG" else "image/jpeg"
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def image_data_url(image_bytes: bytes) -> str:
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        mime_type = "image/png" if image.format == "PNG" else "image/jpeg"
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def image_file_suffix(image_bytes: bytes) -> str:
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        return ".png" if image.format == "PNG" else ".jpg"
 
 
 class ImageSessionStore:
@@ -280,6 +297,8 @@ class ImageSessionStore:
                 "directory": directory_name,
                 "options": {
                     "size": str(options.get("size") or "auto"),
+                    "aspectRatio": str(options.get("aspectRatio") or "auto"),
+                    "transparency": str(options.get("transparency") or "auto"),
                     "quality": str(options.get("quality") or "auto"),
                     "outputPreset": str(options.get("outputPreset") or "lossless"),
                     "operation": str(options.get("operation") or "generate"),
@@ -676,10 +695,10 @@ class ImageSessionStore:
             round_dir.mkdir(parents=True, exist_ok=True)
             suffix = source_path.suffix.lower() if source_path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES else ".png"
             original_path = round_dir / f"image-{item_index + 1:02d}-original{suffix}"
-            preview_path = round_dir / f"image-{item_index + 1:02d}-preview.jpg"
             shutil.copy2(source_path, original_path)
             original_bytes = original_path.read_bytes()
             preview_bytes = image_preview_bytes(original_bytes)
+            preview_path = round_dir / f"image-{item_index + 1:02d}-preview{image_file_suffix(preview_bytes)}"
             preview_path.write_bytes(preview_bytes)
             relative_original = original_path.relative_to(self._session_dir(clean_session_id)).as_posix()
             relative_preview = preview_path.relative_to(self._session_dir(clean_session_id)).as_posix()
@@ -722,7 +741,7 @@ class ImageSessionStore:
                 "uri": original_path.as_uri(),
                 "savedPath": str(original_path),
                 "previewPath": str(preview_path),
-                "previewUri": f"data:image/jpeg;base64,{base64.b64encode(preview_bytes).decode('ascii')}",
+                "previewUri": image_data_url(preview_bytes),
                 "sessionId": clean_session_id,
                 "setId": clean_set_id,
                 "roundNumber": int(round_data["roundNumber"]),
@@ -775,7 +794,7 @@ class ImageSessionStore:
                     continue
                 index = len(persisted) + 1
                 original_path = round_dir / f"web-reference-{index:02d}.jpg"
-                preview_path = round_dir / f"web-reference-{index:02d}-preview.jpg"
+                preview_path = round_dir / f"web-reference-{index:02d}-preview{image_file_suffix(preview_bytes)}"
                 shutil.copy2(source_path, original_path)
                 preview_path.write_bytes(preview_bytes)
                 stored_reference = {
@@ -804,7 +823,7 @@ class ImageSessionStore:
                         **{key: value for key, value in stored_reference.items() if key not in {"original", "preview"}},
                         "path": str(original_path),
                         "previewPath": str(preview_path),
-                        "previewUri": f"data:image/jpeg;base64,{base64.b64encode(preview_bytes).decode('ascii')}",
+                        "previewUri": image_data_url(preview_bytes),
                     }
                 )
             round_data["webReferences"] = stored
@@ -937,6 +956,8 @@ class ImageSessionStore:
                             "requestedCount": int(round_data.get("requestedCount") or len(items)),
                             "prompt": str(round_data.get("prompt") or ""),
                             "originalPrompt": str(options.get("originalPrompt") or round_data.get("prompt") or ""),
+                            "aspectRatio": str(options.get("aspectRatio") or "auto"),
+                            "transparency": str(options.get("transparency") or "auto"),
                             "operation": str(options.get("operation") or ("edit" if round_data.get("referenceCount") else "generate")),
                             "continuation": bool(options.get("continuation")),
                             "continuationRationale": str(options.get("continuationRationale") or ""),
@@ -1127,6 +1148,7 @@ class ImageGenerationRequest:
     output_preset: str
     output_format: str
     requested_size: str
+    transparency: str
     requested_quality: str
     stream: bool
     partial_images: int
@@ -1179,7 +1201,7 @@ def prepare_image_generation(
     output_preset = str(clean_options.get("outputPreset") or "lossless").lower()
     quality = str(clean_options.get("quality") or "auto").lower()
     size = str(clean_options.get("size") or "auto").lower()
-    background = str(clean_options.get("background") or "auto").lower()
+    transparency = str(clean_options.get("transparency") or "auto").lower()
     moderation = str(clean_options.get("moderation") or "low").lower()
     stream = bool(clean_options.get("stream"))
     partial_images = int(_number(clean_options.get("partialImages"), 0))
@@ -1188,6 +1210,8 @@ def prepare_image_generation(
     output_format, _jpeg_quality = OUTPUT_PRESETS[output_preset]
     if quality not in {"low", "medium", "high", "auto"}:
         raise ValueError("无效的图片质量")
+    if transparency not in {"auto", "opaque", "transparent"}:
+        raise ValueError("无效的透明度模式")
     if size != "auto":
         size_match = __import__("re").fullmatch(r"(\d+)x(\d+)", size)
         if not size_match:
@@ -1202,10 +1226,6 @@ def prepare_image_generation(
             or not 655_360 <= pixels <= 8_294_400
         ):
             raise ValueError("图片尺寸不符合 GPT Image 2 的边长、比例或像素限制")
-    if background not in {"transparent", "opaque", "auto"}:
-        raise ValueError("无效的背景模式")
-    if background == "transparent" and output_preset != "lossless":
-        raise ValueError("透明背景只能使用无损 PNG 输出")
     if moderation not in {"low", "auto"}:
         raise ValueError("无效的审核级别")
     if not 0 <= partial_images <= 3:
@@ -1215,9 +1235,7 @@ def prepare_image_generation(
         "model": "gpt-image-2",
         "prompt": clean_prompt,
         "quality": quality,
-        "size": size,
         "output_format": "png",
-        "background": background,
         "moderation": moderation,
         "stream": stream,
     }
@@ -1231,6 +1249,7 @@ def prepare_image_generation(
         output_preset=output_preset,
         output_format=output_format,
         requested_size=size,
+        transparency=transparency,
         requested_quality=quality,
         stream=stream,
         partial_images=partial_images,
@@ -1364,7 +1383,6 @@ class ImageGenerationClient:
             raise RuntimeError("流式生图接口未返回最终图片")
         return {
             "data": [{"b64_json": completed_image}],
-            "background": completed.get("background"),
             "output_format": completed.get("output_format"),
             "quality": completed.get("quality"),
             "size": completed.get("size"),
@@ -1388,10 +1406,8 @@ class ImageGenerationClient:
         request_details = {
             "operation": "generation",
             "model": str(fields.get("model") or ""),
-            "size": str(fields.get("size") or ""),
             "quality": str(fields.get("quality") or ""),
             "outputFormat": str(fields.get("output_format") or ""),
-            "background": str(fields.get("background") or ""),
             "moderation": str(fields.get("moderation") or ""),
             "stream": bool(fields.get("stream")),
             "partialImages": int(fields.get("partial_images") or 0),
@@ -1680,12 +1696,13 @@ class ImageGenerationService:
             result_image = source_image.copy()
             width, height = result_image.size
 
-        suffix = ".png" if request.output_format == "png" else ".jpg"
+        save_as_png = request.output_format == "png" or request.transparency == "transparent"
+        suffix = ".png" if save_as_png else ".jpg"
         output_path = output_dir / (
             f"image-generation-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}{suffix}"
         )
         output_buffer = io.BytesIO()
-        if request.output_format == "png":
+        if save_as_png:
             result_image.save(output_buffer, format="PNG")
         else:
             if result_image.mode in {"RGBA", "LA"} or "transparency" in result_image.info:
@@ -1711,13 +1728,12 @@ class ImageGenerationService:
             "width": width,
             "height": height,
             "sizeBytes": len(output_bytes),
-            "format": request.output_format,
+            "format": "png" if save_as_png else request.output_format,
             "outputPreset": request.output_preset,
             "quality": response.get("quality") or request.fields["quality"],
             "requestedQuality": request.requested_quality,
             "requestedSize": request.requested_size,
             "actualSize": response.get("size") or f"{width}x{height}",
-            "background": response.get("background") or request.fields["background"],
             "stream": request.stream,
             "partialImagesRequested": request.partial_images if request.stream else 0,
             "partialImagesReceived": int(response.get("partial_images_received") or 0),

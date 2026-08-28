@@ -171,6 +171,8 @@
                                         <span aria-hidden="true">·</span>
                                         <span id="imageGenerationRatioSummary">智能</span>
                                         <span aria-hidden="true">·</span>
+                                        <span id="imageGenerationTransparencySummary">自动透明</span>
+                                        <span aria-hidden="true">·</span>
                                         <span id="imageGenerationCountSummary">1 张</span>
                                     </span>
                                     <i data-lucide="chevron-up" aria-hidden="true"></i>
@@ -208,6 +210,14 @@
                                             <button type="button" data-ratio="3:2" aria-pressed="false" onclick="setImageAspectRatio('3:2')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>3:2</span></button>
                                             <button type="button" data-ratio="16:9" aria-pressed="false" onclick="setImageAspectRatio('16:9')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>16:9</span></button>
                                             <button type="button" data-ratio="21:9" aria-pressed="false" onclick="setImageAspectRatio('21:9')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>21:9</span></button>
+                                        </div>
+                                    </section>
+                                    <section class="image-control-section">
+                                        <span>透明度</span>
+                                        <div id="imageTransparencyButtons" class="image-control-segmented" role="radiogroup" aria-label="图片透明度">
+                                            <button type="button" class="is-active" data-transparency="auto" aria-pressed="true" onclick="setImageTransparency('auto')">自动</button>
+                                            <button type="button" data-transparency="opaque" aria-pressed="false" onclick="setImageTransparency('opaque')">不透明</button>
+                                            <button type="button" data-transparency="transparent" aria-pressed="false" onclick="setImageTransparency('transparent')">透明</button>
                                         </div>
                                     </section>
                                     <section class="image-control-section image-count-control">

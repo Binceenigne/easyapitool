@@ -2439,13 +2439,24 @@ class StaticAssetCacheTests(unittest.TestCase):
 
     def test_selected_aspect_ratio_is_appended_to_generation_prompt(self):
         page = frontend_source()
+        controls = (
+            PROJECT_ROOT / "frontend" / "scripts" / "modules" / "02-image-controls.js"
+        ).read_text(encoding="utf-8")
+        rendering = (
+            PROJECT_ROOT / "frontend" / "scripts" / "modules" / "04-image-stream-rendering.js"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("const aspectRatio = window.imageEditState.aspectRatio;", page)
         self.assertIn(
-            "`以以下比例要求为准：强制生成比例为${aspectRatio}的图片`",
-            page,
+            "suffixes.push(`以以下比例要求为准：强制生成比例为${aspectRatio}的图片`)",
+            controls,
         )
-        self.assertIn("? `${prompt}\\n${aspectRatioSuffix}`", page)
+        self.assertIn("suffixes.push('以以下透明度要求为准：强制生成透明背景的图片')", controls)
+        self.assertIn("suffixes.push('以以下透明度要求为准：强制生成不透明背景的图片')", controls)
+        self.assertIn("const constraintSuffixes = imageGenerationConstraintSuffixes(aspectRatio, transparency);", page)
+        self.assertIn("? `${prompt}\\n${constraintSuffixes.join('\\n')}`", page)
+        self.assertIn('id="imageTransparencyButtons"', page)
+        self.assertIn("is-transparency-preview", rendering)
         self.assertIn("createImageGenerationSet(requestId, imageCount, finalPrompt", page)
         self.assertIn("activeKey.id,\n                    finalPrompt,", page)
 
@@ -2608,7 +2619,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(args[2].fields["model"], "gpt-image-2")
         self.assertEqual(args[2].fields["quality"], "low")
         self.assertEqual(args[2].fields["output_format"], "png")
-        self.assertEqual(args[2].fields["background"], "auto")
+        self.assertNotIn("background", args[2].fields)
+        self.assertNotIn("size", args[2].fields)
         self.assertEqual(args[2].fields["moderation"], "low")
         self.assertNotIn("imageCount", args[2].fields)
         self.assertEqual(

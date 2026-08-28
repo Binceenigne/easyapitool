@@ -402,7 +402,8 @@ class ImageEditorTests(unittest.TestCase):
             )
             self.assertEqual(request.fields["output_format"], "png")
             self.assertNotIn("output_compression", request.fields)
-            self.assertEqual(request.fields["background"], "opaque")
+            self.assertNotIn("background", request.fields)
+            self.assertNotIn("size", request.fields)
             self.assertEqual(request.fields["moderation"], "low")
             self.assertEqual(result["format"], "jpeg")
             self.assertEqual(result["outputPreset"], "medium")
@@ -484,22 +485,52 @@ class ImageEditorTests(unittest.TestCase):
                 self.assertEqual(result["format"], "jpeg")
                 self.assertEqual(result["outputPreset"], preset)
 
-    def test_transparent_background_requires_lossless_output(self):
-        with self.assertRaisesRegex(ValueError, "透明背景只能使用无损 PNG 输出"):
-            image_editor.prepare_image_generation(
-                "Generate a transparent image",
-                [],
-                {"background": "transparent", "outputPreset": "large"},
-            )
+    def test_prompt_driven_transparency_does_not_add_background_parameter(self):
+        request = image_editor.prepare_image_generation(
+            "Generate a transparent image",
+            [],
+            {"background": "transparent", "outputPreset": "large"},
+        )
+        self.assertNotIn("background", request.fields)
+        self.assertNotIn("size", request.fields)
 
         request = image_editor.prepare_image_generation(
             "Generate a transparent image",
             [],
             {"background": "transparent", "outputPreset": "lossless"},
         )
-        self.assertEqual(request.fields["background"], "transparent")
+        self.assertNotIn("background", request.fields)
+        self.assertNotIn("size", request.fields)
         self.assertEqual(request.fields["output_format"], "png")
         self.assertEqual(request.output_format, "png")
+
+    def test_transparent_mode_preserves_alpha_with_jpeg_preset(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = io.BytesIO()
+            Image.new("RGBA", (8, 8), (20, 40, 60, 128)).save(source, format="PNG")
+            encoded = base64.b64encode(source.getvalue()).decode("ascii")
+            client = SimpleNamespace(
+                generate_image=Mock(return_value={"data": [{"b64_json": encoded}]}),
+                edit_images=Mock(),
+            )
+            request = image_editor.prepare_image_generation(
+                "Generate a transparent image",
+                [],
+                {"outputPreset": "large", "transparency": "transparent"},
+            )
+            result = image_editor.ImageGenerationService(client).generate(
+                "https://example.test/v1",
+                "secret",
+                request,
+                root / "output",
+            )
+
+            self.assertEqual(result["format"], "png")
+            self.assertEqual(Path(result["path"]).suffix, ".png")
+            with Image.open(result["path"]) as saved_image:
+                self.assertEqual(saved_image.format, "PNG")
+                self.assertEqual(saved_image.mode, "RGBA")
 
     def test_moderation_defaults_to_low(self):
         request = image_editor.prepare_image_generation("Generate an image", [], {})

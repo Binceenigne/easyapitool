@@ -4,6 +4,7 @@
                 quality: state.quality,
                 outputPreset: state.outputPreset,
                 aspectRatio: state.aspectRatio,
+                transparency: state.transparency,
                 imageCount: state.imageCount,
                 reasoningMode: state.reasoningMode,
                 reasoningAdvanced: state.reasoningAdvanced,
@@ -25,6 +26,7 @@
             setImageQuality(saved.quality || 'auto', false);
             setImageOutputPreset(saved.outputPreset || 'lossless', false);
             setImageAspectRatio(saved.aspectRatio || 'auto', false);
+            setImageTransparency(saved.transparency || 'auto', false);
             setImageGenerationCount(saved.imageCount || 1, false);
             setImageWebSearchEnabled(saved.webSearchEnabled !== false, false);
             restoreImageReasoningPreferences(saved, false);
@@ -399,6 +401,31 @@
             if (persist) persistImageGenerationPreferences();
         }
 
+        function setImageTransparency(transparency, persist = true) {
+            if (!['auto', 'opaque', 'transparent'].includes(transparency)) return;
+            window.imageEditState.transparency = transparency;
+            document.querySelectorAll('#imageTransparencyButtons button').forEach(button => {
+                const active = button.dataset.transparency === transparency;
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-pressed', String(active));
+            });
+            updateImageGenerationControlSummary();
+            if (persist) persistImageGenerationPreferences();
+        }
+
+        function imageGenerationConstraintSuffixes(aspectRatio = window.imageEditState.aspectRatio, transparency = window.imageEditState.transparency) {
+            const suffixes = [];
+            if (aspectRatio && aspectRatio !== 'auto') {
+                suffixes.push(`以以下比例要求为准：强制生成比例为${aspectRatio}的图片`);
+            }
+            if (transparency === 'transparent') {
+                suffixes.push('以以下透明度要求为准：强制生成透明背景的图片');
+            } else if (transparency === 'opaque') {
+                suffixes.push('以以下透明度要求为准：强制生成不透明背景的图片');
+            }
+            return suffixes;
+        }
+
         function setImageGenerationCount(count, persist = true) {
             window.imageEditState.imageCount = Math.max(1, Math.min(9, Number(count) || 1));
             document.querySelectorAll('#imageGenerationCountButtons button').forEach(button => {
@@ -412,8 +439,10 @@
 
         function updateImageGenerationControlSummary() {
             const ratio = window.imageEditState.aspectRatio;
+            const transparency = window.imageEditState.transparency;
             const qualityLabels = { auto: '自动细节', low: '低细节', medium: '中细节', high: '高细节' };
             const outputLabels = { lossless: '无损', large: '大', medium: '中', small: '小' };
+            const transparencyLabels = { auto: '自动透明', opaque: '不透明', transparent: '透明' };
             const size = IMAGE_SIZE_PRESETS[ratio] || 'auto';
             document.getElementById('imageEditSize').value = size;
             const qualitySummary = document.getElementById('imageGenerationQualitySummary');
@@ -423,6 +452,7 @@
             outputSummary.textContent = outputLabels[window.imageEditState.outputPreset];
             outputSummary.dataset.preset = window.imageEditState.outputPreset;
             document.getElementById('imageGenerationRatioSummary').textContent = ratio === 'auto' ? '智能' : ratio;
+            document.getElementById('imageGenerationTransparencySummary').textContent = transparencyLabels[transparency];
             document.getElementById('imageGenerationCountSummary').textContent = `${window.imageEditState.imageCount} 张`;
             const buttonLabel = document.querySelector('#generateEditedImageButton span');
             if (buttonLabel && !window.imageEditState.busy) {

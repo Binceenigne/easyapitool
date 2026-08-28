@@ -11,6 +11,24 @@ class ImageGenerationCancelled(Exception):
     pass
 
 
+def _append_image_prompt_constraints(prompt: str, options: dict[str, Any]) -> str:
+    aspect_ratio = str(options.get("aspectRatio") or "").strip()
+    transparency = str(options.get("transparency") or "").strip().lower()
+    suffixes = []
+    if aspect_ratio and aspect_ratio != "auto":
+        suffixes.append(f"以以下比例要求为准：强制生成比例为{aspect_ratio}的图片")
+    if transparency == "transparent":
+        suffixes.append("以以下透明度要求为准：强制生成透明背景的图片")
+    elif transparency == "opaque":
+        suffixes.append("以以下透明度要求为准：强制生成不透明背景的图片")
+    if not suffixes:
+        return prompt.strip()
+    constraint_lines = set(suffixes)
+    base_lines = [line for line in prompt.splitlines() if line.strip() not in constraint_lines]
+    base_prompt = "\n".join(base_lines).strip()
+    return "\n".join([base_prompt, *suffixes]) if base_prompt else "\n".join(suffixes)
+
+
 class ImageTaskContext:
     def __init__(self) -> None:
         self.cancel_event = threading.Event()
@@ -1086,6 +1104,7 @@ class ImageReasoningMixin:
                 shutil.rmtree(web_reference_dir, ignore_errors=True)
                 emit("react_failed", mode=reasoning_mode, error=str(exc))
                 return {"ok": False, "error": f"思维处理失败：{exc}"}
+        final_prompt = _append_image_prompt_constraints(final_prompt, clean_options)
         if continuation_enabled:
             if not isinstance(continuation_plan, dict):
                 discard_pending_assets()
@@ -1147,6 +1166,12 @@ class ImageReasoningMixin:
                 [str(path) for path in request.image_paths],
                 clean_options,
             )
+        else:
+            request = prepare_image_generation(
+                final_prompt,
+                [str(path) for path in request.image_paths],
+                clean_options,
+            )
         if reasoning_mode != "instant":
             try:
                 available_slots = max(0, 16 - len(request.image_paths))
@@ -1188,6 +1213,8 @@ class ImageReasoningMixin:
                 "reasoningDurationMs": reasoning_duration_ms,
                 "reasoningUsage": reasoning_usage,
                 "originalPrompt": original_prompt,
+                "aspectRatio": str(clean_options.get("aspectRatio") or "auto"),
+                "transparency": str(clean_options.get("transparency") or "auto"),
                 "webSearchEnabled": web_search_enabled,
                 "webSearchUsed": web_search_used,
                 "webSearchFailed": web_search_failed,
@@ -1275,6 +1302,8 @@ class ImageReasoningMixin:
             selectedAssetIds=selected_asset_ids,
             roundNumber=int(round_data["roundNumber"]),
             originalPrompt=original_prompt,
+            aspectRatio=str(clean_options.get("aspectRatio") or "auto"),
+            transparency=str(clean_options.get("transparency") or "auto"),
             reasoningMode=reasoning_mode,
             reasoningModel=reasoning_model,
             reasoningEffort=reasoning_effort,
@@ -1368,6 +1397,8 @@ class ImageReasoningMixin:
             "items": items,
             "prompt": request.prompt,
             "originalPrompt": original_prompt,
+                "aspectRatio": str(clean_options.get("aspectRatio") or "auto"),
+                "transparency": str(clean_options.get("transparency") or "auto"),
             "reasoningMode": reasoning_mode,
             "reasoningModel": reasoning_model,
             "reasoningEffort": reasoning_effort,

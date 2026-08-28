@@ -17,6 +17,8 @@
   --image-blue-soft: #eff6ff;
   --image-purple: #7c3aed;
   --image-purple-soft: #f5f3ff;
+  --image-transparency-light: #e2e8f0;
+  --image-transparency-dark: #cbd5e1;
   --good: #10b981;
   --warn: #f59e0b;
   --danger: #f97316;
@@ -43,6 +45,8 @@ html.dark {
   --image-blue-soft: rgba(37, 99, 235, 0.18);
   --image-purple: #c084fc;
   --image-purple-soft: rgba(124, 58, 237, 0.2);
+  --image-transparency-light: #1e293b;
+  --image-transparency-dark: #334155;
   --shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
@@ -3614,6 +3618,14 @@ html.dark #keySwitcherMenu {
   isolation: isolate;
 }
 
+.image-generation-item.is-transparency-preview,
+.image-result-modal-canvas.is-transparency-preview {
+  background-color: var(--image-transparency-light);
+  background-image: linear-gradient(45deg, var(--image-transparency-dark) 25%, transparent 25%), linear-gradient(-45deg, var(--image-transparency-dark) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, var(--image-transparency-dark) 75%), linear-gradient(-45deg, transparent 75%, var(--image-transparency-dark) 75%);
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
+}
+
 .image-generation-item:is(.is-queued, .is-running) {
   aspect-ratio: 2/1;
   background: #fff;
@@ -3635,6 +3647,10 @@ html.dark #keySwitcherMenu {
   backface-visibility: hidden;
   transform: translate3d(0, 0, 0);
   transform-origin: center;
+}
+
+.image-generation-item.is-transparency-preview img {
+  background: transparent;
 }
 
 .image-generation-item img.is-reveal-pending {
@@ -3903,6 +3919,10 @@ html.dark #keySwitcherMenu {
   background: var(--bg);
   cursor: grab;
   touch-action: none;
+}
+
+.image-result-modal-canvas.is-transparency-preview img {
+  background: transparent;
 }
 
 .image-result-modal-canvas.is-dragging {
