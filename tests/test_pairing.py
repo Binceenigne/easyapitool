@@ -335,13 +335,20 @@ class PairingTests(unittest.TestCase):
         events = (
             PROJECT_ROOT / "frontend" / "scripts" / "modules" / "05-image-events-sessions.js"
         ).read_text(encoding="utf-8")
+        controls = (
+            PROJECT_ROOT / "frontend" / "scripts" / "modules" / "02-image-controls.js"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("const aspectRatio = window.imageEditState.aspectRatio;", events)
         self.assertIn(
-            "`以以下比例要求为准：强制生成比例为${aspectRatio}的图片`",
-            events,
+            "suffixes.push(`以以下比例要求为准：强制生成比例为${aspectRatio}的图片`)",
+            controls,
         )
-        self.assertIn("? `${prompt}\\n${aspectRatioSuffix}`", events)
+        self.assertIn("suffixes.push('以以下透明度要求为准：强制生成透明背景的图片')", controls)
+        self.assertIn("suffixes.push('以以下透明度要求为准：强制生成不透明背景的图片')", controls)
+        self.assertIn("const constraintSuffixes = imageGenerationConstraintSuffixes(aspectRatio, transparency);", events)
+        self.assertIn("? `${prompt}\\n${constraintSuffixes.join('\\n')}`", events)
+        self.assertIn("transparency,", events)
         self.assertIn("createImageGenerationSet(requestId, imageCount, finalPrompt", events)
         self.assertIn("activeKey.id,\n                    finalPrompt,", events)
 

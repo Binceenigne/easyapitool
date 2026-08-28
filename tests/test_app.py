@@ -2591,7 +2591,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(args[2].fields["model"], "gpt-image-2")
         self.assertEqual(args[2].fields["quality"], "low")
         self.assertEqual(args[2].fields["output_format"], "png")
-        self.assertEqual(args[2].fields["background"], "auto")
+        self.assertNotIn("background", args[2].fields)
+        self.assertNotIn("size", args[2].fields)
         self.assertEqual(args[2].fields["moderation"], "low")
         self.assertNotIn("imageCount", args[2].fields)
         self.assertEqual(

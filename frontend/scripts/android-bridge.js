@@ -397,6 +397,11 @@
             requestId,
             prompt: String(result.prompt || pending?.prompt || ''),
             originalPrompt: String(result.originalPrompt || pending?.prompt || ''),
+            transparency: ['auto', 'opaque', 'transparent'].includes(result.transparency)
+                ? result.transparency
+                : ['auto', 'opaque', 'transparent'].includes(pending?.transparency)
+                    ? pending.transparency
+                    : 'auto',
             createdAt: result.createdAt || pending?.createdAt || new Date().toISOString(),
             status: result.cancelled ? 'cancelled' : result.ok ? 'completed' : 'failed',
             error: String(result.error || ''),
@@ -481,7 +486,7 @@
                     resourceId: result.resourceId || result.previewResourceId,
                     sessionId: context.sessionId || result.sessionId || '',
                     setId: context.setId || result.setId || '',
-                    mimeType: 'image/jpeg',
+                    mimeType: result.previewMimeType || 'image/jpeg',
                     preview: true
                 });
                 downloadCache.set(cacheKey, downloaded);
@@ -736,6 +741,11 @@
             roundNumber: Number(options?.roundNumber || pending?.roundNumber) || 1,
             prompt: String(prompt || pending?.prompt || ''),
             originalPrompt: String(prompt || pending?.prompt || ''),
+            transparency: ['auto', 'opaque', 'transparent'].includes(options?.transparency)
+                ? options.transparency
+                : ['auto', 'opaque', 'transparent'].includes(pending?.transparency)
+                    ? pending.transparency
+                    : 'auto',
             createdAt: pending?.createdAt || new Date().toISOString(),
             requestedCount,
             error: message,
@@ -770,6 +780,7 @@
                 roundNumber: Number(options.roundNumber) || 1,
                 prompt,
                 requestedCount: Number(options.imageCount) || 1,
+                transparency: options.transparency || 'auto',
                 createdAt: new Date().toISOString()
             });
             pending = pendingTasks.get(requestId) || null;

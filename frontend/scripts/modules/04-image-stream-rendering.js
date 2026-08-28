@@ -846,7 +846,7 @@
                     const card = document.createElement(completed ? 'button' : 'div');
                     if (completed) card.type = 'button';
                     const reasoningMode = normalizeImageReasoningMode(set.reasoningMode);
-                    card.className = `image-generation-item is-${item.status} mode-${reasoningMode}${set.history ? ' is-history' : ''}`;
+                    card.className = `image-generation-item is-${item.status} mode-${reasoningMode}${set.history ? ' is-history' : ''}${set.transparency === 'transparent' ? ' is-transparency-preview' : ''}`;
                     card.dataset.itemIndex = String(item.itemIndex);
                     card.dataset.reasoningMode = reasoningMode;
                     applyImageGenerationItemAspectRatio(card, item);
@@ -900,7 +900,7 @@
                     const overlay = document.createElement('span');
                     if (item.status === 'completed') {
                         overlay.textContent = '查看图片';
-                        card.addEventListener('click', () => openImageResultModal(item.result, set.setId, item.itemIndex));
+                        card.addEventListener('click', () => openImageResultModal({ ...item.result, transparency: set.transparency }, set.setId, item.itemIndex));
                         card.addEventListener('contextmenu', event => {
                             event.preventDefault();
                             void copyGeneratedImage(item.result);

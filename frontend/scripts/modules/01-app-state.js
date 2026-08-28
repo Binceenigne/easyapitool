@@ -44,6 +44,7 @@
             activeRequests: new Map(),
             batchSelectionMode: false,
             aspectRatio: 'auto',
+            transparency: 'auto',
             quality: 'auto',
             outputPreset: 'lossless',
             imageCount: 1,

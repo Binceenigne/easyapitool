@@ -20,7 +20,7 @@ from PIL import Image
 from .client import EasyClinClient
 from .common import APP_NAME, DEFAULT_BASE_URL
 from .headless import HeadlessController, MemoryCredentialStore
-from .image_editor import ImageGenerationService, image_preview_bytes
+from .image_editor import ImageGenerationService, image_file_suffix, image_preview_bytes
 from .usage import parse_timestamp, safe_float
 from .web_search import WebSearchService
 
@@ -603,11 +603,12 @@ class HeadlessService:
         directory = self.upload_root / owner
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{file_id}{suffix}"
-        preview_path = directory / f"{file_id}-preview.jpg"
+        preview_bytes = image_preview_bytes(body)
+        preview_path = directory / f"{file_id}-preview{image_file_suffix(preview_bytes)}"
         path.write_bytes(body)
-        preview_path.write_bytes(image_preview_bytes(body))
+        preview_path.write_bytes(preview_bytes)
         original = self._register_file_resource(owner, path, content_type, "ref")
-        preview = self._register_file_resource(owner, preview_path, "image/jpeg", "preview")
+        preview = self._register_file_resource(owner, preview_path, None, "preview")
         if original is None or preview is None:
             raise RuntimeError("无法登记临时图片资源")
         return {
@@ -618,6 +619,7 @@ class HeadlessService:
             "sizeBytes": len(body),
             "downloadUrl": self._resource_url(original.resource_id),
             "previewUrl": self._resource_url(preview.resource_id),
+            "previewMimeType": preview.content_type,
         }
 
     def resource(self, owner: str, resource_id: str) -> ResourceRecord:
@@ -652,7 +654,7 @@ class HeadlessService:
                     continue
                 if key == "previewPath":
                     preview = self._register_file_resource(
-                        owner, Path(str(item)), "image/jpeg", "preview"
+                        owner, Path(str(item)), None, "preview"
                     )
                     continue
                 if key in {"uri", "previewUri", "dataUrl"}:
@@ -664,6 +666,7 @@ class HeadlessService:
             if preview is not None:
                 clean["previewResourceId"] = preview.resource_id
                 clean["previewUrl"] = self._resource_url(preview.resource_id)
+                clean["previewMimeType"] = preview.content_type
             return clean
         if isinstance(value, list):
             return [self._sanitize_payload(item, owner) for item in value]
