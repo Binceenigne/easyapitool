@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API_TOOLS Benchmark</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --ink: #e8f1f2;
+            --muted: #91a8b4;
+            --subtle: #647b88;
+            --line: rgba(151, 187, 195, 0.18);
+            --surface: rgba(13, 30, 43, 0.92);
+            --surface-strong: #10283a;
+            --background: #06121d;
+            --cyan: #6ee7d4;
+            --blue: #73b8ff;
+            --violet: #b6a4ff;
+            --amber: #ffc875;
+            --red: #ff8e8e;
+            --green: #7be3a7;
+            font-family: "Aptos", "Segoe UI Variable", "Microsoft YaHei UI", sans-serif;
+        }
+
+        * { box-sizing: border-box; }
+        html, body { min-height: 100%; }
+        body {
+            margin: 0;
+            color: var(--ink);
+            background:
+                linear-gradient(135deg, rgba(45, 101, 116, 0.14), transparent 32%),
+                linear-gradient(315deg, rgba(76, 57, 128, 0.1), transparent 36%),
+                var(--background);
+            letter-spacing: 0;
+        }
+
+        button, input, textarea, select { font: inherit; }
+        button { cursor: pointer; }
+        button:disabled { cursor: not-allowed; opacity: 0.45; }
+
+        .shell {
+            width: min(1800px, 100%);
+            margin: 0 auto;
+            padding: 28px clamp(18px, 3vw, 52px) 48px;
+        }
+
+        .topbar {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 28px;
+            margin-bottom: 22px;
+        }
+
+        .eyebrow {
+            color: var(--cyan);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+        }
+
+        h1 {
+            margin: 7px 0 0;
+            font-size: clamp(28px, 3vw, 46px);
+            line-height: 1;
+            font-weight: 720;
+        }
+
+        .topbar-copy { max-width: 780px; }
+        .topbar-copy p {
+            margin: 12px 0 0;
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.55;
+        }
+
+        .run-summary {
+            min-width: 210px;
+            padding: 14px 16px;
+            border: 1px solid var(--line);
+            background: rgba(11, 27, 39, 0.72);
+        }
+
+        .run-summary strong {
+            display: block;
+            color: var(--cyan);
+            font-size: 22px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .run-summary span {
+            display: block;
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .control-panel {
+            display: grid;
+            grid-template-columns: minmax(0, 2.2fr) minmax(320px, 1fr);
+            gap: 18px;
+            padding: 18px;
+            border: 1px solid var(--line);
+            background: var(--surface);
+            box-shadow: 0 18px 50px rgba(0, 0, 0, 0.18);
+        }
+
+        .field { min-width: 0; }
+        .field label {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 7px;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        textarea, input, select {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 4px;
+            color: var(--ink);
+            background: rgba(4, 16, 26, 0.8);
+            outline: none;
+            transition: border-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        textarea {
+            min-height: 112px;
+            resize: vertical;
+            padding: 13px 14px;
+            line-height: 1.55;
+        }
+
+        input, select { height: 40px; padding: 0 11px; }
+        textarea:focus, input:focus, select:focus {
+            border-color: rgba(110, 231, 212, 0.8);
+            box-shadow: 0 0 0 3px rgba(110, 231, 212, 0.12);
+        }
+
+        .control-side { display: grid; align-content: start; gap: 14px; }
+        .control-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .control-row.three { grid-template-columns: repeat(3, 1fr); }
+        .control-actions { display: flex; align-items: center; gap: 10px; }
+
+        .primary-button, .ghost-button {
+            min-height: 40px;
+            border-radius: 4px;
+            padding: 0 14px;
+            font-weight: 700;
+        }
+
+        .primary-button {
+            flex: 1;
+            border: 1px solid rgba(110, 231, 212, 0.8);
+            color: #05201f;
+            background: var(--cyan);
+        }
+
+        .ghost-button {
+            border: 1px solid var(--line);
+            color: var(--muted);
+            background: transparent;
+        }
+
+        .toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 40px;
+            padding: 0 11px;
+            border: 1px solid var(--line);
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .toggle input { width: auto; height: auto; accent-color: var(--cyan); }
+        .status-line { min-height: 18px; color: var(--muted); font-size: 12px; }
+        .status-line[data-tone="error"] { color: var(--red); }
+        .status-line[data-tone="good"] { color: var(--green); }
+
+        .grid-heading {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            margin: 30px 0 12px;
+        }
+
+        .grid-heading h2 { margin: 0; font-size: 16px; font-weight: 700; }
+        .grid-heading span { color: var(--subtle); font-size: 12px; }
+
+        .benchmark-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .mode-card {
+            --mode-color: var(--blue);
+            display: grid;
+            grid-template-rows: auto auto minmax(180px, 240px) auto auto auto;
+            min-width: 0;
+            overflow: hidden;
+            border: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(17, 39, 55, 0.97), rgba(9, 24, 36, 0.96));
+        }
+
+        .mode-card[data-mode="instant"] { --mode-color: #a6b8c4; }
+        .mode-card[data-mode="flash"] { --mode-color: var(--blue); }
+        .mode-card[data-mode="medium"] { --mode-color: var(--cyan); }
+        .mode-card[data-mode="high"] { --mode-color: #a999ff; }
+        .mode-card[data-mode="extra"] { --mode-color: #d59dff; }
+        .mode-card[data-mode="max"] { --mode-color: var(--amber); }
+        .mode-card[data-status="running"] { border-color: color-mix(in srgb, var(--mode-color) 62%, var(--line)); }
+        .mode-card[data-status="completed"] { border-color: color-mix(in srgb, var(--green) 48%, var(--line)); }
+        .mode-card[data-status="failed"] { border-color: color-mix(in srgb, var(--red) 62%, var(--line)); }
+
+        .mode-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 15px 16px 10px;
+        }
+
+        .mode-title { display: flex; align-items: center; gap: 9px; }
+        .mode-mark {
+            width: 9px;
+            height: 9px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            background: var(--mode-color);
+            box-shadow: 0 0 16px color-mix(in srgb, var(--mode-color) 76%, transparent);
+        }
+
+        .mode-title h3 { margin: 0; font-size: 19px; font-weight: 720; }
+        .mode-title small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+        .mode-status {
+            color: var(--mode-color);
+            font-size: 11px;
+            font-weight: 700;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .mode-progress {
+            height: 3px;
+            margin: 0 16px 10px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .mode-progress i {
+            display: block;
+            width: 0;
+            height: 100%;
+            background: var(--mode-color);
+            transition: width 240ms ease;
+        }
+
+        .mode-card[data-status="running"] .mode-progress i {
+            width: 66%;
+            animation: progressSweep 1.5s ease-in-out infinite alternate;
+        }
+
+        @keyframes progressSweep { from { transform: translateX(-20%); } to { transform: translateX(72%); } }
+
+        .image-stage {
+            position: relative;
+            display: grid;
+            place-items: center;
+            min-height: 180px;
+            margin: 0 16px;
+            overflow: hidden;
+            border: 1px solid rgba(151, 187, 195, 0.12);
+            background:
+                linear-gradient(45deg, rgba(255,255,255,0.035) 25%, transparent 25%),
+                linear-gradient(-45deg, rgba(255,255,255,0.035) 25%, transparent 25%),
+                #081722;
+            background-size: 18px 18px;
+            background-position: 0 0, 9px 9px;
+        }
+
+        .image-stage img { display: block; width: 100%; height: 100%; cursor: zoom-in; object-fit: contain; }
+        .image-placeholder { padding: 18px; color: var(--subtle); font-size: 12px; text-align: center; }
+        .image-caption {
+            position: absolute;
+            right: 8px;
+            bottom: 8px;
+            padding: 4px 6px;
+            color: var(--ink);
+            background: rgba(3, 12, 19, 0.78);
+            font-size: 10px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
+            padding: 12px 16px 10px;
+        }
+
+        .stat { min-width: 0; }
+        .stat span { display: block; color: var(--subtle); font-size: 10px; }
+        .stat strong {
+            display: block;
+            overflow: hidden;
+            margin-top: 3px;
+            color: var(--ink);
+            font-size: 12px;
+            font-variant-numeric: tabular-nums;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .usage-line {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 12px;
+            padding: 0 16px 10px;
+            color: var(--muted);
+            font-size: 10px;
+            line-height: 1.45;
+        }
+
+        .usage-line b { color: var(--ink); font-weight: 650; }
+        .details {
+            border-top: 1px solid rgba(151, 187, 195, 0.12);
+            padding: 10px 16px 14px;
+        }
+
+        details + details { margin-top: 8px; }
+        summary { cursor: pointer; color: var(--muted); font-size: 11px; font-weight: 700; }
+        summary::marker { color: var(--mode-color); }
+        .summary-text, .prompt-text {
+            max-height: 145px;
+            overflow: auto;
+            margin: 8px 0 0;
+            color: #c7d7da;
+            font-size: 11px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .turn-list { display: grid; gap: 6px; margin-top: 8px; max-height: 145px; overflow: auto; }
+        .turn-item { padding-left: 9px; border-left: 2px solid color-mix(in srgb, var(--mode-color) 65%, transparent); }
+        .turn-item header { display: flex; justify-content: space-between; gap: 8px; color: var(--mode-color); font-size: 10px; }
+        .turn-item p { margin: 3px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; white-space: pre-wrap; }
+        .tool-list { margin-top: 3px; color: var(--subtle); font-size: 10px; }
+
+        .reference-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+        .reference-list figure { margin: 0; min-width: 0; }
+        .reference-list img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border: 1px solid var(--line); }
+        .reference-list figcaption { overflow: hidden; margin-top: 3px; color: var(--subtle); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+        .image-actions { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 6px; }
+        .image-actions button { border: 1px solid rgba(255,255,255,0.25); border-radius: 3px; padding: 4px 7px; color: var(--ink); background: rgba(3,12,19,0.78); font-size: 10px; }
+        .image-stage img, .reference-list img { cursor: zoom-in; }
+        .image-viewer[hidden] { display: none; }
+        .image-viewer { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 72px 32px 54px; background: rgba(1, 7, 12, 0.94); }
+        .image-viewer img { display: block; max-width: min(94vw, 1600px); max-height: 82vh; object-fit: contain; box-shadow: 0 20px 80px rgba(0, 0, 0, 0.5); transform: scale(1); transform-origin: center; transition: transform 140ms ease; }
+        .image-viewer-toolbar { position: fixed; top: 18px; left: 50%; display: flex; align-items: center; gap: 6px; transform: translateX(-50%); }
+        .image-viewer-toolbar button, .image-viewer-close { border: 1px solid rgba(255,255,255,0.35); border-radius: 4px; min-width: 34px; padding: 7px 10px; color: var(--ink); background: rgba(3,12,19,0.9); cursor: pointer; }
+        .image-viewer-close { position: fixed; top: 18px; right: 22px; }
+        .image-viewer-toolbar button:hover, .image-viewer-close:hover { border-color: var(--cyan); background: rgba(12, 35, 49, 0.96); }
+        .image-viewer-caption { position: fixed; left: 24px; bottom: 18px; max-width: calc(100vw - 48px); color: var(--muted); font-size: 12px; }
+        @media (max-width: 1180px) {
+            .control-panel { grid-template-columns: 1fr; }
+            .benchmark-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+
+        @media (max-width: 720px) {
+            .shell { padding: 18px 12px 30px; }
+            .topbar { display: block; }
+            .run-summary { margin-top: 16px; }
+            .control-row, .control-row.three { grid-template-columns: 1fr; }
+            .benchmark-grid { grid-template-columns: 1fr; }
+            .mode-card { grid-template-rows: auto auto minmax(220px, 280px) auto auto auto; }
+        }
+    </style>
+</head>
+<body>
+    <main class="shell" id="benchmarkApp">
+        <header class="topbar">
+            <div class="topbar-copy">
+                <div class="eyebrow">API_TOOLS / EXPERIMENTAL LAB</div>
+                <h1>Reasoning Benchmark</h1>
+                <p>同一提示词并行经过六档思维深度。实时观察方案形成、工具调用、图片输出与可归因的调用统计。</p>
+            </div>
+            <div class="run-summary">
+                <strong id="runSummaryValue">待运行</strong>
+                <span id="runSummaryText">等待输入提示词</span>
+            </div>
+        </header>
+
+        <section class="control-panel" aria-label="Benchmark controls">
+            <div class="field">
+                <label for="promptInput"><span>提示词</span><span id="promptCount">0 / 32000</span></label>
+                <textarea id="promptInput" maxlength="32000" placeholder="输入要比较的图片任务，例如：为一家未来主义茶馆设计一张横向品牌主视觉……"></textarea>
+                <div class="field" style="margin-top: 12px;">
+                    <label for="referencePaths"><span>参考图片路径，可选</span><span>每行一个</span></label>
+                    <textarea id="referencePaths" rows="3" placeholder="C:\\Images\\reference.png"></textarea>
+                </div>
+            </div>
+            <div class="control-side">
+                <div class="field">
+                    <label for="keySelect"><span>API Key</span><span id="keyStatus">读取中</span></label>
+                    <select id="keySelect"><option value="">正在读取可用 Key…</option></select>
+                </div>
+                <div class="control-row three">
+                    <div class="field">
+                        <label for="sizeSelect">尺寸</label>
+                        <select id="sizeSelect">
+                            <option value="auto">自动</option>
+                            <option value="1024x1024">1:1</option>
+                            <option value="1536x1024">3:2 横向</option>
+                            <option value="1024x1536">2:3 纵向</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="qualitySelect">质量</label>
+                        <select id="qualitySelect">
+                            <option value="auto">自动</option>
+                            <option value="low">低</option>
+                            <option value="medium">中</option>
+                            <option value="high">高</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="outputSelect">输出</label>
+                        <select id="outputSelect">
+                            <option value="lossless">PNG 无损</option>
+                            <option value="large">JPEG 大</option>
+                            <option value="medium">JPEG 中</option>
+                            <option value="small">JPEG 小</option>
+                        </select>
+                    </div>
+                </div>
+                <label class="toggle"><input id="webSearchToggle" type="checkbox" checked>允许需要时进行网络与视觉检索</label>
+                <div class="control-actions">
+                    <button class="primary-button" id="runButton" type="button" disabled>运行六档 Benchmark</button>
+                    <button class="ghost-button" id="clearButton" type="button">清空</button>
+                </div>
+                <div class="status-line" id="statusLine">准备中…</div>
+            </div>
+        </section>
+
+        <div class="grid-heading">
+            <h2>六档结果</h2>
+            <span>Instant · Flash · Medium · High · Extra · Max</span>
+        </div>
+        <section class="benchmark-grid" id="benchmarkGrid" aria-live="polite"></section>
+    </main>
+    <div class="image-viewer" id="imageViewer" hidden role="dialog" aria-modal="true" aria-label="原图预览">
+        <div class="image-viewer-toolbar" role="toolbar" aria-label="图片操作">
+            <button id="imageViewerZoomOut" type="button" title="缩小">−</button>
+            <button id="imageViewerZoomReset" type="button" title="重置缩放">100%</button>
+            <button id="imageViewerZoomIn" type="button" title="放大">+</button>
+            <button id="imageViewerDownload" type="button" title="下载原图">下载</button>
+        </div>
+        <button class="image-viewer-close" id="imageViewerClose" type="button">关闭</button>
+        <img id="imageViewerImage" alt="原图预览">
+        <div class="image-viewer-caption" id="imageViewerCaption"></div>
+    </div>
+
+    <script>
+        const MODES = [
+            ['instant', 'Instant'],
+            ['flash', 'Flash'],
+            ['medium', 'Medium'],
+            ['high', 'High'],
+            ['extra', 'Extra'],
+            ['max', 'Max']
+        ];
+        const state = {
+            running: false,
+            benchmarkId: '',
+            prompt: '',
+            cards: new Map(),
+            keys: []
+        };
+
+        const $ = id => document.getElementById(id);
+        const escapeText = value => String(value ?? '');
+        const formatNumber = value => Number(value || 0).toLocaleString('en-US');
+        const formatCost = card => card.usage?.hasCost ? `$${Number(card.usage.costUsd || 0).toFixed(6)}` : '未返回';
+        const formatElapsed = milliseconds => {
+            const seconds = Math.max(0, Number(milliseconds || 0)) / 1000;
+            return seconds < 60 ? `${seconds.toFixed(1)}s` : `${Math.floor(seconds / 60)}m ${(seconds % 60).toFixed(0)}s`;
+        };
+
+        function blankCard(mode, label) {
+            return {
+                mode, label, status: 'idle', statusText: '等待运行', startedAt: 0, elapsedMs: 0,
+                model: '', effort: '', image: null, partials: 0, turns: [], tools: [], summary: '',
+                finalPrompt: '', references: [], reasoningUsage: {}, imageUsage: {}, usage: {}, error: ''
+            };
+        }
+
+        function resetCards() {
+            state.cards = new Map(MODES.map(([mode, label]) => [mode, blankCard(mode, label)]));
+            renderCards();
+        }
+
+        function cardFor(mode) {
+            const clean = String(mode || 'instant').toLowerCase();
+            if (!state.cards.has(clean)) state.cards.set(clean, blankCard(clean, clean));
+            return state.cards.get(clean);
+        }
+
+        function setStatus(text, tone = '') {
+            const element = $('statusLine');
+            element.textContent = text;
+            element.dataset.tone = tone;
+        }
+
+        function statusLabel(card) {
+            if (card.status === 'running') return card.statusText || '运行中';
+            if (card.status === 'completed') return card.error ? '部分失败' : '完成';
+            if (card.status === 'failed') return '失败';
+            return card.statusText || '等待运行';
+        }
+
+        function updateCardFromResult(card, result) {
+            if (!result || typeof result !== 'object') return;
+            card.status = result.ok ? 'completed' : 'failed';
+            card.statusText = result.ok ? '完成' : '失败';
+            card.elapsedMs = Number(result.elapsedMs || card.elapsedMs || 0);
+            card.model = result.reasoningModel || card.model;
+            card.effort = result.reasoningEffort || card.effort;
+            card.reasoningUsage = result.reasoningUsage || card.reasoningUsage;
+            card.imageUsage = result.imageUsage || card.imageUsage;
+            card.usage = result.usage || card.usage;
+            card.finalPrompt = result.finalPrompt || result.prompt || card.finalPrompt;
+            card.summary = result.reasoningSummary || card.summary;
+            card.references = Array.isArray(result.webReferences) ? result.webReferences : card.references;
+            card.error = result.error || '';
+            const item = (result.items || []).find(item => item?.ok) || result.items?.[0];
+            if (item) {
+                card.image = {
+                    uri: item.previewUri || item.uri || '',
+                    path: item.path || item.savedPath || '',
+                    width: item.width || 0,
+                    height: item.height || 0,
+                    label: item.actualSize || ''
+                };
+            }
+        }
+
+        function ensureTurn(card, turnNumber) {
+            const number = Number(turnNumber) || 1;
+            let turn = card.turns.find(item => item.turn === number);
+            if (!turn) {
+                turn = { turn: number, title: `第 ${number} 轮`, text: '', status: 'running', tools: [] };
+                card.turns.push(turn);
+                card.turns.sort((left, right) => left.turn - right.turn);
+            }
+            return turn;
+        }
+
+        function applyEvent(event) {
+            if (!event || typeof event !== 'object') return;
+            if (event.type === 'benchmark_started') {
+                state.benchmarkId = event.benchmarkId || state.benchmarkId;
+                state.prompt = event.prompt || state.prompt;
+                state.running = true;
+                $('runSummaryValue').textContent = '运行中';
+                $('runSummaryText').textContent = '六个模式正在并行调用';
+                setStatus('六档任务已启动，事件会按到达顺序实时刷新。');
+                resetCards();
+                return;
+            }
+            const mode = event.benchmarkMode || event.mode;
+            if (!mode) {
+                if (event.type === 'benchmark_completed') {
+                    state.running = false;
+                    const successful = Number(event.successful || 0);
+                    $('runSummaryValue').textContent = `${successful} / 6`;
+                    $('runSummaryText').textContent = '模式已完成';
+                    setStatus(`Benchmark 完成：${successful} 个模式返回可用结果。`, successful ? 'good' : 'error');
+                    renderCards();
+                }
+                return;
+            }
+            const card = cardFor(mode);
+            if (event.type === 'react_started') {
+                card.status = 'running';
+                card.statusText = '思考中';
+                card.startedAt ||= performance.now();
+                card.model = event.model || card.model;
+                card.effort = event.reasoningEffort || card.effort;
+            } else if (event.type === 'react_turn_started') {
+                card.status = 'running';
+                card.statusText = `思考第 ${event.turn || 1} 轮`;
+                ensureTurn(card, event.turn).title = event.title || ensureTurn(card, event.turn).title;
+            } else if (event.type === 'react_turn_delta') {
+                ensureTurn(card, event.turn).text += event.delta || '';
+            } else if (event.type === 'react_turn_completed') {
+                const turn = ensureTurn(card, event.turn);
+                turn.status = 'completed';
+                turn.title = event.title || turn.title;
+                turn.text = event.text || turn.text;
+            } else if (event.type === 'react_tool_started') {
+                const turn = ensureTurn(card, event.turn);
+                turn.tools.push({ name: event.tool || 'tool', status: 'running' });
+                card.statusText = `调用 ${event.tool || '工具'}`;
+            } else if (event.type === 'react_tool_completed' || event.type === 'react_tool_failed') {
+                const turn = ensureTurn(card, event.turn);
+                const tool = [...turn.tools].reverse().find(item => item.name === (event.tool || item.name) && item.status === 'running') || turn.tools[turn.tools.length - 1];
+                if (tool) tool.status = event.type === 'react_tool_failed' ? 'failed' : 'completed';
+            } else if (event.type === 'react_visual_results') {
+                card.statusText = `收到 ${Number(event.resultCount || 0)} 个视觉候选`;
+            } else if (event.type === 'react_visual_selected') {
+                card.statusText = `采用 ${Number(event.selectedCount || 0)} 张参考图`;
+            } else if (event.type === 'react_usage') {
+                card.reasoningUsage = event.reasoningUsage || card.reasoningUsage;
+            } else if (event.type === 'react_completed') {
+                card.status = 'running';
+                card.statusText = '开始生成图片';
+                card.model = event.model || card.model;
+                card.effort = event.reasoningEffort || card.effort;
+                card.summary = event.summary || card.summary;
+                card.finalPrompt = event.prompt || card.finalPrompt;
+                card.reasoningUsage = event.reasoningUsage || card.reasoningUsage;
+            } else if (event.type === 'set_started') {
+                card.status = 'running';
+                card.statusText = '生成图片';
+                card.startedAt ||= performance.now();
+                card.model = event.reasoningModel || card.model;
+                card.effort = event.reasoningEffort || card.effort;
+                card.finalPrompt = event.finalPrompt || event.prompt || card.finalPrompt;
+                card.summary = event.reasoningSummary || card.summary;
+                card.references = Array.isArray(event.webReferences) ? event.webReferences : card.references;
+            } else if (event.type === 'item_started') {
+                card.status = 'running';
+                card.statusText = '生成图片';
+            } else if (event.type === 'item_partial') {
+                card.status = 'running';
+                card.statusText = `过程图 ${event.partialIndex || 1}`;
+                card.partials = Math.max(card.partials, Number(event.partialIndex || 0));
+                card.image = { uri: event.previewUri || event.uri || '', path: event.path || '', width: event.width || 0, height: event.height || 0, label: '过程预览' };
+            } else if (event.type === 'item_completed') {
+                const result = event.result || {};
+                card.image = { uri: result.previewUri || result.uri || '', path: result.path || result.savedPath || '', width: result.width || 0, height: result.height || 0, label: result.actualSize || '' };
+                card.statusText = '整理结果';
+            } else if (event.type === 'benchmark_usage') {
+                card.reasoningUsage = event.reasoningUsage || card.reasoningUsage;
+                card.imageUsage = event.imageUsage || card.imageUsage;
+                card.usage = event.usage || card.usage;
+                card.finalPrompt = event.finalPrompt || card.finalPrompt;
+                card.references = Array.isArray(event.webReferences) ? event.webReferences : card.references;
+            } else if (event.type === 'set_completed') {
+                card.statusText = '完成';
+                const item = (event.items || []).find(item => item?.ok);
+                if (item) card.image = { uri: item.previewUri || item.uri || '', path: item.path || item.savedPath || '', width: item.width || 0, height: item.height || 0, label: item.actualSize || '' };
+            } else if (event.type === 'benchmark_mode_completed') {
+                updateCardFromResult(card, event.result);
+            }
+            renderCards();
+        }
+
+        function renderImage(card) {
+            if (!card.image?.uri) return '<div class="image-placeholder">等待图片事件</div>';
+            const caption = card.image.label ? `<span class="image-caption">${escapeText(card.image.label)}</span>` : '';
+            const action = card.image.path ? '<div class="image-actions"><button type="button" data-load-original="' + encodeURIComponent(card.image.path) + '">加载原图</button></div>' : '';
+            return `<img src="${card.image.uri}" data-open-image="${encodeURIComponent(card.image.uri)}" alt="${escapeText(card.label)} 输出"><span class="image-caption">${card.partials ? `过程 ${card.partials}` : escapeText(card.image.label || '预览')}</span>${action}`;
+        }
+
+        function renderTurns(card) {
+            if (!card.turns.length && !card.summary) return '<div class="summary-text">尚未收到思考事件。</div>';
+            const turns = card.turns.map(turn => {
+                const tools = turn.tools.length ? `<div class="tool-list">${turn.tools.map(tool => `${escapeText(tool.name)} · ${tool.status}`).join('　')}</div>` : '';
+                return `<div class="turn-item"><header><span>第 ${turn.turn} 轮 · ${escapeText(turn.title)}</span><span>${turn.status === 'completed' ? '完成' : '进行中'}</span></header><p>${escapeText(turn.text || '等待摘要…')}</p>${tools}</div>`;
+            }).join('');
+            return `<div class="turn-list">${turns || `<div class="summary-text">${escapeText(card.summary)}</div>`}</div>`;
+        }
+
+        function renderReferences(card) {
+            if (!card.references?.length) return '<div class="summary-text">本轮未采用网络参考图。</div>';
+            return `<div class="reference-list">${card.references.map(reference => {
+                const uri = reference.previewUri || reference.uri || '';
+                return `<figure><img src="${uri}" data-open-image="${encodeURIComponent(uri)}" alt="${escapeText(reference.title || '参考图')}"><figcaption>${escapeText(reference.title || reference.provider || '参考图')}</figcaption></figure>`;
+            }).join('')}</div>`;
+        }
+
+        function renderCard(card) {
+            const usage = card.usage || {};
+            const reasoning = card.reasoningUsage || {};
+            const image = card.imageUsage || {};
+            const elapsed = card.status === 'running' && card.startedAt ? performance.now() - card.startedAt : card.elapsedMs;
+            const progress = card.status === 'completed' ? 100 : card.status === 'running' ? 66 : 0;
+            return `<article class="mode-card" data-mode="${card.mode}" data-status="${card.status}">
+                <header class="mode-header"><div class="mode-title"><i class="mode-mark"></i><div><h3>${escapeText(card.label)}</h3><small>${escapeText(card.model || '模型待返回')} · ${escapeText(card.effort || 'direct')}</small></div></div><div class="mode-status">${escapeText(statusLabel(card))}<br><span>${formatElapsed(elapsed)}</span></div></header>
+                <div class="mode-progress"><i style="width:${progress}%"></i></div>
+                <div class="image-stage">${renderImage(card)}</div>
+                <div class="stats"><div class="stat"><span>总 Token</span><strong>${formatNumber(usage.totalTokens)}</strong></div><div class="stat"><span>输入 / 输出</span><strong>${formatNumber(usage.inputTokens)} / ${formatNumber(usage.outputTokens)}</strong></div><div class="stat"><span>总费用</span><strong>${formatCost(card)}</strong></div><div class="stat"><span>耗时</span><strong>${formatElapsed(elapsed)}</strong></div></div>
+                <div class="usage-line"><span>调用 <b>${formatNumber(usage.callCount)}</b></span><span>已计费 <b>${formatNumber(usage.costedCallCount)}</b></span><span>估算 <b>${formatNumber(usage.estimatedCallCount)}</b></span><span>依据 <b>${escapeText(usage.callCountBasis || '每个 API 请求')}</b></span></div>
+                <div class="details"><details open><summary>实时思考与工具调用</summary>${renderTurns(card)}</details><details><summary>最终提示词</summary><div class="prompt-text">${escapeText(card.finalPrompt || '尚未返回')}</div></details><details><summary>最终参考图 (${card.references?.length || 0})</summary>${renderReferences(card)}</details>${card.error ? `<div class="summary-text" style="color:var(--red)">${escapeText(card.error)}</div>` : ''}</div>
+            </article>`;
+        }
+
+        function renderCards() {
+            $('benchmarkGrid').innerHTML = MODES.map(([mode]) => renderCard(cardFor(mode))).join('');
+            $('benchmarkGrid').querySelectorAll('[data-open-image]').forEach(image => {
+                image.addEventListener('click', () => openImageViewer(decodeURIComponent(image.dataset.openImage || ''), image.alt));
+            });
+            $('benchmarkGrid').querySelectorAll('[data-load-original]').forEach(button => {
+                button.addEventListener('click', async () => {
+                    const path = decodeURIComponent(button.dataset.loadOriginal || '');
+                    try {
+                        const result = await window.pywebview.api.load_generated_image(path);
+                        if (result?.ok && result.dataUrl) {
+                            const image = button.closest('.image-stage')?.querySelector('img');
+                            if (image) image.src = result.dataUrl;
+                            openImageViewer(result.dataUrl, '原图预览');
+                        } else {
+                            setStatus(result?.error || '原图加载失败', 'error');
+                        }
+                    } catch (error) {
+                        setStatus(error.message || String(error), 'error');
+                    }
+                });
+            });
+        }
+
+        let imageViewerSource = '';
+        let imageViewerZoom = 1;
+
+        function renderImageViewerZoom() {
+            $('imageViewerImage').style.transform = `scale(${imageViewerZoom})`;
+            $('imageViewerZoomReset').textContent = `${Math.round(imageViewerZoom * 100)}%`;
+        }
+
+        function openImageViewer(source, caption = '') {
+            if (!source) return;
+            imageViewerSource = source;
+            imageViewerZoom = 1;
+            $('imageViewerImage').src = source;
+            $('imageViewerCaption').textContent = caption;
+            $('imageViewer').hidden = false;
+            renderImageViewerZoom();
+        }
+
+        function closeImageViewer() {
+            $('imageViewer').hidden = true;
+            $('imageViewerImage').removeAttribute('src');
+            imageViewerSource = '';
+        }
+
+        function changeImageViewerZoom(delta) {
+            imageViewerZoom = Math.max(0.5, Math.min(3, imageViewerZoom + delta));
+            renderImageViewerZoom();
+        }
+
+        function downloadImageViewerSource() {
+            if (!imageViewerSource) return;
+            const link = document.createElement('a');
+            link.href = imageViewerSource;
+            link.download = 'api-tools-original.png';
+            link.click();
+        }
+
+        async function loadKeys() {
+            try {
+                const stateResult = await window.pywebview.api.get_state();
+                state.keys = Array.isArray(stateResult?.keys) ? stateResult.keys : [];
+                const select = $('keySelect');
+                select.replaceChildren();
+                state.keys.forEach(key => {
+                    const option = document.createElement('option');
+                    option.value = key.id || '';
+                    option.textContent = `${key.name || '未命名'} · ${key.status || 'unknown'}`;
+                    select.append(option);
+                });
+                $('keyStatus').textContent = state.keys.length ? `${state.keys.length} 个可用` : '没有 Key';
+                $('runButton').disabled = !state.keys.length;
+                setStatus(state.keys.length ? '准备就绪。六档并发会产生真实 API 调用。' : '请先在主窗口添加有效 API Key。', state.keys.length ? '' : 'error');
+            } catch (error) {
+                $('keyStatus').textContent = '读取失败';
+                setStatus(error.message || String(error), 'error');
+            }
+        }
+
+        async function runBenchmark() {
+            if (state.running) return;
+            const prompt = $('promptInput').value.trim();
+            const keyId = $('keySelect').value;
+            if (!prompt) return setStatus('请输入提示词。', 'error');
+            if (!keyId) return setStatus('请选择有效 API Key。', 'error');
+            const benchmarkId = globalThis.crypto?.randomUUID?.() || `benchmark-${Date.now()}`;
+            const imagePaths = $('referencePaths').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean).slice(0, 16);
+            state.running = true;
+            $('runButton').disabled = true;
+            setStatus('正在启动六档并发调用…');
+            try {
+                const result = await window.pywebview.api.benchmark_run(keyId, prompt, imagePaths, {
+                    benchmarkId,
+                    size: $('sizeSelect').value,
+                    quality: $('qualitySelect').value,
+                    outputPreset: $('outputSelect').value,
+                    webSearchEnabled: $('webSearchToggle').checked
+                });
+                if (result?.results) {
+                    result.results.forEach(item => updateCardFromResult(cardFor(item.benchmarkMode), item));
+                    renderCards();
+                }
+                state.running = false;
+                $('runButton').disabled = false;
+            } catch (error) {
+                state.running = false;
+                $('runButton').disabled = false;
+                setStatus(error.message || String(error), 'error');
+            }
+        }
+
+        $('promptInput').addEventListener('input', () => { $('promptCount').textContent = `${$('promptInput').value.length.toLocaleString('en-US')} / 32000`; });
+        $('runButton').addEventListener('click', runBenchmark);
+        $('imageViewerClose').addEventListener('click', closeImageViewer);
+        $('imageViewerZoomOut').addEventListener('click', () => changeImageViewerZoom(-0.25));
+        $('imageViewerZoomIn').addEventListener('click', () => changeImageViewerZoom(0.25));
+        $('imageViewerZoomReset').addEventListener('click', () => { imageViewerZoom = 1; renderImageViewerZoom(); });
+        $('imageViewerDownload').addEventListener('click', downloadImageViewerSource);
+        $('imageViewer').addEventListener('click', event => {
+            if (event.target === $('imageViewer')) closeImageViewer();
+        });
+        document.addEventListener('keydown', event => {
+            if ($('imageViewer').hidden) return;
+            if (event.key === 'Escape') closeImageViewer();
+            if (event.key === '+' || event.key === '=') changeImageViewerZoom(0.25);
+            if (event.key === '-') changeImageViewerZoom(-0.25);
+            if (event.key === '0') { imageViewerZoom = 1; renderImageViewerZoom(); }
+        });
+        $('clearButton').addEventListener('click', () => { $('promptInput').value = ''; $('referencePaths').value = ''; $('promptCount').textContent = '0 / 32000'; resetCards(); setStatus('已清空。'); });
+        window.applyBenchmarkEvent = applyEvent;
+        resetCards();
+        const initialize = () => void loadKeys();
+        if (window.pywebview?.api) initialize();
+        window.addEventListener('pywebviewready', initialize, { once: true });
+        window.setInterval(() => { if (state.running) renderCards(); }, 350);
+    </script>
+</body>
+</html>

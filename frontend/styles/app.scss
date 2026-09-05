@@ -1,0 +1,43 @@
+@use "modules/settings";
+@use "modules/base";
+@use "modules/native-frame";
+@use "modules/key-toolbar";
+@use "modules/key-form";
+@use "modules/image-workspace";
+@use "modules/quota-dashboard";
+@use "modules/usage-metrics";
+@use "modules/settings-panel";
+@use "modules/modals-motion";
+@use "modules/chrome-typography";
+@use "modules/responsive";
+
+@property --adv-h {
+	syntax: "<number>";
+	inherits: true;
+	initial-value: 199;
+}
+@property --adv-s {
+	syntax: "<percentage>";
+	inherits: true;
+	initial-value: 88%;
+}
+@property --adv-l {
+	syntax: "<percentage>";
+	inherits: true;
+	initial-value: 62%;
+}
+@property --adv-pad-l {
+	syntax: "<percentage>";
+	inherits: true;
+	initial-value: 13%;
+}
+@property --adv-pad-halo {
+	syntax: "<number>";
+	inherits: true;
+	initial-value: 0.16;
+}
+@property --adv-pad-color-alpha {
+	syntax: "<number>";
+	inherits: true;
+	initial-value: 0.82;
+}

@@ -9,6 +9,8 @@ htmlcov/
 # Node
 node_modules/
 npm-debug.log*
+mobile/web/
+mobile/release/
 
 # Build output
 build/

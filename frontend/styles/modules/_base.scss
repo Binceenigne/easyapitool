@@ -1,0 +1,201 @@
+:root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --surface: #f8fafc;
+    --surface-soft: rgba(248, 250, 252, 0.7);
+    --surface-strong: #f1f5f9;
+    --text: #0f172a;
+    --text-soft: #334155;
+    --muted: #94a3b8;
+    --border: #cbd5e1;
+    --border-soft: #e2e8f0;
+    --brand: #6366f1;
+    --brand-strong: #4f46e5;
+    --image-blue: #2563eb;
+    --image-blue-soft: #eff6ff;
+    --image-purple: #7c3aed;
+    --image-purple-soft: #f5f3ff;
+    --image-transparency-light: #e2e8f0;
+    --image-transparency-dark: #cbd5e1;
+    --good: #10b981;
+    --warn: #f59e0b;
+    --danger: #f97316;
+    --critical: #f43f5e;
+    --white: #ffffff;
+    --shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
+    --font-sans: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+    --font-mono: Consolas, "SFMono-Regular", monospace;
+    --page-zoom: 1;
+}
+
+html.dark {
+    color-scheme: dark;
+    --bg: #020617;
+    --surface: #0f172a;
+    --surface-soft: rgba(15, 23, 42, 0.68);
+    --surface-strong: #111c30;
+    --text: #e2e8f0;
+    --text-soft: #cbd5e1;
+    --muted: #64748b;
+    --border: #1e293b;
+    --border-soft: #172033;
+    --image-blue: #60a5fa;
+    --image-blue-soft: rgba(37, 99, 235, 0.18);
+    --image-purple: #c084fc;
+    --image-purple-soft: rgba(124, 58, 237, 0.2);
+    --image-transparency-light: #1e293b;
+    --image-transparency-dark: #334155;
+    --shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+    border-radius: 0;
+}
+
+html[data-platform="android"],
+html[data-platform="android"] * {
+    -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+}
+
+body {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
+    font: 12px/1.35 var(--font-sans);
+    transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+button,
+input,
+select,
+textarea {
+    min-width: 0;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    color: inherit;
+    font: inherit;
+}
+
+button { cursor: pointer; }
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 1px solid var(--brand);
+    outline-offset: -1px;
+}
+
+h1, h2, h3, h4, p { margin: 0; }
+img, svg { display: block; }
+[hidden], .hidden, .is-hidden { display: none !important; }
+.invisible { visibility: hidden; }
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.35); }
+
+#widget-root {
+    --fixed-titlebar-height: 33px;
+    isolation: isolate;
+    position: relative;
+    display: flex;
+    flex: 0 0 100%;
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    max-width: 100vw;
+    max-height: 100vh;
+    max-height: 100dvh;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--bg);
+}
+
+#pageZoomViewport {
+    position: absolute;
+    top: var(--fixed-titlebar-height);
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    background: var(--bg);
+}
+
+html[data-platform="android"] #windowTitleBar,
+html[data-platform="android"] .native-resize-handle,
+html[data-platform="android"] #titlebarPinButton,
+html[data-platform="android"] .always-on-top-button,
+html[data-platform="android"] [onclick*="requestWindowAction"],
+html[data-platform="android"] [onclick*="toggleAlwaysOnTop"],
+html[data-platform="android"] [onclick*="openGeneratedPictures"],
+html[data-platform="android"] [onclick*="requestDevTools"],
+html[data-platform="android"] .settings-title-bar,
+html[data-platform="android"] .settings-app-behavior,
+html[data-platform="android"] .settings-update {
+    display: none !important;
+}
+
+html[data-platform="android"] #pageZoomViewport {
+    top: 4px;
+    right: 4px;
+    bottom: 4px;
+    left: 4px;
+    padding: 0;
+    border: 1px solid var(--border);
+}
+
+html[data-platform="android"] #widget-root {
+    --fixed-titlebar-height: 0px;
+}
+
+html[data-platform="android"] #pageZoomViewport {
+    overflow-x: hidden;
+}
+
+html[data-platform="android"] #usageTrendSection,
+html[data-platform="android"] .settings-refresh,
+html[data-platform="android"] .settings-android-service {
+    display: none !important;
+}
+
+html[data-platform="android"] #pageZoomLayer {
+    min-width: 0;
+}
+
+#pageZoomLayer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    width: calc(100% / var(--page-zoom));
+    height: calc(100% / var(--page-zoom));
+    min-width: 0;
+    min-height: 0;
+    overflow: visible;
+    background: var(--bg);
+    transform: scale(var(--page-zoom));
+    transform-origin: top left;
+}

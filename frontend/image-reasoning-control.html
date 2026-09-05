@@ -1,0 +1,1304 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>生成按钮与思维深度选择器</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+      --bg: #f7f9fc;
+      --surface: #ffffff;
+      --border: #d4deea;
+      --border-soft: #e7edf4;
+      --text: #27303d;
+      --text-soft: #46556a;
+      --muted: #7b8a9e;
+    }
+
+    @property --adv-h {
+      syntax: "<number>";
+      inherits: true;
+      initial-value: 199;
+    }
+    @property --adv-s {
+      syntax: "<percentage>";
+      inherits: true;
+      initial-value: 88%;
+    }
+    @property --adv-l {
+      syntax: "<percentage>";
+      inherits: true;
+      initial-value: 62%;
+    }
+    @property --adv-pad-l {
+      syntax: "<percentage>";
+      inherits: true;
+      initial-value: 13%;
+    }
+    @property --adv-pad-halo {
+      syntax: "<number>";
+      inherits: true;
+      initial-value: 0.16;
+    }
+    @property --adv-pad-color-alpha {
+      syntax: "<number>";
+      inherits: true;
+      initial-value: 0.82;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      display: grid;
+      min-width: 280px;
+      min-height: 100vh;
+      margin: 0;
+      place-items: center;
+      overflow: hidden;
+      background:
+        linear-gradient(90deg, rgba(213, 222, 235, 0.28) 1px, transparent 1px) 0 0 / 32px 32px,
+        linear-gradient(rgba(213, 222, 235, 0.28) 1px, transparent 1px) 0 0 / 32px 32px,
+        var(--bg);
+    }
+
+    .component-stage {
+      position: relative;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      width: min(100% - 32px, 400px);
+      min-height: 230px;
+      padding: 24px 0;
+    }
+
+    button,
+    input { font: inherit; }
+
+    button {
+      border: 0;
+      cursor: pointer;
+    }
+
+    .image-reasoning-control {
+      --reasoning-hover-shadow: 0 0 12px rgba(148, 163, 184, 0.3), 0 0 22px rgba(148, 163, 184, 0.16);
+      position: relative;
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      min-height: 34px;
+      overflow: visible;
+      border-radius: 8px;
+      isolation: isolate;
+      background: #27303d;
+      box-shadow: none;
+      contain: style;
+      transition:
+        transform 180ms ease,
+        box-shadow 420ms cubic-bezier(0.22, 1, 0.36, 1),
+        --adv-h 420ms cubic-bezier(0.22, 1, 0.36, 1),
+        --adv-s 420ms cubic-bezier(0.22, 1, 0.36, 1),
+        --adv-l 420ms cubic-bezier(0.22, 1, 0.36, 1),
+        --adv-pad-l 420ms cubic-bezier(0.22, 1, 0.36, 1),
+        --adv-pad-halo 420ms cubic-bezier(0.22, 1, 0.36, 1);
+      will-change: box-shadow;
+    }
+
+    .image-reasoning-control::after {
+      position: absolute;
+      z-index: 4;
+      inset: 0;
+      border-radius: inherit;
+      box-shadow: var(--reasoning-hover-shadow);
+      content: "";
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .image-reasoning-control:hover::after { opacity: 1; }
+
+    .reasoning-bg-layer {
+      position: absolute;
+      z-index: 0;
+      inset: 0;
+      overflow: hidden;
+      border-radius: inherit;
+      clip-path: inset(0 round 8px);
+      opacity: 0;
+      pointer-events: none;
+      contain: paint;
+      transform: translate3d(0, 0, 0);
+      transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+      will-change: opacity;
+    }
+
+    .reasoning-bg-layer.is-visible { opacity: 1; }
+
+    .reasoning-gradient,
+    .reasoning-effect {
+      position: absolute;
+      display: block;
+      pointer-events: none;
+      transform: translate3d(0, 0, 0);
+      will-change: transform, opacity, background-position;
+    }
+
+    .reasoning-gradient { z-index: 0; inset: 0; }
+    .reasoning-effect-a { z-index: 1; }
+    .reasoning-effect-b { z-index: 2; }
+
+    .reasoning-color-pulse {
+      position: absolute;
+      z-index: 2;
+      border-radius: 50%;
+      pointer-events: none;
+      filter: blur(var(--pulse-blur, 10px));
+      opacity: 0;
+      will-change: transform, opacity;
+    }
+
+    #generateButton,
+    #reasoningMenuButton {
+      position: relative;
+      z-index: 3;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 34px;
+      gap: 5px;
+      background: transparent;
+      color: #ffffff;
+      font-weight: 700;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+      transition: background-color 180ms ease, text-shadow 180ms ease, opacity 180ms ease;
+    }
+
+    #generateButton > span {
+      position: relative;
+      z-index: 1;
+      text-rendering: geometricPrecision;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    #generateButton {
+      min-width: 102px;
+      padding: 5px 10px;
+      border-radius: 8px 0 0 8px;
+    }
+
+    #reasoningMenuButton {
+      width: 28px;
+      padding: 0;
+      border-left: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 0 8px 8px 0;
+    }
+
+    .chevron {
+      width: 8px;
+      height: 8px;
+      border-right: 1.6px solid currentColor;
+      border-bottom: 1.6px solid currentColor;
+      transform: rotate(45deg) translate(-1px, -1px);
+      transition: transform 160ms ease;
+    }
+
+    #reasoningMenuButton[aria-expanded="true"] .chevron {
+      transform: rotate(225deg) translate(-1px, -1px);
+    }
+
+    #generateButton:hover:not(:disabled),
+    #reasoningMenuButton:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.13);
+      text-shadow: 0 1px 3px rgba(15, 23, 42, 0.72), 0 0 7px rgba(255, 255, 255, 0.42);
+    }
+
+    #generateButton:active:not(:disabled),
+    #reasoningMenuButton:active:not(:disabled) { background: rgba(15, 23, 42, 0.16); }
+    #generateButton:disabled, #reasoningMenuButton:disabled { cursor: wait; opacity: 0.68; }
+
+    .image-reasoning-control[data-mode="instant"] {
+      --reasoning-hover-shadow: 0 0 12px rgba(100, 116, 139, 0.34), 0 0 22px rgba(100, 116, 139, 0.18);
+      background: #27303d;
+    }
+    .image-reasoning-control[data-mode="flash"] {
+      --reasoning-hover-shadow: 0 0 13px rgba(56, 189, 248, 0.36), 0 0 24px rgba(56, 189, 248, 0.2);
+      background: #8fd3ff;
+    }
+    .image-reasoning-control[data-mode="medium"] {
+      --reasoning-hover-shadow: 0 0 14px rgba(37, 99, 235, 0.38), 0 0 26px rgba(79, 125, 243, 0.21);
+      background: #4f7df3;
+    }
+    .image-reasoning-control[data-mode="high"] {
+      --reasoning-hover-shadow: 0 0 16px rgba(88, 101, 242, 0.44), 0 0 28px rgba(129, 112, 245, 0.26);
+      background: #5865f2;
+      animation: highGlowPulse 4s ease-in-out infinite alternate;
+    }
+    .image-reasoning-control[data-mode="extra"] {
+      --reasoning-hover-shadow: 0 0 16px rgba(124, 58, 237, 0.38), 0 0 28px rgba(167, 139, 250, 0.2);
+      background: #6d5dfc;
+      animation: extraGlowPulse 4s ease-in-out infinite alternate;
+    }
+    .image-reasoning-control[data-mode="max"] {
+      --reasoning-hover-shadow: 0 0 19px rgba(99, 102, 241, 0.44), 0 0 32px rgba(168, 85, 247, 0.28);
+      background: #536dfe;
+      animation: maxGlowPulse 3s ease-in-out infinite alternate;
+    }
+    .image-reasoning-control[data-mode="max"] > button {
+      text-shadow: 0 1px 3px rgba(15, 23, 42, 0.7), 0 0 8px rgba(124, 58, 237, 0.5);
+    }
+
+    .reasoning-bg-layer[data-layer-mode="instant"] { background: #27303d; }
+    .reasoning-bg-layer[data-layer-mode="instant"] .reasoning-gradient,
+    .reasoning-bg-layer[data-layer-mode="instant"] .reasoning-effect { display: none; }
+
+    .reasoning-bg-layer[data-layer-mode="flash"] { background: #8fd3ff; }
+    .reasoning-bg-layer[data-layer-mode="flash"] .reasoning-gradient {
+      background: linear-gradient(125deg, #8fd3ff 0%, #b9e6ff 18%, #79c7ff 36%, #d8f3ff 54%, #9fbfff 72%, #b9e6ff 88%, #8fd3ff 100%);
+      background-size: 300% 300%;
+      animation: flashFluidGradient 18s linear infinite;
+    }
+    .reasoning-bg-layer[data-layer-mode="flash"] .reasoning-effect-a {
+      inset: -20px;
+      background: radial-gradient(circle at 30% 40%, rgba(191, 231, 255, 0.78) 0%, rgba(111, 196, 255, 0.46) 44%, transparent 75%), radial-gradient(circle at 70% 60%, rgba(219, 245, 255, 0.7) 0%, rgba(151, 190, 255, 0.42) 48%, transparent 80%);
+      filter: blur(10px);
+      opacity: 0.8;
+      animation: flashLiquidOrbit 14s linear infinite;
+    }
+    .reasoning-bg-layer[data-layer-mode="flash"] .reasoning-effect-b { display: none; }
+
+    .reasoning-bg-layer[data-layer-mode="medium"] { background: #4f7df3; }
+    .reasoning-bg-layer[data-layer-mode="medium"] .reasoning-gradient {
+      background: linear-gradient(135deg, #4f7df3 0%, #5b8def 25%, #5cc8ff 50%, #9bdcff 75%, #4f7df3 100%);
+      background-size: 260% 260%;
+      animation: mediumSeamlessFlow 30s linear infinite;
+    }
+    .reasoning-bg-layer[data-layer-mode="medium"] .reasoning-effect { display: none; }
+
+    .reasoning-bg-layer[data-layer-mode="high"] { background: #5865f2; }
+    .reasoning-bg-layer[data-layer-mode="high"] .reasoning-gradient {
+      background: linear-gradient(135deg, #5865f2 0%, #6478f5 18%, #b7c4ff 27%, #7185f7 39%, #8170f5 57%, #c9c7ff 67%, #706ff4 78%, #5865f2 100%);
+      background-size: 300% 300%;
+      animation: highSeamlessFlow 28s linear infinite;
+    }
+    .reasoning-bg-layer[data-layer-mode="high"] .reasoning-effect-a {
+      inset: 0;
+      background: radial-gradient(circle at 50% 0%, rgba(224, 231, 255, 0.16) 0%, transparent 75%);
+    }
+    .reasoning-bg-layer[data-layer-mode="high"] .reasoning-effect-b { display: none; }
+
+    .reasoning-bg-layer[data-layer-mode="extra"] { background: #6d5dfc; }
+    .reasoning-bg-layer[data-layer-mode="extra"] .reasoning-gradient {
+      background: linear-gradient(135deg, #6d5dfc 0%, #8b6cff 25%, #b99cff 50%, #d9c7ff 75%, #6d5dfc 100%);
+      background-size: 300% 300%;
+      animation: highSeamlessFlow 28s linear infinite;
+    }
+    .reasoning-bg-layer[data-layer-mode="extra"] .reasoning-effect-a {
+      inset: 0;
+      background: radial-gradient(circle at 50% 0%, rgba(233, 213, 255, 0.22) 0%, transparent 75%);
+    }
+    .reasoning-bg-layer[data-layer-mode="extra"] .reasoning-effect-b { display: none; }
+
+    .reasoning-bg-layer[data-layer-mode="max"] { background: #536dfe; }
+    .reasoning-bg-layer[data-layer-mode="max"] .reasoning-gradient {
+      background: linear-gradient(125deg, #536dfe 0%, #5b8def 20%, #8b6cff 40%, #e9ddff 60%, #3b82f6 80%, #536dfe 100%);
+      background-size: 300% 300%;
+      animation: maxGradientFlow 26s linear infinite;
+    }
+    .reasoning-bg-layer[data-layer-mode="max"] .reasoning-effect-a {
+      inset: -20px;
+      background: radial-gradient(circle at 30% 40%, rgba(192, 132, 252, 0.52) 0%, rgba(59, 130, 246, 0.36) 45%, transparent 75%), radial-gradient(circle at 70% 60%, rgba(236, 72, 153, 0.34) 0%, rgba(124, 58, 237, 0.42) 50%, transparent 80%);
+      filter: blur(10px);
+      opacity: 0.68;
+      animation: maxLiquidOrbit 20s linear infinite;
+    }
+    .reasoning-bg-layer[data-layer-mode="max"] .reasoning-effect-b { display: none; }
+
+    /* 高级矩阵联动的动态渐变按钮背景：色相/饱和度/亮度由 CSS 变量驱动 */
+    .reasoning-bg-layer[data-layer-mode="advanced"] { background: hsl(var(--adv-h, 220) var(--adv-s, 78%) var(--adv-l, 60%)); }
+    .reasoning-bg-layer[data-layer-mode="advanced"] .reasoning-gradient {
+      background: linear-gradient(135deg,
+        hsl(var(--adv-h, 220) var(--adv-s, 78%) var(--adv-l, 60%)) 0%,
+        hsl(calc(var(--adv-h, 220) + 14) var(--adv-s, 78%) calc(var(--adv-l, 60%) + 8%)) 25%,
+        hsl(calc(var(--adv-h, 220) + 30) calc(var(--adv-s, 78%) - 4%) calc(var(--adv-l, 60%) + 16%)) 50%,
+        hsl(calc(var(--adv-h, 220) - 16) var(--adv-s, 78%) calc(var(--adv-l, 60%) + 6%)) 75%,
+        hsl(var(--adv-h, 220) var(--adv-s, 78%) var(--adv-l, 60%)) 100%);
+      background-size: 300% 300%;
+      animation: highSeamlessFlow 26s linear infinite;
+    }
+    .reasoning-bg-layer[data-layer-mode="advanced"] .reasoning-effect-a {
+      inset: 0;
+      background: radial-gradient(circle at 50% 0%, hsla(var(--adv-h, 220), 92%, 88%, 0.18) 0%, transparent 75%);
+    }
+    .reasoning-bg-layer[data-layer-mode="advanced"] .reasoning-effect-b { display: none; }
+
+    .image-reasoning-menu {
+      position: absolute;
+      z-index: 20;
+      bottom: calc(100% + 8px);
+      right: 0;
+      display: flex;
+      flex-direction: column;
+      width: 220px;
+      padding: 12px 14px;
+      gap: 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 12px 30px rgba(2, 6, 23, 0.18);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(6px) scale(0.99);
+      transform-origin: bottom right;
+      transition: opacity 150ms ease, transform 150ms ease, width 220ms cubic-bezier(0.22, 1, 0.36, 1);
+      backdrop-filter: blur(14px);
+    }
+
+    .image-reasoning-menu[hidden] { display: none !important; }
+    .image-reasoning-menu.is-open { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
+
+    .web-search-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border-soft);
+      user-select: none;
+    }
+
+    .web-search-label, .reasoning-slider-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-soft);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .web-search-icon {
+      display: grid;
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid #5b8def;
+      border-radius: 50%;
+      place-items: center;
+    }
+    .web-search-icon::before { width: 10px; height: 1px; background: #5b8def; content: ""; }
+
+    .toggle-switch { position: relative; display: inline-block; width: 32px; height: 18px; }
+    .toggle-switch input { width: 0; height: 0; opacity: 0; }
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      border-radius: 20px;
+      background-color: #cbd5e1;
+      cursor: pointer;
+      transition: background-color 200ms ease;
+    }
+    .toggle-slider::before {
+      position: absolute;
+      bottom: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background-color: #ffffff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      content: "";
+      transition: transform 200ms ease;
+    }
+    .toggle-switch input:checked + .toggle-slider { background-color: #5b8def; }
+    .toggle-switch input:checked + .toggle-slider::before { transform: translateX(14px); }
+    .web-search-row:has(input:disabled) { opacity: 0.45; }
+    .toggle-switch input:disabled + .toggle-slider { cursor: default; }
+
+    .reasoning-slider-section { display: flex; flex-direction: column; gap: 8px; }
+    .reasoning-slider-header { display: flex; align-items: center; justify-content: space-between; }
+    .reasoning-slider-title { gap: 4px; color: #64748b; }
+    .reasoning-slider-title::after {
+      width: 6px;
+      height: 6px;
+      border-top: 1px solid currentColor;
+      border-right: 1px solid currentColor;
+      content: "";
+      transform: rotate(45deg);
+    }
+    .reasoning-current-badge { color: #5b8def; font-size: 10px; font-weight: 700; transition: color 300ms ease; }
+
+    .horizontal-slider-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+      width: 100%;
+      height: 22px;
+      cursor: pointer;
+      touch-action: none;
+      contain: layout style;
+      transform: translate3d(0, 0, 0);
+    }
+    .horizontal-slider-container:focus-visible { outline: none; }
+    .horizontal-slider-container::after {
+      position: absolute;
+      z-index: 4;
+      top: 2px;
+      right: -1px;
+      bottom: 2px;
+      left: -1px;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      box-shadow: 0 0 0 rgba(139, 92, 246, 0);
+      content: "";
+      opacity: 0;
+      pointer-events: none;
+    }
+    .horizontal-slider-container:focus-visible::after { border-color: rgba(91, 141, 239, 0.7); opacity: 1; }
+    .horizontal-slider-container.is-max-entering::after { animation: maxSliderBorderPulse 460ms cubic-bezier(0.18, 0.72, 0.24, 1) 60ms both; }
+    .horizontal-slider-container.is-max-settled::after { border-color: rgba(196, 181, 253, 0.2); animation: maxSliderAmbientGlow 3.2s ease-in-out infinite alternate; }
+
+    .slider-track-bg {
+      position: absolute;
+      right: 0;
+      left: 0;
+      height: 16px;
+      overflow: hidden;
+      border-radius: 999px;
+      background-color: #e2e8f0;
+    }
+    .slider-track-fill {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      overflow: hidden;
+      border-radius: 999px 0 0 999px;
+      transform: translate3d(0, 0, 0) scaleX(0);
+      transform-origin: left center;
+      transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .slider-gradient-layer { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; }
+    .slider-gradient-current, .slider-gradient-next { background: linear-gradient(90deg, #64748b 0%, #94a3b8 100%); }
+    .slider-gradient-next { opacity: 0; transition: opacity 520ms cubic-bezier(0.22, 1, 0.36, 1); }
+    .slider-gradient-next.is-blending { opacity: 1; }
+
+    .slider-dots {
+      position: absolute;
+      z-index: 2;
+      right: 8px;
+      left: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      pointer-events: none;
+    }
+    .slider-dot { width: 4px; height: 4px; border-radius: 50%; background-color: rgba(255, 255, 255, 0.9); transition: background-color 150ms ease; }
+    .slider-dot.inactive { background-color: #94a3b8; }
+    .slider-thumb {
+      position: absolute;
+      z-index: 3;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.22);
+      pointer-events: none;
+      transform: translate3d(-50%, 0, 0);
+      transition: left 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .slider-desc { margin-top: -2px; overflow: hidden; color: var(--muted); font-size: 9px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ---- 菜单视图切换（普通 / 高级） ---- */
+    .menu-view { display: flex; flex-direction: column; gap: 12px; }
+    .menu-view[hidden] { display: none !important; }
+    .image-reasoning-menu.is-advanced { width: 330px; }
+
+    .advanced-entry-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding: 8px 0 0;
+      border-top: 1px solid var(--border-soft);
+      background: transparent;
+      color: var(--text-soft);
+      font-size: 11px;
+      font-weight: 600;
+      text-align: left;
+    }
+    .advanced-entry-label { display: flex; align-items: center; gap: 6px; }
+    .advanced-entry-label svg { width: 12px; height: 12px; }
+    .advanced-entry-hint { display: flex; align-items: center; gap: 3px; color: var(--muted); font-size: 10px; font-weight: 500; }
+    .advanced-entry-hint::after {
+      width: 6px;
+      height: 6px;
+      border-top: 1.4px solid currentColor;
+      border-right: 1.4px solid currentColor;
+      content: "";
+      transform: rotate(45deg);
+    }
+    .advanced-entry-row:hover { color: #4f7df3; }
+    .advanced-entry-row:hover .advanced-entry-hint { color: #4f7df3; }
+
+    /* ---- 高级矩阵调控组件 ---- */
+    .advanced-header { display: flex; align-items: center; justify-content: space-between; }
+    .advanced-back {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 0;
+      background: transparent;
+      color: var(--text-soft);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .advanced-back::before {
+      width: 6px;
+      height: 6px;
+      border-bottom: 1.4px solid currentColor;
+      border-left: 1.4px solid currentColor;
+      content: "";
+      transform: rotate(45deg);
+    }
+    .advanced-back:hover { color: #4f7df3; }
+    .advanced-title { color: #64748b; font-size: 11px; font-weight: 700; }
+    .advanced-state { color: #4f8ff0; font-size: 10px; font-weight: 700; transition: color 400ms ease; }
+
+    .advanced-matrix {
+      position: relative;
+      height: 172px;
+      user-select: none;
+      contain: layout style;
+    }
+    .advanced-matrix:focus-visible { outline: none; }
+    .advanced-matrix:focus-visible .advanced-pad { border-color: rgba(91, 141, 239, 0.6); }
+
+    .advanced-y-labels {
+      position: absolute;
+      top: 0;
+      bottom: 18px;
+      left: 0;
+      display: flex;
+      width: 66px;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .advanced-y-label {
+      display: flex;
+      align-items: center;
+      height: 100%;
+      color: #334155;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      transition: color 300ms ease, text-shadow 300ms ease;
+    }
+    .advanced-y-label.is-active { color: #1d4ed8; text-shadow: 0 0 4px rgba(59, 130, 246, 0.35); font-weight: 700; }
+
+    .advanced-pad {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 18px;
+      left: 70px;
+      overflow: hidden;
+      border: 1px solid rgba(120, 140, 190, 0.22);
+      border-radius: 12px;
+      background: #0a0f24;
+      box-shadow: 0 0 6px rgba(56, 189, 248, 0.08);
+      cursor: crosshair;
+      touch-action: none;
+      transition: border-color 300ms ease, box-shadow 420ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .advanced-pad.is-dragging { cursor: grabbing; }
+    .advanced-pad-bg {
+      position: absolute;
+      z-index: 0;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 130% 130% at 50% 42%, hsl(var(--adv-h) 95% 64% / var(--adv-pad-halo)) 0%, hsl(var(--adv-h) 95% 64% / 0) 62%),
+        linear-gradient(150deg, hsl(var(--adv-h) 52% var(--adv-pad-l) / var(--adv-pad-color-alpha)) 0%, hsl(var(--adv-h) 58% 7% / var(--adv-pad-color-alpha)) 100%),
+        #0a0f24;
+      pointer-events: none;
+    }
+    #advancedPadBgB { display: none; }
+    .advanced-pad-flow {
+      position: absolute;
+      z-index: 1;
+      inset: -26%;
+      background: linear-gradient(125deg, rgba(255, 255, 255, 0.05) 0%, transparent 32%, rgba(255, 255, 255, 0.03) 52%, transparent 74%, rgba(255, 255, 255, 0.04) 100%);
+      background-size: 260% 260%;
+      animation: advancedPadFlow 18s linear infinite;
+      mix-blend-mode: soft-light;
+      pointer-events: none;
+    }
+    /* 内衬内容区（点阵/滑点），留出内边距防止穿模 */
+    .advanced-pad-inner {
+      position: absolute;
+      z-index: 2;
+      top: 50%;
+      right: 14px;
+      left: 14px;
+      aspect-ratio: 8 / 5;
+      transform: translateY(-50%);
+      pointer-events: none;
+    }
+
+    .advanced-rows {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      pointer-events: none;
+    }
+    .advanced-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    /* 所有点保持同样尺寸；真实吸附点仅用亮度区分，避免与十字高亮尺寸叠加 */
+    .advanced-anchor {
+      --dot-highlight-scale: 0;
+      --dot-alpha: 0.32;
+      --dot-glow: 0px;
+      --dot-glow-alpha: 0;
+      width: 2px;
+      height: 2px;
+      border-radius: 0;
+      background-color: rgb(255 255 255 / var(--dot-alpha));
+      box-shadow: 0 0 var(--dot-glow) rgb(255 255 255 / var(--dot-glow-alpha));
+      transform: scale(calc(1 + var(--dot-highlight-scale)));
+    }
+    .advanced-anchor.is-snap { --dot-alpha: 0.44; }
+    /* 点阵状态立即切换，不使用进入或退出动画 */
+    .advanced-anchor.is-axis {
+      border-radius: 50%;
+    }
+
+    .advanced-knob {
+      position: absolute;
+      z-index: 4;
+      top: 0;
+      left: 0;
+      width: 15px;
+      height: 15px;
+      border: 2px solid rgba(255, 255, 255, 0.95);
+      border-radius: 50%;
+      background: #7ec9f6;
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.3), 0 0 4px rgba(56, 189, 248, 0.3);
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      transition:
+        left 400ms cubic-bezier(0.3, 1.35, 0.5, 1),
+        top 400ms cubic-bezier(0.3, 1.35, 0.5, 1),
+        background-color 460ms ease,
+        box-shadow 460ms ease;
+      will-change: left, top;
+    }
+    .advanced-knob.is-dragging {
+      border-color: #ffffff;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.38), 0 0 8px rgba(255, 255, 255, 0.4);
+      transition:
+        background-color 260ms cubic-bezier(0.22, 1, 0.36, 1),
+        box-shadow 320ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .advanced-x-labels {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 70px;
+      display: grid;
+      grid-template-columns: repeat(17, 1fr);
+      height: 14px;
+      align-items: center;
+    }
+    .advanced-x-label { color: #334155; font-size: 9px; font-weight: 600; letter-spacing: 0.2px; text-align: center; transition: color 300ms ease, text-shadow 300ms ease; }
+    .advanced-x-label:nth-child(1) { grid-column: 1; }
+    .advanced-x-label:nth-child(2) { grid-column: 5; }
+    .advanced-x-label:nth-child(3) { grid-column: 9; }
+    .advanced-x-label:nth-child(4) { grid-column: 13; }
+    .advanced-x-label:nth-child(5) { grid-column: 17; }
+    .advanced-x-label.is-active { color: #1d4ed8; text-shadow: 0 0 4px rgba(59, 130, 246, 0.35); font-weight: 700; }
+
+    .advanced-desc { overflow: hidden; color: var(--muted); font-size: 9px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+
+    @keyframes advancedPadFlow { 0% { background-position: 0% 30%; } 28% { background-position: 46% 0%; } 55% { background-position: 100% 56%; } 80% { background-position: 52% 100%; } 100% { background-position: 0% 30%; } }
+
+    @keyframes flashFluidGradient { 0% { background-position: 0% 22%; } 24% { background-position: 38% 0%; } 52% { background-position: 100% 44%; } 76% { background-position: 58% 100%; } 100% { background-position: 0% 22%; } }
+    @keyframes flashLiquidOrbit { 0% { transform: translate(-9%, -7%) scale(1) rotate(0deg); } 25% { transform: translate(4%, -11%) scale(1.06) rotate(90deg); } 50% { transform: translate(11%, 3%) scale(1.1) rotate(180deg); } 75% { transform: translate(-2%, 10%) scale(1.04) rotate(270deg); } 100% { transform: translate(-9%, -7%) scale(1) rotate(360deg); } }
+    @keyframes mediumSeamlessFlow { 0% { background-position: 0% 18%; } 27% { background-position: 45% 0%; } 54% { background-position: 100% 58%; } 78% { background-position: 48% 100%; } 100% { background-position: 0% 18%; } }
+    @keyframes highSeamlessFlow { 0% { background-position: 0% 26%; } 22% { background-position: 34% 0%; } 51% { background-position: 100% 48%; } 75% { background-position: 64% 100%; } 100% { background-position: 0% 26%; } }
+    @keyframes highGlowPulse { 0% { box-shadow: 0 0 0 1px rgba(100, 120, 245, 0.24), 0 0 9px rgba(88, 101, 242, 0.24), 0 0 16px rgba(129, 112, 245, 0.12); } 100% { box-shadow: 0 0 0 1px rgba(113, 133, 247, 0.42), 0 0 14px rgba(88, 101, 242, 0.38), 0 0 24px rgba(129, 112, 245, 0.22); } }
+    @keyframes extraGlowPulse { 0% { box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.2), 0 0 9px rgba(124, 58, 237, 0.2), 0 0 16px rgba(167, 139, 250, 0.1); } 100% { box-shadow: 0 0 0 1px rgba(192, 132, 252, 0.36), 0 0 14px rgba(124, 58, 237, 0.32), 0 0 24px rgba(167, 139, 250, 0.16); } }
+    @keyframes maxGradientFlow { 0% { background-position: 0% 20%; } 23% { background-position: 42% 0%; } 50% { background-position: 100% 50%; } 74% { background-position: 58% 100%; } 100% { background-position: 0% 20%; } }
+    @keyframes maxLiquidOrbit { 0% { transform: translate(-10%, -8%) scale(1) rotate(0deg); } 25% { transform: translate(3%, -12%) scale(1.07) rotate(90deg); } 50% { transform: translate(11%, 4%) scale(1.11) rotate(180deg); } 75% { transform: translate(-3%, 11%) scale(1.05) rotate(270deg); } 100% { transform: translate(-10%, -8%) scale(1) rotate(360deg); } }
+    @keyframes maxGlowPulse { 0% { box-shadow: 0 0 0 1px rgba(192, 132, 252, 0.28), 0 0 11px rgba(99, 102, 241, 0.24), 0 0 19px rgba(139, 92, 246, 0.14); } 100% { box-shadow: 0 0 0 1px rgba(233, 213, 255, 0.48), 0 0 17px rgba(99, 102, 241, 0.38), 0 0 29px rgba(168, 85, 247, 0.24); } }
+    @keyframes maxSliderBorderPulse { 0% { border-color: rgba(216, 180, 254, 0); box-shadow: 0 0 0 rgba(139, 92, 246, 0); opacity: 0; transform: scaleX(0.985); } 28% { border-color: rgba(233, 213, 255, 0.88); box-shadow: 0 0 7px rgba(139, 92, 246, 0.58), 0 0 15px rgba(167, 139, 250, 0.34); opacity: 1; transform: scaleX(1.008); } 56% { border-color: rgba(196, 181, 253, 0.42); box-shadow: 0 0 4px rgba(124, 58, 237, 0.26); opacity: 0.68; transform: scaleX(0.998); } 100% { border-color: rgba(243, 232, 255, 0); box-shadow: 0 0 0 rgba(139, 92, 246, 0); opacity: 0; transform: scaleX(1); } }
+    @keyframes maxSliderAmbientGlow { 0% { opacity: 0.36; box-shadow: 0 0 4px rgba(139, 92, 246, 0.18); } 100% { opacity: 0.88; box-shadow: 0 0 10px rgba(139, 92, 246, 0.36), 0 0 16px rgba(96, 165, 250, 0.16); } }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="component-stage">
+    <div id="imageReasoningControl" class="image-reasoning-control" data-mode="instant">
+      <span class="reasoning-bg-layer is-visible" data-layer-mode="instant" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+      <span class="reasoning-bg-layer" data-layer-mode="flash" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+      <span class="reasoning-bg-layer" data-layer-mode="medium" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+      <span class="reasoning-bg-layer" data-layer-mode="high" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+      <span class="reasoning-bg-layer" data-layer-mode="extra" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+      <span class="reasoning-bg-layer" data-layer-mode="max" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+      <span class="reasoning-bg-layer" data-layer-mode="advanced" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
+
+      <button type="button" id="generateButton" data-reasoning-mode="instant"><span>生成 1 张</span></button>
+      <button type="button" id="reasoningMenuButton" aria-expanded="false" aria-controls="imageReasoningMenu" title="选择思维深度" aria-label="选择思维深度"><span class="chevron" aria-hidden="true"></span></button>
+
+      <div id="imageReasoningMenu" class="image-reasoning-menu" hidden aria-label="思维深度设置">
+        <div id="menuViewMain" class="menu-view">
+          <div class="web-search-row">
+            <label for="webSearchEnabled" class="web-search-label"><span class="web-search-icon" aria-hidden="true"></span><span>网络搜索</span></label>
+            <label class="toggle-switch"><input id="webSearchEnabled" type="checkbox" checked><span class="toggle-slider"></span></label>
+          </div>
+          <div class="reasoning-slider-section">
+            <div class="reasoning-slider-header">
+              <span class="reasoning-slider-title">思维深度</span>
+              <span id="reasoningBadge" class="reasoning-current-badge">Instant</span>
+            </div>
+            <div id="reasoningSliderTrack" class="horizontal-slider-container" role="slider" tabindex="0" aria-label="思维深度" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" aria-valuetext="Instant">
+              <div class="slider-track-bg">
+                <div id="sliderTrackFill" class="slider-track-fill">
+                  <span id="sliderGradientCurrent" class="slider-gradient-layer slider-gradient-current"></span>
+                  <span id="sliderGradientNext" class="slider-gradient-layer slider-gradient-next"></span>
+                </div>
+              </div>
+              <div id="sliderDots" class="slider-dots" aria-hidden="true"></div>
+              <div id="sliderThumb" class="slider-thumb" aria-hidden="true"></div>
+            </div>
+            <div id="reasoningSliderDesc" class="slider-desc">直接快速获得结果</div>
+          </div>
+          <button type="button" id="advancedEntryButton" class="advanced-entry-row" aria-haspopup="true">
+            <span class="advanced-entry-label">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="1.6" y="1.6" width="5.4" height="5.4" rx="1.2"/><rect x="9" y="1.6" width="5.4" height="5.4" rx="1.2"/><rect x="1.6" y="9" width="5.4" height="5.4" rx="1.2"/><rect x="9" y="9" width="5.4" height="5.4" rx="1.2"/></svg>
+              <span>高级</span>
+            </span>
+            <span class="advanced-entry-hint">矩阵调控</span>
+          </button>
+        </div>
+        <div id="menuViewAdvanced" class="menu-view" hidden>
+          <div class="advanced-header">
+            <button type="button" id="advancedBackButton" class="advanced-back">返回</button>
+            <span class="advanced-title">高级调控</span>
+            <span id="advancedStateBadge" class="advanced-state">luna · low</span>
+          </div>
+          <div id="advancedMatrix" class="advanced-matrix" tabindex="0" role="application" aria-label="模型与思维深度矩阵">
+            <div class="advanced-y-labels">
+              <span class="advanced-y-label" data-y-label="2">gpt5.6sol</span>
+              <span class="advanced-y-label" data-y-label="1">gpt5.6terra</span>
+              <span class="advanced-y-label" data-y-label="0">gpt5.6luna</span>
+            </div>
+            <div id="advancedPad" class="advanced-pad">
+              <span id="advancedPadBgA" class="advanced-pad-bg" aria-hidden="true"></span>
+              <span id="advancedPadBgB" class="advanced-pad-bg" aria-hidden="true" style="opacity: 0"></span>
+              <span class="advanced-pad-flow" aria-hidden="true"></span>
+              <div class="advanced-pad-inner" id="advancedPadInner">
+                <div id="advancedRows" class="advanced-rows" aria-hidden="true"></div>
+                <div id="advancedKnob" class="advanced-knob" aria-hidden="true"></div>
+              </div>
+            </div>
+            <div class="advanced-x-labels" aria-hidden="true">
+              <span class="advanced-x-label" data-x-label="0">low</span>
+              <span class="advanced-x-label" data-x-label="1">medium</span>
+              <span class="advanced-x-label" data-x-label="2">high</span>
+              <span class="advanced-x-label" data-x-label="3">xhigh</span>
+              <span class="advanced-x-label" data-x-label="4">max</span>
+            </div>
+          </div>
+          <div id="advancedDesc" class="advanced-desc">轻快响应 · 日常问答首选</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    (() => {
+      const modes = ["instant", "flash", "medium", "high", "extra", "max"];
+      const labels = { instant: "Instant", flash: "Flash", medium: "Medium", high: "High", extra: "Extra", max: "Max" };
+      const descriptions = {
+        instant: "直接快速获得结果",
+        flash: "快速思考，优化生成质量",
+        medium: "增强推理，丰富画面细节",
+        high: "深入编排方案，强化视觉表现",
+        extra: "延长思维链，持续推演与优化",
+        max: "使用顶级模型持续反思，获得最优结果"
+      };
+      const trackGradients = [
+        "linear-gradient(90deg, #64748b 0%, #94a3b8 100%)",
+        "linear-gradient(90deg, #a9dcff 0%, #86ceff 42%, #a8c9ff 100%)",
+        "linear-gradient(90deg, #9fcaff 0%, #8fddff 48%, #b5e8ff 100%)",
+        "linear-gradient(90deg, #6b95f4 0%, #5d6ff2 48%, #8170f5 100%)",
+        "linear-gradient(90deg, #aeaaff 0%, #c4b7ff 50%, #dfd3ff 100%)",
+        "linear-gradient(90deg, #aebcff 0%, #c2b0ff 32%, #dfcdff 64%, #b7ddff 100%)"
+      ];
+      const pulsePalettes = {
+        flash: ["#8fd3ff", "#b9e6ff", "#79c7ff", "#9fbfff", "#d8f3ff"],
+        medium: ["#4f7df3", "#5b8def", "#5cc8ff", "#9bdcff"],
+        high: ["#5865f2", "#6478f5", "#7185f7", "#8170f5"],
+        extra: ["#6d5dfc", "#8b6cff", "#b99cff", "#d9c7ff"],
+        max: ["#536dfe", "#5b8def", "#8b6cff", "#e9ddff", "#3b82f6"]
+      };
+      const badgeColors = { instant: "#64748b", flash: "#0284c7", medium: "#2563eb", high: "#5865f2", extra: "#6d5dfc", max: "#536dfe" };
+      const control = document.getElementById("imageReasoningControl");
+      const menu = document.getElementById("imageReasoningMenu");
+      const menuButton = document.getElementById("reasoningMenuButton");
+      const generateButton = document.getElementById("generateButton");
+      const generateLabel = generateButton.querySelector("span");
+      const slider = document.getElementById("reasoningSliderTrack");
+      const fill = document.getElementById("sliderTrackFill");
+      const thumb = document.getElementById("sliderThumb");
+      const currentGradient = document.getElementById("sliderGradientCurrent");
+      const nextGradient = document.getElementById("sliderGradientNext");
+      const badge = document.getElementById("reasoningBadge");
+      const description = document.getElementById("reasoningSliderDesc");
+      const webSearch = document.getElementById("webSearchEnabled");
+      const dots = document.getElementById("sliderDots");
+      let activeMode = "instant";
+      let activeGradient = trackGradients[0];
+      let pulseTimer = 0;
+      let gradientTimer = 0;
+      let maxTimer = 0;
+
+      dots.replaceChildren(...modes.map((_, index) => {
+        const dot = document.createElement("span");
+        dot.className = index ? "slider-dot inactive" : "slider-dot";
+        return dot;
+      }));
+
+      const hexToRgba = (hex, alpha) => {
+        const value = Number.parseInt(hex.slice(1), 16);
+        return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+      };
+
+      function setAnimationRate(rate) {
+        control.querySelector(".reasoning-bg-layer.is-visible")?.getAnimations({ subtree: true }).forEach(animation => {
+          animation.updatePlaybackRate?.(rate);
+        });
+      }
+
+      function createColorPulse() {
+        if (activeMode === "instant" || document.hidden || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+        const layer = control.querySelector(`.reasoning-bg-layer[data-layer-mode="${activeMode}"]`);
+        const palette = pulsePalettes[activeMode];
+        const color = palette[Math.floor(Math.random() * palette.length)];
+        const pulse = document.createElement("span");
+        const width = 68 + Math.random() * 54;
+        const height = 44 + Math.random() * 34;
+        const targetWidth = Math.max(control.clientWidth, 130);
+        const startX = -width * (1.05 + Math.random() * 0.22);
+        const endX = targetWidth + width * (0.95 + Math.random() * 0.28);
+        const drift = -5 + Math.random() * 10;
+        const peakAlpha = 0.19 + Math.random() * 0.11;
+        pulse.className = "reasoning-color-pulse";
+        pulse.style.cssText = `width:${width}px;height:${height}px;top:${-16 + Math.random() * 18}px;left:0;--pulse-blur:${8 + Math.random() * 6}px;background:radial-gradient(ellipse at center,${hexToRgba(color, peakAlpha)} 0%,${hexToRgba(color, peakAlpha * 0.72)} 28%,${hexToRgba(color, peakAlpha * 0.28)} 52%,${hexToRgba(color, 0)} 76%);`;
+        layer.append(pulse);
+        const animation = pulse.animate([
+          { transform: `translate3d(${startX}px, 0, 0) scale(.68)`, opacity: 0 },
+          { transform: `translate3d(${startX + (endX - startX) * .18}px, ${drift * .15}px, 0) scale(.88)`, opacity: .46, offset: .18 },
+          { transform: `translate3d(${startX + (endX - startX) * .5}px, ${drift * .55}px, 0) scale(1.08)`, opacity: .82, offset: .5 },
+          { transform: `translate3d(${startX + (endX - startX) * .8}px, ${drift * .88}px, 0) scale(.94)`, opacity: .38, offset: .8 },
+          { transform: `translate3d(${endX}px, ${drift}px, 0) scale(.72)`, opacity: 0 }
+        ], { duration: 9800 + Math.random() * 4600, easing: "cubic-bezier(.22,.58,.34,1)", fill: "forwards" });
+        if (generateButton.matches(":hover")) animation.updatePlaybackRate(2.5);
+        animation.addEventListener("finish", () => pulse.remove(), { once: true });
+      }
+
+      function schedulePulse(immediate = false) {
+        clearTimeout(pulseTimer);
+        pulseTimer = window.setTimeout(() => {
+          createColorPulse();
+          schedulePulse();
+        }, immediate ? 900 + Math.random() * 900 : 5200 + Math.random() * 3600);
+      }
+
+      function setMode(mode) {
+        const nextMode = modes.includes(mode) ? mode : "instant";
+        const nextIndex = modes.indexOf(nextMode);
+        const previousMode = activeMode;
+        activeMode = nextMode;
+        control.dataset.mode = nextMode;
+        // 退出高级模式：清除 advanced 图层覆盖与内联色相变量
+        delete control.dataset.advanced;
+        control.style.removeProperty("--adv-h");
+        control.style.removeProperty("--adv-s");
+        control.style.removeProperty("--adv-l");
+        control.style.removeProperty("--adv-pad-l");
+        control.style.removeProperty("--adv-pad-halo");
+        control.style.removeProperty("box-shadow");
+        control.style.removeProperty("--reasoning-hover-shadow");
+        generateButton.dataset.reasoningMode = nextMode;
+        control.querySelectorAll(".reasoning-bg-layer").forEach(layer => {
+          layer.classList.toggle("is-visible", layer.dataset.layerMode === nextMode);
+        });
+        const percentage = nextIndex / (modes.length - 1) * 100;
+        fill.style.transform = `translate3d(0, 0, 0) scaleX(${percentage / 100})`;
+        thumb.style.left = `${percentage}%`;
+        slider.setAttribute("aria-valuenow", String(nextIndex));
+        slider.setAttribute("aria-valuetext", labels[nextMode]);
+        dots.querySelectorAll(".slider-dot").forEach((dot, index) => dot.classList.toggle("inactive", index > nextIndex));
+        badge.textContent = labels[nextMode];
+        badge.style.color = badgeColors[nextMode];
+        description.textContent = descriptions[nextMode];
+        menuButton.title = `思维深度：${labels[nextMode]}`;
+        webSearch.disabled = nextMode === "instant";
+
+        clearTimeout(maxTimer);
+        slider.classList.remove("is-max-entering", "is-max-settled");
+        if (nextMode === "max") {
+          if (previousMode !== "max") {
+            void slider.offsetWidth;
+            slider.classList.add("is-max-entering");
+            maxTimer = setTimeout(() => {
+              slider.classList.remove("is-max-entering");
+              slider.classList.add("is-max-settled");
+            }, 540);
+          } else {
+            slider.classList.add("is-max-settled");
+          }
+        }
+
+        const gradient = trackGradients[nextIndex];
+        clearTimeout(gradientTimer);
+        if (gradient !== activeGradient) {
+          nextGradient.style.background = gradient;
+          nextGradient.classList.remove("is-blending");
+          void nextGradient.offsetWidth;
+          nextGradient.classList.add("is-blending");
+          gradientTimer = setTimeout(() => {
+            currentGradient.style.background = gradient;
+            nextGradient.classList.remove("is-blending");
+            activeGradient = gradient;
+          }, 540);
+        }
+        schedulePulse(true);
+      }
+
+      function setModeFromPointer(event) {
+        const rect = slider.getBoundingClientRect();
+        const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+        setMode(modes[Math.round(fraction * (modes.length - 1))]);
+      }
+
+      function closeMenu() {
+        menu.hidden = true;
+        menu.classList.remove("is-open");
+        menuButton.setAttribute("aria-expanded", "false");
+      }
+
+      function toggleMenu() {
+        const opens = menu.hidden;
+        if (opens) {
+          menu.hidden = false;
+          requestAnimationFrame(() => menu.classList.add("is-open"));
+        } else {
+          closeMenu();
+        }
+        menuButton.setAttribute("aria-expanded", String(opens));
+      }
+
+      menuButton.addEventListener("click", toggleMenu);
+      document.addEventListener("pointerdown", event => {
+        if (!control.contains(event.target)) closeMenu();
+      });
+      document.addEventListener("keydown", event => {
+        if (event.key === "Escape") closeMenu();
+      });
+      slider.addEventListener("pointerdown", event => {
+        slider.setPointerCapture(event.pointerId);
+        setModeFromPointer(event);
+      });
+      slider.addEventListener("pointermove", event => {
+        if (slider.hasPointerCapture(event.pointerId)) setModeFromPointer(event);
+      });
+      slider.addEventListener("pointerup", event => {
+        if (slider.hasPointerCapture(event.pointerId)) slider.releasePointerCapture(event.pointerId);
+      });
+      slider.addEventListener("keydown", event => {
+        let index = modes.indexOf(activeMode);
+        if (event.key === "ArrowLeft" || event.key === "ArrowDown") index -= 1;
+        else if (event.key === "ArrowRight" || event.key === "ArrowUp") index += 1;
+        else if (event.key === "Home") index = 0;
+        else if (event.key === "End") index = modes.length - 1;
+        else return;
+        event.preventDefault();
+        setMode(modes[Math.max(0, Math.min(modes.length - 1, index))]);
+      });
+      generateButton.addEventListener("pointerenter", () => setAnimationRate(2.5));
+      generateButton.addEventListener("pointerleave", () => setAnimationRate(1));
+      generateButton.addEventListener("click", () => {
+        if (generateButton.disabled) return;
+        generateButton.disabled = true;
+        menuButton.disabled = true;
+        generateLabel.textContent = "正在生成...";
+        closeMenu();
+        setTimeout(() => {
+          generateLabel.textContent = "生成 1 张";
+          generateButton.disabled = false;
+          menuButton.disabled = false;
+        }, 850);
+      });
+
+      setMode("instant");
+
+      /* ---- 高级矩阵调控组件 ---- */
+      const menuViewMain = document.getElementById("menuViewMain");
+      const menuViewAdvanced = document.getElementById("menuViewAdvanced");
+      const advancedEntryButton = document.getElementById("advancedEntryButton");
+      const advancedBackButton = document.getElementById("advancedBackButton");
+      const advancedMatrix = document.getElementById("advancedMatrix");
+      const advancedPad = document.getElementById("advancedPad");
+      const advancedKnob = document.getElementById("advancedKnob");
+      const advancedRows = document.getElementById("advancedRows");
+      const advancedStateBadge = document.getElementById("advancedStateBadge");
+      const advancedDesc = document.getElementById("advancedDesc");
+
+      const advModels = [
+        { key: "luna", name: "gpt5.6luna", short: "luna", hue: 199, desc: "轻快响应 · 日常问答首选" },
+        { key: "terra", name: "gpt5.6terra", short: "terra", hue: 229, desc: "均衡全能 · 复杂任务更稳" },
+        { key: "sol", name: "gpt5.6sol", short: "sol", hue: 258, desc: "旗舰推理 · 挑战最难问题" }
+      ];
+      const advEfforts = [
+        { key: "low", name: "low", desc: "低耗速答" },
+        { key: "medium", name: "medium", desc: "适度思考" },
+        { key: "high", name: "high", desc: "深度推理" },
+        { key: "xhigh", name: "xhigh", desc: "超长思维链" },
+        { key: "max", name: "max", desc: "极限反思" }
+      ];
+      // 颜色随模型从天蓝渐变到蓝紫；思维深度提升饱和度、加深发光
+      // 深色底 + 模型色光晕；effort 提升饱和度与光强
+      const advHue = (x, y) => {
+        const modelPosition = Math.max(0, Math.min(2, y));
+        const lowerModel = Math.floor(modelPosition);
+        const upperModel = Math.ceil(modelPosition);
+        const mix = modelPosition - lowerModel;
+        const modelHue = advModels[lowerModel].hue + (advModels[upperModel].hue - advModels[lowerModel].hue) * mix;
+        return modelHue + x * 1.1;
+      };
+      // 主色（光晕/旋钮/按钮），深色背景下的亮色
+      const advGlowColor = (x, y, alpha) => `hsla(${advHue(x, y)}, 95%, ${64 - x * 2}%, ${alpha})`;
+      const advCellGlow = (x, y) => {
+        const a = 0.2 + x * 0.07;
+        return `0 0 ${12 + x * 5}px ${advGlowColor(x, y, a)}, 0 0 ${26 + x * 9}px ${advGlowColor(x, y, a * 0.55)}`;
+      };
+      const advPadGlow = (x, y) => {
+        const highReduction = Math.max(0, x - 1);
+        const a = 0.2 + x * 0.07 - highReduction * 0.06;
+        const innerRadius = 12 + x * 5 - highReduction * 2.5;
+        const outerRadius = 26 + x * 9 - highReduction * 4;
+        return `0 0 ${innerRadius}px ${advGlowColor(x, y, a)}, 0 0 ${outerRadius}px ${advGlowColor(x, y, a * 0.4)}`;
+      };
+
+      // 正方形点阵：17 列 × 11 行，共 16 × 10 个等长间隔；用户仍吸附到 5 × 3 个逻辑节点
+      const ADV_COLS = 17;
+      const ADV_ROWS = 11;
+      const advAnchors = [];
+      const advancedPadInner = document.getElementById("advancedPadInner");
+      for (let row = 0; row < ADV_ROWS; row += 1) {
+        const rowEl = document.createElement("div");
+        rowEl.className = "advanced-row";
+        // row 0 在顶部 → y = 2 (sol)；row 6 在底部 → y = 0 (luna)
+        const y = (ADV_ROWS - 1 - row) / (ADV_ROWS - 1) * 2;
+        for (let col = 0; col < ADV_COLS; col += 1) {
+          const anchor = document.createElement("span");
+          anchor.className = "advanced-anchor";
+          const x = col / (ADV_COLS - 1) * 4;
+          anchor.dataset.x = String(x);
+          anchor.dataset.y = String(y);
+          anchor.dataset.col = String(col);
+          anchor.dataset.row = String(row);
+          anchor.classList.toggle("is-snap", col % 4 === 0 && row % 5 === 0);
+          rowEl.append(anchor);
+          advAnchors.push(anchor);
+        }
+        advancedRows.append(rowEl);
+      }
+
+      let advCell = { x: 0, y: 0 };
+      let advDragging = false;
+
+      function advApplyTheme(x, y, instant = false) {
+        const glow = advCellGlow(x, y);
+        advancedKnob.style.background = `hsl(${advHue(x, y)}, 95%, ${68 - x}%)`;
+        advancedKnob.style.boxShadow = `0 1px 3px rgba(0, 0, 0, 0.3), ${glow}`;
+        advancedPad.style.boxShadow = advPadGlow(x, y);
+        advancedStateBadge.textContent = `${advModels[y].short} · ${advEfforts[x].name}`;
+        advancedStateBadge.style.color = `hsl(${advModels[y].hue}, 78%, ${46 - x}%)`;
+        advancedDesc.textContent = `${advModels[y].name} · ${advEfforts[x].desc} — ${advModels[y].desc}`;
+        advApplyButtonTheme(x, y);
+      }
+
+      // 生成按钮：切到 advanced 动态渐变图层，色相/饱和度/亮度由矩阵位置驱动
+      function advApplyButtonTheme(x, y) {
+        const h = advHue(x, y);
+        const light = 62 - x * 3;
+        const sat = 88 - x * 2;
+        control.dataset.advanced = "1";
+        control.style.setProperty("--adv-h", h.toFixed(2));
+        control.style.setProperty("--adv-s", `${sat.toFixed(2)}%`);
+        control.style.setProperty("--adv-l", `${light.toFixed(2)}%`);
+        control.style.setProperty("--adv-pad-l", `${(13 + x * 0.4).toFixed(2)}%`);
+        control.style.setProperty("--adv-pad-halo", (0.15 + x * 0.025).toFixed(3));
+        control.style.setProperty("--adv-pad-color-alpha", (0.82 - x * 0.035).toFixed(3));
+        // 切图层：只显示 advanced
+        control.querySelectorAll(".reasoning-bg-layer").forEach(layer => {
+          layer.classList.toggle("is-visible", layer.dataset.layerMode === "advanced");
+        });
+        control.style.boxShadow = `0 0 ${6 + x}px ${advGlowColor(x, y, 0.28)}, 0 0 ${12 + x * 2}px ${advGlowColor(x, y, 0.14)}`;
+        control.style.setProperty("--reasoning-hover-shadow", `0 0 ${8 + x}px ${advGlowColor(x, y, 0.36)}, 0 0 ${14 + x * 2}px ${advGlowColor(x, y, 0.2)}`);
+      }
+
+      function advSnapKnob(x, y) {
+        // 吸附到最近的逻辑列对应的可视列 (每 4 个可视列 = 1 个逻辑列)
+        const col = Math.round(x / 4 * (ADV_COLS - 1));
+        advancedKnob.style.left = `${(col / (ADV_COLS - 1)) * 100}%`;
+        advancedKnob.style.top = `${((2 - y) / 2) * 100}%`;
+      }
+
+      function advUpdateHighlights(x, y, hot) {
+        const centerCol = Math.round(x / 4 * (ADV_COLS - 1));
+        const centerRow = Math.round((2 - y) / 2 * (ADV_ROWS - 1));
+        // 每个可视点都能成为中心；十字的每条臂从中心到边缘完整衰减
+        advAnchors.forEach(anchor => {
+          const col = Number(anchor.dataset.col);
+          const row = Number(anchor.dataset.row);
+          const onRow = row === centerRow;
+          const onCol = col === centerCol;
+          const onAxis = onRow || onCol;
+          const active = onRow && onCol;
+          anchor.classList.toggle("is-axis", onAxis);
+          if (!onAxis) {
+            anchor.style.removeProperty("--dot-highlight-scale");
+            anchor.style.removeProperty("--dot-alpha");
+            anchor.style.removeProperty("--dot-glow");
+            anchor.style.removeProperty("--dot-glow-alpha");
+            return;
+          }
+          const axisDistance = onRow ? Math.abs(col - centerCol) : Math.abs(row - centerRow);
+          const armLength = onRow
+            ? (col < centerCol ? centerCol : ADV_COLS - 1 - centerCol)
+            : (row < centerRow ? centerRow : ADV_ROWS - 1 - centerRow);
+          const distance = armLength > 0 ? axisDistance / armLength : 0;
+          const strength = 0.14 + 0.86 * Math.pow(1 - distance, 1.55);
+          const highlightScale = active ? (hot ? 2.2 : 2) : 0.12 + strength * 1.38;
+          anchor.style.setProperty("--dot-highlight-scale", highlightScale.toFixed(3));
+          anchor.style.setProperty("--dot-alpha", (0.36 + strength * 0.64).toFixed(3));
+          anchor.style.setProperty("--dot-glow", `${(0.5 + strength * 7.5).toFixed(2)}px`);
+          anchor.style.setProperty("--dot-glow-alpha", (0.04 + strength * 0.64).toFixed(3));
+        });
+        document.querySelectorAll(".advanced-x-label").forEach(label => {
+          label.classList.toggle("is-active", Number(label.dataset.xLabel) === Math.round(x));
+        });
+        document.querySelectorAll(".advanced-y-label").forEach(label => {
+          label.classList.toggle("is-active", Number(label.dataset.yLabel) === Math.round(y));
+        });
+      }
+
+      function advSetCell(x, y, instant = false) {
+        const nx = Math.max(0, Math.min(4, Math.round(x)));
+        const ny = Math.max(0, Math.min(2, Math.round(y)));
+        advCell = { x: nx, y: ny };
+        advancedKnob.classList.remove("is-dragging");
+        advSnapKnob(nx, ny);
+        advUpdateHighlights(nx, ny, false);
+        advApplyTheme(nx, ny, instant);
+      }
+
+      function advCellFromPointer(event) {
+        const rect = advancedPadInner.getBoundingClientRect();
+        const fx = Math.max(0, Math.min(0.9999, (event.clientX - rect.left) / rect.width));
+        const fy = Math.max(0, Math.min(0.9999, (event.clientY - rect.top) / rect.height));
+        return {
+          x: Math.max(0, Math.min(advEfforts.length - 1, Math.round(fx * (advEfforts.length - 1)))),
+          y: Math.max(0, Math.min(advModels.length - 1, Math.round((1 - fy) * (advModels.length - 1))))
+        };
+      }
+
+      function advDragPreview(event) {
+        const rect = advancedPadInner.getBoundingClientRect();
+        const px = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+        const py = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+        const previewX = px / rect.width * 4;
+        const previewY = (1 - py / rect.height) * 2;
+        advancedKnob.style.left = `${(px / rect.width) * 100}%`;
+        advancedKnob.style.top = `${(py / rect.height) * 100}%`;
+        advUpdateHighlights(previewX, previewY, true);
+        // 实时更新旋钮颜色 + pad 背景 + 按钮（不等松手）
+        advancedKnob.style.background = `hsl(${advHue(previewX, previewY)}, 95%, ${68 - previewX}%)`;
+        advancedKnob.style.boxShadow = `0 1px 3px rgba(0, 0, 0, 0.3), ${advCellGlow(previewX, previewY)}`;
+        advancedPad.style.boxShadow = advPadGlow(previewX, previewY);
+        advApplyButtonTheme(previewX, previewY);
+      }
+
+      advancedPad.addEventListener("pointerdown", event => {
+        advancedPad.setPointerCapture(event.pointerId);
+        advDragging = true;
+        advancedPad.classList.add("is-dragging");
+        advancedKnob.classList.add("is-dragging");
+        advDragPreview(event);
+      });
+      advancedPad.addEventListener("pointermove", event => {
+        if (advDragging && advancedPad.hasPointerCapture(event.pointerId)) advDragPreview(event);
+      });
+      const advEndDrag = event => {
+        if (!advDragging) return;
+        advDragging = false;
+        advancedPad.classList.remove("is-dragging");
+        if (advancedPad.hasPointerCapture(event.pointerId)) advancedPad.releasePointerCapture(event.pointerId);
+        const target = advCellFromPointer(event);
+        advSetCell(target.x, target.y);
+      };
+      advancedPad.addEventListener("pointerup", advEndDrag);
+      advancedPad.addEventListener("pointercancel", advEndDrag);
+
+      advancedMatrix.addEventListener("keydown", event => {
+        let { x, y } = advCell;
+        if (event.key === "ArrowLeft") x -= 1;
+        else if (event.key === "ArrowRight") x += 1;
+        else if (event.key === "ArrowUp") y += 1;
+        else if (event.key === "ArrowDown") y -= 1;
+        else if (event.key === "Home") x = 0;
+        else if (event.key === "End") x = 4;
+        else return;
+        event.preventDefault();
+        advSetCell(x, y);
+      });
+
+      function showAdvancedView() {
+        menuViewMain.hidden = true;
+        menuViewAdvanced.hidden = false;
+        menu.classList.add("is-advanced");
+        requestAnimationFrame(() => advSetCell(advCell.x, advCell.y, true));
+        advancedMatrix.focus({ preventScroll: true });
+      }
+      function showMainView() {
+        menuViewAdvanced.hidden = true;
+        menuViewMain.hidden = false;
+        menu.classList.remove("is-advanced");
+        // 恢复 slider 当前模式对应的按钮主题（清除 advanced 覆盖）
+        setMode(activeMode);
+      }
+      advancedEntryButton.addEventListener("click", showAdvancedView);
+      advancedBackButton.addEventListener("click", showMainView);
+      menuButton.addEventListener("click", showMainView);
+      document.addEventListener("pointerdown", event => {
+        if (!control.contains(event.target)) showMainView();
+      });
+
+      advSetCell(0, 0, true);
+    })();
+  </script>
+</body>
+</html>
