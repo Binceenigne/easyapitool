@@ -221,6 +221,7 @@
                                             <button type="button" data-ratio="21:9" aria-pressed="false" onclick="setImageAspectRatio('21:9')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>21:9</span></button>
                                         </div>
                                     </section>
+                                    <div class="image-transparency-model-controls">
                                     <section class="image-control-section">
                                         <span>透明度</span>
                                         <div id="imageTransparencyButtons" class="image-control-segmented" role="radiogroup" aria-label="图片透明度">
@@ -229,6 +230,14 @@
                                             <button type="button" data-transparency="transparent" aria-pressed="false" onclick="setImageTransparency('transparent')">透明</button>
                                         </div>
                                     </section>
+                                    <section class="image-control-section">
+                                        <span>模型</span>
+                                        <div id="imageModelPicker" class="image-control-segmented" role="group" aria-label="图片模型">
+                                            <button type="button" class="is-active" data-image-model="gpt-image-2" aria-pressed="true" title="均衡快速" onclick="setImageModel('gpt-image-2')">2.0</button>
+                                            <button type="button" data-image-model="gpt-image-2.5" aria-pressed="false" title="顶级画面质量，更优质画面一致性" onclick="setImageModel('gpt-image-2.5')">2.5</button>
+                                        </div>
+                                    </section>
+                                    </div>
                                     <section class="image-control-section image-count-control">
                                         <span>生成数量</span>
                                         <div id="imageGenerationCountButtons" class="image-control-segmented" role="radiogroup" aria-label="图片数量">
@@ -257,13 +266,6 @@
                                 <span class="reasoning-bg-layer" data-layer-mode="max" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
                                 <span class="reasoning-bg-layer" data-layer-mode="advanced" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
                                 <button type="submit" id="generateEditedImageButton" data-reasoning-mode="instant"><span>生成 1 张</span></button>
-                                <details id="imageModelPicker" class="image-model-picker" ontoggle="if(this.open) { closeImageReasoningMenu(); closeImageGenerationControls(); }">
-                                    <summary title="选择图片模型" aria-label="选择图片模型"><span id="imageModelLabel">2.0</span><i data-lucide="chevron-up" aria-hidden="true"></i></summary>
-                                    <div class="image-model-options" role="group" aria-label="图片模型">
-                                        <button type="button" data-image-model="gpt-image-2" aria-pressed="true" onclick="setImageModel('gpt-image-2')"><strong>GPT Image 2.0</strong><span>均衡快速</span></button>
-                                        <button type="button" data-image-model="gpt-image-2.5" aria-pressed="false" onclick="setImageModel('gpt-image-2.5')"><strong>GPT Image 2.5</strong><span>顶级画面质量，更优质画面一致性</span></button>
-                                    </div>
-                                </details>
                                 <button type="button" id="imageReasoningMenuButton" aria-expanded="false" aria-controls="imageReasoningMenu" onclick="toggleImageReasoningMenu()" title="选择思维深度" aria-label="选择思维深度"><i data-lucide="chevron-up" aria-hidden="true"></i></button>
                                 <div id="imageReasoningMenu" class="image-reasoning-menu" hidden aria-label="思维深度设置">
                                     <div id="reasoningMenuMainView" class="reasoning-menu-view">
