@@ -743,6 +743,8 @@
         function createImageGenerationSet(requestId, requestedCount, prompt, metadata = {}) {
             let set = window.imageEditState.resultSets.find(item => item.setId === requestId);
             if (set) return set;
+            const scrollHost = document.getElementById('imageGenerationSets');
+            const followNewSet = scrollHost.scrollTop <= 4;
             window.imageEditState.resultSets.forEach(existingSet => {
                 if (existingSet.status === 'running') return;
                 existingSet.expanded = false;
@@ -828,6 +830,7 @@
             };
             window.imageEditState.resultSets.unshift(set);
             renderImageGenerationSets();
+            if (followNewSet) scrollHost.scrollTop = 0;
             return set;
         }
 

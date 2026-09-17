@@ -1715,7 +1715,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertLess(output_controls.index('data-preset="medium"'), output_controls.index('data-preset="large"'))
         self.assertLess(output_controls.index('data-preset="large"'), output_controls.index('data-preset="lossless"'))
         self.assertIn('id="imageGenerationQualitySummary" data-quality="auto"', page)
-        self.assertIn('id="imageGenerationOutputSummary" data-preset="lossless"', page)
+        self.assertNotIn('id="imageGenerationOutputSummary"', page)
+        self.assertIn('id="imageGenerationModelSummary"', page)
         self.assertIn('#imageGenerationQualitySummary[data-quality="auto"]', scss_source)
         self.assertIn('#imageGenerationQualitySummary[data-quality="high"]', scss_source)
         self.assertIn('#imageOutputPresetButtons button[data-preset="lossless"].is-active', scss_source)
@@ -2469,6 +2470,37 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(all(response.closed for response in responses))
         with self.assertRaises(controller_image_reasoning.ImageGenerationCancelled):
             context.check_cancelled()
+
+    def test_reasoning_retries_five_times_with_incremental_delays(self):
+        from backend.controller_mixins.image_reasoning import ImageReasoningMixin, ImageTaskContext
+        controller = ImageReasoningMixin()
+        controller.client = SimpleNamespace(stream_response=Mock(side_effect=RuntimeError('overloaded')))
+        context = ImageTaskContext()
+        context.cancel_event.wait = Mock(return_value=False)
+        with self.assertRaisesRegex(RuntimeError, 'overloaded'):
+            controller._call_reasoning_with_retries(task_context=context)
+        self.assertEqual(controller.client.stream_response.call_count, 6)
+        self.assertEqual([entry.args[0] for entry in context.cancel_event.wait.call_args_list], [5, 10, 15, 20, 25])
+
+    def test_reasoning_retry_can_succeed_and_cancel(self):
+        from backend.controller_mixins.image_reasoning import ImageReasoningMixin, ImageTaskContext, ImageGenerationCancelled
+        controller = ImageReasoningMixin()
+        controller.client = SimpleNamespace(stream_response=Mock(side_effect=[RuntimeError('overloaded'), 'ok']))
+        context = ImageTaskContext()
+        context.cancel_event.wait = Mock(return_value=False)
+        self.assertEqual(controller._call_reasoning_with_retries(task_context=context), 'ok')
+        controller.client.stream_response = Mock(side_effect=RuntimeError('overloaded'))
+        context.cancel_event.wait = Mock(side_effect=lambda delay: context.cancel())
+        with self.assertRaises(ImageGenerationCancelled):
+            controller._call_reasoning_with_retries(task_context=context)
+        self.assertEqual(controller.client.stream_response.call_count, 1)
+
+    def test_delete_missing_failed_image_set_is_idempotent(self):
+        from backend.controller_mixins.image_files import ImageFilesMixin
+        controller = ImageFilesMixin()
+        controller._image_session_is_active = Mock(return_value=False)
+        controller._image_session_store = Mock(return_value=SimpleNamespace(delete_set=Mock(return_value=False)))
+        self.assertTrue(controller.delete_image_set('failed-session', 'failed-set')['ok'])
 
     def test_import_reference_image_validates_and_persists_image_data(self):
         controller = app.AppController.__new__(app.AppController)

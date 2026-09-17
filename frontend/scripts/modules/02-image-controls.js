@@ -336,8 +336,8 @@
             if (!layer || !layerRect) return;
             const buttonRect = button.getBoundingClientRect();
             const formRect = form.getBoundingClientRect();
-            panel.style.setProperty('--image-popover-left', `${(formRect.left - layerRect.left) / scale}px`);
-            panel.style.setProperty('--image-popover-width', `${formRect.width / scale}px`);
+            panel.style.setProperty('--image-popover-left', `${(formRect.left - layerRect.left) / scale + 12}px`);
+            panel.style.setProperty('--image-popover-width', `${Math.max(0, formRect.width / scale - 24)}px`);
             panel.style.setProperty('--image-popover-bottom', `${Math.max(12, (layerRect.bottom - buttonRect.top) / scale + 8)}px`);
         }
 
@@ -437,6 +437,7 @@
                 button.classList.toggle('is-active', active);
                 button.setAttribute('aria-pressed', String(active));
             });
+            updateImageGenerationControlSummary();
             if (persist) persistImageGenerationPreferences();
         }
 
@@ -453,20 +454,14 @@
 
         function updateImageGenerationControlSummary() {
             const ratio = window.imageEditState.aspectRatio;
-            const transparency = window.imageEditState.transparency;
             const qualityLabels = { auto: '自动细节', low: '低细节', medium: '中细节', high: '高细节' };
-            const outputLabels = { lossless: '无损', large: '大', medium: '中', small: '小' };
-            const transparencyLabels = { auto: '自动透明', opaque: '不透明', transparent: '透明' };
             const size = IMAGE_SIZE_PRESETS[ratio] || 'auto';
             document.getElementById('imageEditSize').value = size;
             const qualitySummary = document.getElementById('imageGenerationQualitySummary');
             qualitySummary.textContent = qualityLabels[window.imageEditState.quality];
             qualitySummary.dataset.quality = window.imageEditState.quality;
-            const outputSummary = document.getElementById('imageGenerationOutputSummary');
-            outputSummary.textContent = outputLabels[window.imageEditState.outputPreset];
-            outputSummary.dataset.preset = window.imageEditState.outputPreset;
             document.getElementById('imageGenerationRatioSummary').textContent = ratio === 'auto' ? '智能' : ratio;
-            document.getElementById('imageGenerationTransparencySummary').textContent = transparencyLabels[transparency];
+            document.getElementById('imageGenerationModelSummary').textContent = window.imageEditState.imageModel === 'gpt-image-2.5' ? '2.5' : '2.0';
             document.getElementById('imageGenerationCountSummary').textContent = `${window.imageEditState.imageCount} 张`;
             const buttonLabel = document.querySelector('#generateEditedImageButton span');
             if (buttonLabel && !window.imageEditState.busy) {

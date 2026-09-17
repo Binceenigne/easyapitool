@@ -266,11 +266,9 @@ class ImageFilesMixin:
         if str(set_id) in active_sets or self._image_session_is_active(session_id):
             return {"ok": False, "error": "图片会话仍在生成中，暂时不能删除"}
         try:
-            deleted = self._image_session_store().delete_set(session_id, set_id)
+            self._image_session_store().delete_set(session_id, set_id)
         except (OSError, ValueError) as exc:
             return {"ok": False, "error": f"删除图片集失败：{exc}"}
-        if not deleted:
-            return {"ok": False, "error": "图片集不存在或已被删除"}
         return {"ok": True, "setId": str(set_id), "sessionId": str(session_id)}
 
     def save_edited_image(self, source_path: str) -> dict[str, Any]:

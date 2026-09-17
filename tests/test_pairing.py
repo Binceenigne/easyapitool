@@ -111,10 +111,10 @@ class PairingTests(unittest.TestCase):
         self.assertIn("z-index: 100", responsive_scss)
         self.assertIn("display: none !important", responsive_scss)
         self.assertNotIn("box-shadow: 12px 0 24px", responsive_scss)
-        self.assertEqual(lucide.stat().st_size, 357796)
+        self.assertEqual(lucide.stat().st_size, 357808)
         self.assertEqual(
             hashlib.sha256(lucide.read_bytes()).hexdigest(),
-            "3411692820cb8d47543f69496aa25fd603a358f4498046f41c508a5a3342210e",
+            "4a1df82cb2d94f5ef6e974846e7dede7440f1620cae161c9655cad48356002c2",
         )
         self.assertIn("async function exportImageSets(selected)", bridge)
         self.assertIn("const localSets = await listLocalImageSets();", bridge)
@@ -132,9 +132,9 @@ class PairingTests(unittest.TestCase):
             PROJECT_ROOT / "mobile" / "android" / "app" / "src" / "main" / "res" / "mipmap-anydpi-v26" / "ic_launcher.xml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("appName: 'Mirra(觅然)'", config)
-        self.assertIn('<string name="app_name">Mirra(觅然)</string>', strings)
-        self.assertIn('<string name="title_activity_main">Mirra(觅然)</string>', strings)
+        self.assertIn("appName: 'Mirra'", config)
+        self.assertIn('<string name="app_name">Mirra</string>', strings)
+        self.assertIn('<string name="title_activity_main">Mirra</string>', strings)
         self.assertIn('android:icon="@mipmap/ic_launcher"', manifest)
         self.assertTrue(resources.is_file())
         self.assertIn("mipmap/ic_launcher_foreground", adaptive)
