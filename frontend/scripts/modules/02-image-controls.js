@@ -427,29 +427,16 @@
             if (!['gpt-image-2', 'gpt-image-2.5'].includes(model)) model = 'gpt-image-2';
             window.imageEditState.imageModel = model;
             const picker = document.getElementById('imageModelPicker');
-            document.getElementById('imageModelLabel').textContent = model === 'gpt-image-2.5' ? '2.5' : '2.0';
             if (!window.imageEditState.editSession) {
                 document.getElementById('imageEditHeading').textContent = model === 'gpt-image-2.5' ? 'GPT Image 2.5 生图' : 'GPT Image 2.0 生图';
             }
             picker.querySelectorAll('[data-image-model]').forEach(button => {
-                button.setAttribute('aria-pressed', String(button.dataset.imageModel === model));
+                const active = button.dataset.imageModel === model;
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-pressed', String(active));
             });
-            picker.open = false;
-            if (persist) picker.querySelector('summary').focus();
             if (persist) persistImageGenerationPreferences();
         }
-
-        document.addEventListener('click', event => {
-            const picker = document.getElementById('imageModelPicker');
-            if (picker?.open && !picker.contains(event.target)) picker.open = false;
-        });
-        document.addEventListener('keydown', event => {
-            const picker = document.getElementById('imageModelPicker');
-            if (event.key === 'Escape' && picker?.open) {
-                picker.open = false;
-                picker.querySelector('summary').focus();
-            }
-        });
 
         function setImageGenerationCount(count, persist = true) {
             window.imageEditState.imageCount = Math.max(1, Math.min(9, Number(count) || 1));
