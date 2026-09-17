@@ -46,6 +46,29 @@ class ImageTaskContext:
 
 
 class ImageReasoningMixin:
+    def _call_reasoning_with_retries(self, *args: Any, task_context: ImageTaskContext | None, on_retry: Any = None, **kwargs: Any) -> Any:
+        for attempt in range(6):
+            if task_context is not None:
+                task_context.check_cancelled()
+            try:
+                return self._call_with_task_context(
+                    self.client.stream_response, *args, task_context=task_context, **kwargs
+                )
+            except ImageGenerationCancelled:
+                raise
+            except (RuntimeError, OSError) as exc:
+                if task_context is not None:
+                    task_context.check_cancelled()
+                if attempt == 5:
+                    raise
+                if on_retry is not None:
+                    on_retry(attempt + 1, 5 * (attempt + 1), str(exc))
+                if task_context is not None:
+                    task_context.cancel_event.wait(5 * (attempt + 1))
+                    task_context.check_cancelled()
+                else:
+                    time.sleep(5 * (attempt + 1))
+
     @staticmethod
     def _call_with_task_context(
         method: Any,
@@ -133,8 +156,7 @@ class ImageReasoningMixin:
             for asset in visible_assets
             if Path(str(asset.get("path") or "")).is_file()
         )
-        output = self._call_with_task_context(
-            self.client.stream_response,
+        output = self._call_reasoning_with_retries(
             record["base_url"],
             secret,
             IMAGE_CONTINUATION_PLANNER_MODEL,
@@ -178,8 +200,7 @@ class ImageReasoningMixin:
         )
         if len(image_paths) != len(assets) or any(not asset_id for asset_id in asset_ids):
             raise ValueError("待描述素材不可用")
-        output = self._call_with_task_context(
-            self.client.stream_response,
+        output = self._call_reasoning_with_retries(
             record["base_url"],
             secret,
             IMAGE_CONTINUATION_PLANNER_MODEL,
@@ -394,6 +415,15 @@ class ImageReasoningMixin:
                 title="正在分析问题" if current_turn == 1 else "正在完善方案",
             )
             completed_payloads: list[dict[str, Any]] = []
+            turn_prefix = complete_text[:current_turn_start]
+
+            def retry_turn(retry: int, delay: int, error: str) -> None:
+                nonlocal complete_text, published_length
+                complete_text = turn_prefix
+                published_length = current_turn_start
+                completed_payloads.clear()
+                emit("react_turn_started", turn=current_turn, title=f"服务异常，{delay} 秒后重试（{retry}/5）", reset=True, summary=turn_prefix)
+
             if continuation_enabled and not plan_submitted:
                 tools = [IMAGE_CONTINUATION_PLAN_TOOL]
                 tool_choice = "required"
@@ -406,8 +436,7 @@ class ImageReasoningMixin:
                     else None
                 )
                 tool_choice = "auto" if tools else None
-            output = self._call_with_task_context(
-                self.client.stream_response,
+            output = self._call_reasoning_with_retries(
                 record["base_url"],
                 secret,
                 model,
@@ -419,6 +448,7 @@ class ImageReasoningMixin:
                 tool_choice=tool_choice,
                 parallel_tool_calls=True if tools else None,
                 on_completed=completed_payloads.append,
+                on_retry=retry_turn,
                 allow_empty_text=bool(tools),
                 task_context=task_context,
             )

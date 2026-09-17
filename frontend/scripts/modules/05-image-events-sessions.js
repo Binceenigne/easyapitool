@@ -1,3 +1,14 @@
+        function confirmImageSubmission(requestId) {
+            const pending = window.imageEditState.pendingSubmission;
+            if (!pending || pending.requestId !== requestId) return;
+            pending.confirmed = true;
+            if (performance.now() < pending.unlockAt) return;
+            window.imageEditState.pendingSubmission = null;
+            const button = document.getElementById('generateEditedImageButton');
+            button.disabled = false;
+            button.removeAttribute('aria-busy');
+        }
+
         window.applyImageGenerationEvent = function(event) {
             if (event?.type?.startsWith('prompt_polish_')) {
                 if (event.type === 'prompt_polish_delta') {
@@ -24,6 +35,7 @@
                     event
                 );
             if (eventRequestId) set.requestId = eventRequestId;
+            confirmImageSubmission(eventRequestId || set.requestId);
             if (event.type === 'set_started') {
                 set.requestedCount = Number(event.requestedCount) || set.requestedCount;
                 set.imageModel = event.imageModel || set.imageModel;
@@ -71,6 +83,10 @@
                 set.reasoningCompletedAt = 0;
             } else if (event.type === 'react_turn_started') {
                 const turn = reasoningTurnByNumber(set, event.turn);
+                if (event.reset) {
+                    turn.text = '';
+                    set.reasoningSummary = event.summary || '';
+                }
                 turn.title = event.title || turn.title;
                 turn.status = 'running';
                 turn.startedAt ||= Date.now();
@@ -830,6 +846,7 @@
 
         async function submitImageEdit(event) {
             event.preventDefault();
+            if (window.imageEditState.pendingSubmission) return;
             const session = window.imageEditState.editSession
                 ? { ...window.imageEditState.editSession }
                 : null;
@@ -877,6 +894,13 @@
                     ? true
                     : window.imageEditState.webSearchEnabled
             };
+            window.imageEditState.pendingSubmission = { requestId, unlockAt: performance.now() + 500, confirmed: false };
+            button.disabled = true;
+            button.setAttribute('aria-busy', 'true');
+            setTimeout(() => {
+                const pending = window.imageEditState.pendingSubmission;
+                if (pending?.requestId === requestId && pending.confirmed) confirmImageSubmission(requestId);
+            }, 510);
             createImageGenerationSet(requestId, imageCount, finalPrompt, {
                 imageModel: requestOptions.imageModel,
                 aspectRatio,
@@ -963,6 +987,7 @@
                 finalStatus = error.message || String(error);
                 showToast(finalStatus, 'error');
             } finally {
+                confirmImageSubmission(requestId);
                 window.imageEditState.activeRequests.delete(requestId);
                 const activeCount = window.imageEditState.activeRequests.size;
                 status.textContent = activeCount
