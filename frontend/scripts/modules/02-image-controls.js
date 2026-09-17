@@ -5,6 +5,7 @@
                 outputPreset: state.outputPreset,
                 aspectRatio: state.aspectRatio,
                 transparency: state.transparency,
+                imageModel: state.imageModel,
                 imageCount: state.imageCount,
                 reasoningMode: state.reasoningMode,
                 reasoningAdvanced: state.reasoningAdvanced,
@@ -27,6 +28,7 @@
             setImageOutputPreset(saved.outputPreset || 'lossless', false);
             setImageAspectRatio(saved.aspectRatio || 'auto', false);
             setImageTransparency(saved.transparency || 'auto', false);
+            setImageModel(saved.imageModel || 'gpt-image-2', false);
             setImageGenerationCount(saved.imageCount || 1, false);
             setImageWebSearchEnabled(saved.webSearchEnabled !== false, false);
             restoreImageReasoningPreferences(saved, false);
@@ -413,18 +415,41 @@
             if (persist) persistImageGenerationPreferences();
         }
 
-        function imageGenerationConstraintSuffixes(aspectRatio = window.imageEditState.aspectRatio, transparency = window.imageEditState.transparency) {
-            const suffixes = [];
-            if (aspectRatio && aspectRatio !== 'auto') {
-                suffixes.push(`以以下比例要求为准：强制生成比例为${aspectRatio}的图片`);
-            }
-            if (transparency === 'transparent') {
-                suffixes.push('以以下透明度要求为准：强制生成透明背景的图片');
-            } else if (transparency === 'opaque') {
-                suffixes.push('以以下透明度要求为准：强制生成不透明背景的图片');
-            }
-            return suffixes;
+        function visibleImagePrompt(prompt) {
+            let clean = String(prompt || '').trim();
+            clean = clean.replace(/\s*\[内部输出约束\][\s\S]*?\[\/内部输出约束\]\s*$/, '').trim();
+            const suffix = /(?:\s*以以下比例要求为准：强制生成比例为\d+:\d+的图片|\s*以以下透明度要求为准：强制生成(?:不透明|透明)背景的图片)$/;
+            while (suffix.test(clean)) clean = clean.replace(suffix, '').trim();
+            return clean;
         }
+
+        function setImageModel(model, persist = true) {
+            if (!['gpt-image-2', 'gpt-image-2.5'].includes(model)) model = 'gpt-image-2';
+            window.imageEditState.imageModel = model;
+            const picker = document.getElementById('imageModelPicker');
+            document.getElementById('imageModelLabel').textContent = model === 'gpt-image-2.5' ? '2.5' : '2.0';
+            if (!window.imageEditState.editSession) {
+                document.getElementById('imageEditHeading').textContent = model === 'gpt-image-2.5' ? 'GPT Image 2.5 生图' : 'GPT Image 2.0 生图';
+            }
+            picker.querySelectorAll('[data-image-model]').forEach(button => {
+                button.setAttribute('aria-pressed', String(button.dataset.imageModel === model));
+            });
+            picker.open = false;
+            if (persist) picker.querySelector('summary').focus();
+            if (persist) persistImageGenerationPreferences();
+        }
+
+        document.addEventListener('click', event => {
+            const picker = document.getElementById('imageModelPicker');
+            if (picker?.open && !picker.contains(event.target)) picker.open = false;
+        });
+        document.addEventListener('keydown', event => {
+            const picker = document.getElementById('imageModelPicker');
+            if (event.key === 'Escape' && picker?.open) {
+                picker.open = false;
+                picker.querySelector('summary').focus();
+            }
+        });
 
         function setImageGenerationCount(count, persist = true) {
             window.imageEditState.imageCount = Math.max(1, Math.min(9, Number(count) || 1));

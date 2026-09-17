@@ -764,8 +764,10 @@
                 parentSetId: metadata.parentSetId || '',
                 roundNumber: Number(metadata.roundNumber) || 1,
                 requestedCount,
-                prompt,
-                originalPrompt: metadata.originalPrompt || prompt,
+                prompt: visibleImagePrompt(prompt),
+                originalPrompt: visibleImagePrompt(metadata.originalPrompt || prompt),
+                imageModel: metadata.imageModel || 'gpt-image-2',
+                aspectRatio: metadata.aspectRatio || 'auto',
                 transparency: ['auto', 'opaque', 'transparent'].includes(metadata.transparency)
                     ? metadata.transparency
                     : 'auto',
@@ -794,7 +796,7 @@
                 reasoningCompletedAt: Number(metadata.reasoningCompletedAt) || 0,
                 reasoningDurationMs: Math.max(0, Number(metadata.reasoningDurationMs) || 0),
                 reasoningUsage: normalizeReasoningUsage(metadata.reasoningUsage),
-                effectivePrompt: metadata.effectivePrompt || '',
+                effectivePrompt: visibleImagePrompt(metadata.effectivePrompt),
                 webSearchEnabled: metadata.webSearchEnabled === true,
                 webSearchStatus: metadata.webSearchFailed
                     ? 'failed'

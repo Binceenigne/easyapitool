@@ -299,6 +299,7 @@ class ImageSessionStore:
                     "size": str(options.get("size") or "auto"),
                     "aspectRatio": str(options.get("aspectRatio") or "auto"),
                     "transparency": str(options.get("transparency") or "auto"),
+                    "imageModel": str(options.get("imageModel") or "gpt-image-2"),
                     "quality": str(options.get("quality") or "auto"),
                     "outputPreset": str(options.get("outputPreset") or "lossless"),
                     "operation": str(options.get("operation") or "generate"),
@@ -558,7 +559,7 @@ class ImageSessionStore:
                     {
                         "setId": branch_id,
                         "roundNumber": int(branch_round.get("roundNumber") or 0),
-                        "userPrompt": str(
+                        "userPrompt": strip_image_prompt_constraints(
                             options.get("originalPrompt") or branch_round.get("prompt") or ""
                         ),
                         "reasoningSummary": str(
@@ -954,8 +955,9 @@ class ImageSessionStore:
                             "parentSetId": str(round_data.get("parentSetId") or ""),
                             "roundNumber": int(round_data.get("roundNumber") or 0),
                             "requestedCount": int(round_data.get("requestedCount") or len(items)),
-                            "prompt": str(round_data.get("prompt") or ""),
-                            "originalPrompt": str(options.get("originalPrompt") or round_data.get("prompt") or ""),
+                            "prompt": strip_image_prompt_constraints(round_data.get("prompt") or ""),
+                            "originalPrompt": strip_image_prompt_constraints(options.get("originalPrompt") or round_data.get("prompt") or ""),
+                            "imageModel": str(options.get("imageModel") or "gpt-image-2"),
                             "aspectRatio": str(options.get("aspectRatio") or "auto"),
                             "transparency": str(options.get("transparency") or "auto"),
                             "operation": str(options.get("operation") or ("edit" if round_data.get("referenceCount") else "generate")),
@@ -971,7 +973,7 @@ class ImageSessionStore:
                             "reasoningDurationMs": max(0, int(options.get("reasoningDurationMs") or 0)),
                             "reasoningUsage": self._reasoning_usage(options.get("reasoningUsage")),
                             "reasoningStatus": "completed" if reasoning_mode != "instant" and reasoning_summary else "idle",
-                            "effectivePrompt": str(round_data.get("prompt") or "") if reasoning_mode != "instant" else "",
+                            "effectivePrompt": strip_image_prompt_constraints(round_data.get("prompt") or "") if reasoning_mode != "instant" else "",
                             "webSearchEnabled": bool(options.get("webSearchEnabled")),
                             "webSearchUsed": bool(options.get("webSearchUsed")),
                             "webSearchFailed": bool(options.get("webSearchFailed")),
@@ -1161,12 +1163,48 @@ def _number(value: Any, default: float) -> float:
         return default
 
 
+def strip_image_prompt_constraints(prompt: str) -> str:
+    clean_prompt = str(prompt or "").strip()
+    legacy_suffix = __import__("re").compile(
+        r"(?:\s*以以下比例要求为准：强制生成比例为\d+:\d+的图片|"
+        r"\s*以以下透明度要求为准：强制生成(?:不透明|透明)背景的图片)$"
+    )
+    while legacy_suffix.search(clean_prompt):
+        clean_prompt = legacy_suffix.sub("", clean_prompt).rstrip()
+    return clean_prompt
+
+
+def image_prompt_with_constraints(prompt: str, options: dict[str, Any]) -> str:
+    requirements = []
+    aspect_ratio = str(options.get("aspectRatio") or "auto")
+    if aspect_ratio != "auto":
+        if aspect_ratio not in {"9:16", "2:3", "3:4", "1:1", "4:3", "3:2", "16:9", "21:9"}:
+            raise ValueError("无效的图片比例")
+        requirements.append(
+            f"最终输出画布的宽高比必须为 {aspect_ratio}（宽:高）。请按此比例重新构图并铺满画布，"
+            "不得使用白边、黑边、边框或在其他比例画布中嵌入目标比例图片来替代。"
+        )
+    transparency = options.get("transparency", "auto")
+    if transparency == "transparent":
+        requirements.append(
+            "最终文件必须为带真实 alpha 通道的透明背景 PNG，主体外背景像素的 alpha 必须为 0，"
+            "主体边缘保留自然抗锯齿与半透明细节。不得以白色、纯色、棋盘格或绘制的网格模拟透明，"
+            "不得添加背景场景、底板或边框。"
+        )
+    elif transparency == "opaque":
+        requirements.append("最终画面必须完全不透明，所有像素 alpha 为 255；背景完整铺满画布，不留透明区域。")
+    clean_prompt = strip_image_prompt_constraints(prompt)
+    if not requirements:
+        return clean_prompt
+    return clean_prompt + "\n\n[内部输出约束]\n以下要求优先于描述或参考图中的冲突设置，必须全部满足；不要将这些指令绘制为画面文字。\n" + "\n".join(requirements) + "\n生成前核对画布比例和背景透明度，仅输出符合要求的图片。\n[/内部输出约束]"
+
+
 def prepare_image_generation(
     prompt: str,
     image_paths: list[str],
     options: dict[str, Any] | None = None,
 ) -> ImageGenerationRequest:
-    clean_prompt = str(prompt or "").strip()
+    clean_prompt = strip_image_prompt_constraints(prompt)
     if not clean_prompt:
         raise ValueError("请输入生图提示词")
     if len(clean_prompt) > 32_000:
@@ -1231,9 +1269,12 @@ def prepare_image_generation(
     if not 0 <= partial_images <= 3:
         raise ValueError("流式预览图数量必须在 0 到 3 之间")
 
+    image_model = str(clean_options.get("imageModel") or "gpt-image-2").strip()
+    if image_model not in {"gpt-image-2", "gpt-image-2.5"}:
+        raise ValueError("无效的图片模型")
     fields = {
-        "model": "gpt-image-2",
-        "prompt": clean_prompt,
+        "model": image_model,
+        "prompt": image_prompt_with_constraints(clean_prompt, clean_options),
         "quality": quality,
         "output_format": "png",
         "moderation": moderation,

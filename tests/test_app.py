@@ -2437,7 +2437,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn("@keyframes imageFinalReveal", stylesheet)
         self.assertIn("@media (prefers-reduced-motion: reduce)", stylesheet)
 
-    def test_selected_aspect_ratio_is_appended_to_generation_prompt(self):
+    def test_generation_controls_do_not_leak_into_visible_prompt(self):
         page = frontend_source()
         controls = (
             PROJECT_ROOT / "frontend" / "scripts" / "modules" / "02-image-controls.js"
@@ -2447,14 +2447,10 @@ class StaticAssetCacheTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("const aspectRatio = window.imageEditState.aspectRatio;", page)
-        self.assertIn(
-            "suffixes.push(`以以下比例要求为准：强制生成比例为${aspectRatio}的图片`)",
-            controls,
-        )
-        self.assertIn("suffixes.push('以以下透明度要求为准：强制生成透明背景的图片')", controls)
-        self.assertIn("suffixes.push('以以下透明度要求为准：强制生成不透明背景的图片')", controls)
-        self.assertIn("const constraintSuffixes = imageGenerationConstraintSuffixes(aspectRatio, transparency);", page)
-        self.assertIn("? `${prompt}\\n${constraintSuffixes.join('\\n')}`", page)
+        self.assertIn("function visibleImagePrompt(prompt)", controls)
+        self.assertIn("const finalPrompt = visibleImagePrompt(prompt);", page)
+        self.assertNotIn("imageGenerationConstraintSuffixes", page)
+        self.assertIn('id="imageModelPicker"', page)
         self.assertIn('id="imageTransparencyButtons"', page)
         self.assertIn("is-transparency-preview", rendering)
         self.assertIn("createImageGenerationSet(requestId, imageCount, finalPrompt", page)
@@ -3383,13 +3379,19 @@ class ControllerTests(unittest.TestCase):
                     "key-1",
                     "make this clearer",
                     [str(input_path)],
-                    {"requestId": "react-1", "reasoningMode": "medium"},
+                    {"requestId": "react-1", "reasoningMode": "medium", "imageModel": "gpt-image-2.5", "aspectRatio": "16:9", "transparency": "transparent"},
                     event_callback=events.append,
                 )
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["prompt"], "A clean professional chart")
         self.assertEqual(result["originalPrompt"], "make this clearer")
+        self.assertEqual(result["imageModel"], "gpt-image-2.5")
+        sent_request = service.generate.call_args.args[2]
+        self.assertEqual(sent_request.fields["model"], "gpt-image-2.5")
+        self.assertIn("alpha", sent_request.fields["prompt"])
+        self.assertIn("16:9", sent_request.fields["prompt"])
+        self.assertNotIn("内部输出约束", json.dumps(events, ensure_ascii=False))
         self.assertEqual(result["reasoningModel"], "gpt-5.6-luna")
         self.assertEqual(result["reasoningEffort"], "high")
         self.assertEqual(service.generate.call_args.args[2].prompt, "A clean professional chart")

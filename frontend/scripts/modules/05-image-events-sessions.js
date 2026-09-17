@@ -26,6 +26,8 @@
             if (eventRequestId) set.requestId = eventRequestId;
             if (event.type === 'set_started') {
                 set.requestedCount = Number(event.requestedCount) || set.requestedCount;
+                set.imageModel = event.imageModel || set.imageModel;
+                set.aspectRatio = event.aspectRatio || set.aspectRatio;
                 set.prompt = event.prompt || set.prompt;
                 set.originalPrompt = event.originalPrompt || set.originalPrompt || set.prompt;
                 set.sessionId = event.sessionId || set.sessionId;
@@ -292,6 +294,8 @@
             set.sessionId = result.sessionId || set.sessionId;
             set.parentSetId = result.parentSetId || set.parentSetId;
             set.roundNumber = Number(result.roundNumber) || set.roundNumber;
+            set.imageModel = result.imageModel || set.imageModel;
+            set.aspectRatio = result.aspectRatio || set.aspectRatio;
             if (['auto', 'opaque', 'transparent'].includes(result.transparency)) set.transparency = result.transparency;
             set.originalPrompt = result.originalPrompt || set.originalPrompt || result.prompt || '';
             set.reasoningDurationMs = Math.max(0, Number(result.reasoningDurationMs) || set.reasoningDurationMs);
@@ -378,6 +382,8 @@
                     files: [...window.imageEditState.files],
                     prompt: document.getElementById('imageEditPrompt').value,
                     transparency: window.imageEditState.transparency,
+                    imageModel: window.imageEditState.imageModel,
+                    aspectRatio: window.imageEditState.aspectRatio,
                     reasoningMode: window.imageEditState.reasoningMode,
                     reasoningAdvancedModel: window.imageEditState.reasoningAdvancedModel,
                     reasoningAdvancedEffort: window.imageEditState.reasoningAdvancedEffort,
@@ -401,6 +407,8 @@
                 false
             );
             setImageTransparency(set.transparency || 'auto', false);
+            setImageModel(set.imageModel || 'gpt-image-2', false);
+            setImageAspectRatio(set.aspectRatio || 'auto', false);
             setImageWebSearchEnabled(set.webSearchEnabled === true, false);
             setImageEditSessionUi(true);
             window.imageEditState.files = [];
@@ -422,6 +430,8 @@
                 window.imageEditState.files = [...draft.files];
                 document.getElementById('imageEditPrompt').value = draft.prompt || '';
                 setImageTransparency(draft.transparency || 'auto', false);
+                setImageModel(draft.imageModel || 'gpt-image-2', false);
+                setImageAspectRatio(draft.aspectRatio || 'auto', false);
                 window.imageEditState.reasoningPreviousMode = normalizeImageReasoningPreset(draft.reasoningPreviousMode);
                 setImageReasoningSelection(
                     draft.reasoningMode,
@@ -436,7 +446,7 @@
             renderEditImageList();
             resizeImagePrompt();
             document.getElementById('exitImageEditSessionButton').hidden = true;
-            document.getElementById('imageEditHeading').textContent = 'GPT Image 2 生图';
+            setImageModel(window.imageEditState.imageModel, false);
             document.getElementById('imageEditStatus').textContent = window.imageEditState.files.length
                 ? `已选择 ${window.imageEditState.files.length} 张参考图片`
                 : '填写提示词即可生成，参考图可选';
@@ -595,6 +605,9 @@
                     String(right.createdAt || '').localeCompare(String(left.createdAt || ''))
                 );
                 window.imageEditState.resultSets.forEach((set, setIndex) => {
+                    set.prompt = visibleImagePrompt(set.prompt);
+                    set.originalPrompt = visibleImagePrompt(set.originalPrompt || set.prompt);
+                    set.effectivePrompt = visibleImagePrompt(set.effectivePrompt);
                     set.history = setIndex !== 0;
                     set.originalsLoaded = set.history || set.originalsLoaded === true;
                     if (set.history) set.loadingOriginals = false;
@@ -840,12 +853,10 @@
             const imageCount = window.imageEditState.imageCount;
             const aspectRatio = window.imageEditState.aspectRatio;
             const transparency = window.imageEditState.transparency;
-            const constraintSuffixes = imageGenerationConstraintSuffixes(aspectRatio, transparency);
-            const finalPrompt = constraintSuffixes.length
-                ? `${prompt}\n${constraintSuffixes.join('\n')}`
-                : prompt;
+            const finalPrompt = visibleImagePrompt(prompt);
             const reasoningOptions = currentImageReasoningRequestOptions();
             const requestOptions = {
+                imageModel: window.imageEditState.imageModel,
                 size: document.getElementById('imageEditSize').value,
                 aspectRatio,
                 transparency,
@@ -867,6 +878,9 @@
                     : window.imageEditState.webSearchEnabled
             };
             createImageGenerationSet(requestId, imageCount, finalPrompt, {
+                imageModel: requestOptions.imageModel,
+                aspectRatio,
+                transparency,
                 sessionId: session?.sessionId || requestId,
                 parentSetId: session?.setId || '',
                 roundNumber: session ? session.roundNumber + 1 : 1,

@@ -45,6 +45,7 @@
             batchSelectionMode: false,
             aspectRatio: 'auto',
             transparency: 'auto',
+            imageModel: 'gpt-image-2',
             quality: 'auto',
             outputPreset: 'lossless',
             imageCount: 1,
