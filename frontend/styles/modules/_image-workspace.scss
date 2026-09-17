@@ -251,6 +251,29 @@
     line-height: 1.7;
 }
 .image-generation-footer { display: grid; min-width: 0; margin-top: auto; gap: 6px; }
+#imageModelPicker {
+    position: relative;
+    z-index: 5;
+    flex: 0 0 54px;
+    width: 54px;
+    min-height: 34px;
+    border: 0;
+    border-left: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 0;
+    background: transparent;
+    color: #fff;
+    font-size: 11px;
+}
+#imageModelPicker summary { display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 34px; cursor: pointer; list-style: none; }
+#imageModelPicker summary::-webkit-details-marker { display: none; }
+#imageModelPicker summary svg { width: 12px; height: 12px; }
+#imageModelPicker summary:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.image-model-options { position: absolute; right: -28px; bottom: calc(100% + 8px); width: min(250px, calc(100vw - 24px)); padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16); }
+.image-model-options button { display: grid; width: 100%; min-height: 52px; padding: 9px; gap: 5px; text-align: left; white-space: normal; background: transparent; color: var(--text); border-radius: 5px; }
+.image-model-options button[aria-pressed="true"] { background: var(--image-blue-soft); color: var(--image-blue); }
+.image-model-options button:hover { background: var(--surface-strong); }
+.image-model-options strong { font-size: 12px; }
+.image-model-options span { font-size: 10px; line-height: 1.5; }
 #imageEditStatus { min-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .image-generation-command-bar { position: relative; width: 100%; min-width: 0; justify-content: space-between; gap: 6px; }
 .image-generation-controls-wrap { position: relative; flex: 1 1 auto; min-width: 0; }

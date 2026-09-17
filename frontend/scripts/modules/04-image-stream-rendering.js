@@ -655,14 +655,14 @@
                 const finalPromptContent = document.createElement('div');
                 finalPromptContent.className = 'image-reasoning-final-prompt';
                 const finalPromptText = document.createElement('p');
-                finalPromptText.textContent = set.effectivePrompt;
+                finalPromptText.textContent = visibleImagePrompt(set.effectivePrompt);
                 const copyEffectiveButton = document.createElement('button');
                 copyEffectiveButton.type = 'button';
                 copyEffectiveButton.className = 'image-prompt-copy';
                 copyEffectiveButton.title = '复制思维优化提示词';
                 copyEffectiveButton.setAttribute('aria-label', copyEffectiveButton.title);
                 copyEffectiveButton.innerHTML = iconMarkup('copy', 'icon-11');
-                copyEffectiveButton.addEventListener('click', () => void copyImagePrompt(set.effectivePrompt, '思维优化提示词'));
+                copyEffectiveButton.addEventListener('click', () => void copyImagePrompt(visibleImagePrompt(set.effectivePrompt), '思维优化提示词'));
                 finalPromptContent.append(finalPromptText, copyEffectiveButton);
                 body.append(finalPromptContent);
             }
@@ -756,14 +756,14 @@
                 const titleRow = document.createElement('div');
                 titleRow.className = 'image-generation-set-title-row';
                 const title = document.createElement('strong');
-                title.textContent = set.originalPrompt || set.prompt || '图片生成';
+                title.textContent = visibleImagePrompt(set.originalPrompt || set.prompt) || '图片生成';
                 const copyOriginalButton = document.createElement('button');
                 copyOriginalButton.type = 'button';
                 copyOriginalButton.className = 'image-prompt-copy';
                 copyOriginalButton.title = '复制原始提示词';
                 copyOriginalButton.setAttribute('aria-label', copyOriginalButton.title);
                 copyOriginalButton.innerHTML = iconMarkup('copy', 'icon-11');
-                copyOriginalButton.addEventListener('click', () => void copyImagePrompt(set.originalPrompt || set.prompt, '原始提示词'));
+                copyOriginalButton.addEventListener('click', () => void copyImagePrompt(visibleImagePrompt(set.originalPrompt || set.prompt), '原始提示词'));
                 titleRow.append(title, copyOriginalButton);
                 const completedCount = set.items.filter(item => item.status === 'completed').length;
                 const meta = document.createElement('small');
@@ -776,6 +776,7 @@
                     : set.status === 'failed'
                         ? `第 ${set.roundNumber || 1} 轮 · 生成失败 · 保留 ${completedCount} 张`
                         : `第 ${set.roundNumber || 1} 轮 · ${completedCount}/${set.requestedCount} 张 · 已保存`;
+                meta.textContent += set.imageModel === 'gpt-image-2.5' ? ' · Image 2.5' : ' · Image 2.0';
                 heading.append(titleRow, meta);
                 const actions = document.createElement('div');
                 actions.className = 'image-generation-set-actions';

@@ -397,6 +397,8 @@
             requestId,
             prompt: String(result.prompt || pending?.prompt || ''),
             originalPrompt: String(result.originalPrompt || pending?.prompt || ''),
+            imageModel: result.imageModel || pending?.imageModel || 'gpt-image-2',
+            aspectRatio: result.aspectRatio || pending?.aspectRatio || 'auto',
             transparency: ['auto', 'opaque', 'transparent'].includes(result.transparency)
                 ? result.transparency
                 : ['auto', 'opaque', 'transparent'].includes(pending?.transparency)
@@ -741,6 +743,8 @@
             roundNumber: Number(options?.roundNumber || pending?.roundNumber) || 1,
             prompt: String(prompt || pending?.prompt || ''),
             originalPrompt: String(prompt || pending?.prompt || ''),
+            imageModel: options?.imageModel || 'gpt-image-2',
+            aspectRatio: options?.aspectRatio || 'auto',
             transparency: ['auto', 'opaque', 'transparent'].includes(options?.transparency)
                 ? options.transparency
                 : ['auto', 'opaque', 'transparent'].includes(pending?.transparency)
@@ -781,6 +785,8 @@
                 prompt,
                 requestedCount: Number(options.imageCount) || 1,
                 transparency: options.transparency || 'auto',
+                imageModel: options.imageModel || 'gpt-image-2',
+                aspectRatio: options.aspectRatio || 'auto',
                 createdAt: new Date().toISOString()
             });
             pending = pendingTasks.get(requestId) || null;

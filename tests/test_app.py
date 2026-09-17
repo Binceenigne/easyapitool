@@ -3355,13 +3355,19 @@ class ControllerTests(unittest.TestCase):
                     "key-1",
                     "make this clearer",
                     [str(input_path)],
-                    {"requestId": "react-1", "reasoningMode": "medium"},
+                    {"requestId": "react-1", "reasoningMode": "medium", "imageModel": "gpt-image-2.5", "aspectRatio": "16:9", "transparency": "transparent"},
                     event_callback=events.append,
                 )
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["prompt"], "A clean professional chart")
         self.assertEqual(result["originalPrompt"], "make this clearer")
+        self.assertEqual(result["imageModel"], "gpt-image-2.5")
+        sent_request = service.generate.call_args.args[2]
+        self.assertEqual(sent_request.fields["model"], "gpt-image-2.5")
+        self.assertIn("alpha", sent_request.fields["prompt"])
+        self.assertIn("16:9", sent_request.fields["prompt"])
+        self.assertNotIn("内部输出约束", json.dumps(events, ensure_ascii=False))
         self.assertEqual(result["reasoningModel"], "gpt-5.6-luna")
         self.assertEqual(result["reasoningEffort"], "high")
         self.assertEqual(service.generate.call_args.args[2].prompt, "A clean professional chart")

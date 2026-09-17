@@ -257,6 +257,13 @@
                                 <span class="reasoning-bg-layer" data-layer-mode="max" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
                                 <span class="reasoning-bg-layer" data-layer-mode="advanced" aria-hidden="true"><span class="reasoning-gradient"></span><span class="reasoning-effect reasoning-effect-a"></span><span class="reasoning-effect reasoning-effect-b"></span></span>
                                 <button type="submit" id="generateEditedImageButton" data-reasoning-mode="instant"><span>生成 1 张</span></button>
+                                <details id="imageModelPicker" class="image-model-picker" ontoggle="if(this.open) { closeImageReasoningMenu(); closeImageGenerationControls(); }">
+                                    <summary title="选择图片模型" aria-label="选择图片模型"><span id="imageModelLabel">2.0</span><i data-lucide="chevron-up" aria-hidden="true"></i></summary>
+                                    <div class="image-model-options" role="group" aria-label="图片模型">
+                                        <button type="button" data-image-model="gpt-image-2" aria-pressed="true" onclick="setImageModel('gpt-image-2')"><strong>GPT Image 2.0</strong><span>均衡快速</span></button>
+                                        <button type="button" data-image-model="gpt-image-2.5" aria-pressed="false" onclick="setImageModel('gpt-image-2.5')"><strong>GPT Image 2.5</strong><span>顶级画面质量，更优质画面一致性</span></button>
+                                    </div>
+                                </details>
                                 <button type="button" id="imageReasoningMenuButton" aria-expanded="false" aria-controls="imageReasoningMenu" onclick="toggleImageReasoningMenu()" title="选择思维深度" aria-label="选择思维深度"><i data-lucide="chevron-up" aria-hidden="true"></i></button>
                                 <div id="imageReasoningMenu" class="image-reasoning-menu" hidden aria-label="思维深度设置">
                                     <div id="reasoningMenuMainView" class="reasoning-menu-view">

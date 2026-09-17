@@ -331,7 +331,7 @@ class PairingTests(unittest.TestCase):
         self.assertEqual(repeated["keyId"], "key-a")
         self.assertEqual(service.credentials.get_secret("key-a"), "secret-a")
 
-    def test_selected_aspect_ratio_is_appended_to_generation_prompt(self) -> None:
+    def test_generation_controls_do_not_leak_into_visible_prompt(self) -> None:
         events = (
             PROJECT_ROOT / "frontend" / "scripts" / "modules" / "05-image-events-sessions.js"
         ).read_text(encoding="utf-8")
@@ -340,14 +340,10 @@ class PairingTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("const aspectRatio = window.imageEditState.aspectRatio;", events)
-        self.assertIn(
-            "suffixes.push(`以以下比例要求为准：强制生成比例为${aspectRatio}的图片`)",
-            controls,
-        )
-        self.assertIn("suffixes.push('以以下透明度要求为准：强制生成透明背景的图片')", controls)
-        self.assertIn("suffixes.push('以以下透明度要求为准：强制生成不透明背景的图片')", controls)
-        self.assertIn("const constraintSuffixes = imageGenerationConstraintSuffixes(aspectRatio, transparency);", events)
-        self.assertIn("? `${prompt}\\n${constraintSuffixes.join('\\n')}`", events)
+        self.assertIn("function visibleImagePrompt(prompt)", controls)
+        self.assertIn("const finalPrompt = visibleImagePrompt(prompt);", events)
+        self.assertNotIn("imageGenerationConstraintSuffixes", events)
+        self.assertIn("imageModel: window.imageEditState.imageModel", events)
         self.assertIn("transparency,", events)
         self.assertIn("createImageGenerationSet(requestId, imageCount, finalPrompt", events)
         self.assertIn("activeKey.id,\n                    finalPrompt,", events)

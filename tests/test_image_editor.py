@@ -496,6 +496,31 @@ class ImageEditorTests(unittest.TestCase):
         self.assertEqual(request.fields["output_format"], "png")
         self.assertEqual(request.output_format, "png")
 
+    def test_image_model_selection_and_private_constraints(self):
+        for model in ("gpt-image-2", "gpt-image-2.5"):
+            with self.subTest(model=model):
+                request = image_editor.prepare_image_generation(
+                    "A glass bottle", [],
+                    {"imageModel": model, "aspectRatio": "16:9", "transparency": "transparent"},
+                )
+                self.assertEqual(request.fields["model"], model)
+                self.assertEqual(request.prompt, "A glass bottle")
+                self.assertIn("16:9", request.fields["prompt"])
+                self.assertIn("alpha", request.fields["prompt"])
+                self.assertNotIn("background", request.fields)
+                self.assertNotIn("size", request.fields)
+        with self.assertRaises(ValueError):
+            image_editor.prepare_image_generation("test", [], {"imageModel": "unknown"})
+
+    def test_legacy_prompt_constraints_are_removed_before_reapplying(self):
+        prompt = "A bottle\n以以下比例要求为准：强制生成比例为1:1的图片\n以以下透明度要求为准：强制生成透明背景的图片"
+        request = image_editor.prepare_image_generation(
+            prompt, [], {"aspectRatio": "16:9", "transparency": "opaque"},
+        )
+        self.assertEqual(request.prompt, "A bottle")
+        self.assertNotIn("1:1", request.fields["prompt"])
+        self.assertIn("255", request.fields["prompt"])
+
     def test_transparent_mode_preserves_alpha_with_jpeg_preset(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
