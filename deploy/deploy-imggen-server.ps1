@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string] $Server = 'root@39.105.74.222',
-    [string] $ReleaseDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'mobile\release\android')
+    [string] $ReleaseDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'mobile\release\android'),
+    [string] $WindowsReleaseDirectory = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +19,17 @@ foreach ($name in $requiredReleaseFiles) {
 if ($LASTEXITCODE -ne 0) { throw 'Unable to create the remote deployment stage.' }
 & scp -r (Join-Path $projectRoot 'backend') "${Server}:$stage/"
 if ($LASTEXITCODE -ne 0) { throw 'Unable to upload backend source.' }
+& scp -r (Join-Path $PSScriptRoot 'mirra-assets') "${Server}:$stage/"
+if ($LASTEXITCODE -ne 0) { throw 'Unable to upload landing page assets.' }
+if ($WindowsReleaseDirectory) {
+    foreach ($name in @('API_TOOLS.exe', 'manifest.json')) {
+        if (-not (Test-Path (Join-Path $WindowsReleaseDirectory $name))) {
+            throw "Windows release file is missing: $name"
+        }
+    }
+    & scp -r $WindowsReleaseDirectory "${Server}:$stage/windows-release"
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to upload Windows release.' }
+}
 $files = @(
     'assetlinks.json', 'imggen-api.service', 'imggen-api-pair', 'imggen-http.conf', 'imggen-https.conf',
     'imggen-cert-renew-hook.sh', 'imggen-landing.html', 'install-imggen-server.sh'

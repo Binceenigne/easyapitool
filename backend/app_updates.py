@@ -11,7 +11,12 @@ class AppReleaseError(RuntimeError):
     pass
 
 
-class AndroidReleaseCatalog:
+class AppReleaseCatalog:
+    platform = ""
+    display_name = ""
+    package_name = ""
+    file_suffix = ""
+
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
         self.manifest_path = self.root / "manifest.json"
@@ -20,49 +25,49 @@ class AndroidReleaseCatalog:
         try:
             payload = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise AppReleaseError("Android 发布清单不可用") from exc
-        if not isinstance(payload, dict) or payload.get("platform") != "android":
-            raise AppReleaseError("Android 发布清单格式无效")
+            raise AppReleaseError(f"{self.display_name} 发布清单不可用") from exc
+        if not isinstance(payload, dict) or payload.get("platform") != self.platform:
+            raise AppReleaseError(f"{self.display_name} 发布清单格式无效")
         return payload
 
     def _release_file(self, manifest: dict[str, Any]) -> Path:
         filename = Path(str(manifest.get("fileName") or "")).name
-        if not filename or filename != str(manifest.get("fileName")):
-            raise AppReleaseError("Android 发布文件名无效")
+        if not filename or filename != str(manifest.get("fileName")) or not filename.lower().endswith(self.file_suffix):
+            raise AppReleaseError(f"{self.display_name} 发布文件名无效")
         path = (self.root / filename).resolve()
         if path.parent != self.root or not path.is_file():
-            raise AppReleaseError("Android 安装包不存在")
+            raise AppReleaseError(f"{self.display_name} 安装包不存在")
         return path
 
-    @staticmethod
-    def _integer(value: Any, field: str, minimum: int = 0) -> int:
+    @classmethod
+    def _integer(cls, value: Any, field: str, minimum: int = 0) -> int:
         try:
             result = int(value)
         except (TypeError, ValueError) as exc:
-            raise AppReleaseError(f"Android 发布字段无效：{field}") from exc
+            raise AppReleaseError(f"{cls.display_name} 发布字段无效：{field}") from exc
         if result < minimum:
-            raise AppReleaseError(f"Android 发布字段无效：{field}")
+            raise AppReleaseError(f"{cls.display_name} 发布字段无效：{field}")
         return result
 
     def _verified_manifest(self) -> tuple[dict[str, Any], Path]:
         manifest = self._load_manifest()
         package_name = str(manifest.get("packageName") or "")
-        if package_name != "cn.easyapitool.mobile":
-            raise AppReleaseError("Android 包名不匹配")
+        if self.package_name and package_name != self.package_name:
+            raise AppReleaseError(f"{self.display_name} 包名不匹配")
         path = self._release_file(manifest)
         actual_size = path.stat().st_size
         expected_size = self._integer(manifest.get("sizeBytes"), "sizeBytes", 1)
         if actual_size != expected_size:
-            raise AppReleaseError("Android 安装包大小校验失败")
+            raise AppReleaseError(f"{self.display_name} 安装包大小校验失败")
         expected_sha256 = str(manifest.get("sha256") or "").lower()
         if len(expected_sha256) != 64:
-            raise AppReleaseError("Android 安装包校验值无效")
+            raise AppReleaseError(f"{self.display_name} 安装包校验值无效")
         digest = hashlib.sha256()
         with path.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
         if digest.hexdigest() != expected_sha256:
-            raise AppReleaseError("Android 安装包 SHA-256 校验失败")
+            raise AppReleaseError(f"{self.display_name} 安装包 SHA-256 校验失败")
         return manifest, path
 
     def check(
@@ -88,9 +93,9 @@ class AndroidReleaseCatalog:
         ).isoformat().replace("+00:00", "Z")
         return {
             "ok": True,
-            "platform": "android",
+            "platform": self.platform,
             "available": available,
-            "packageName": manifest["packageName"],
+            **({"packageName": self.package_name} if self.package_name else {}),
             "currentVersionCode": current_code,
             "currentBuildTimestampMs": current_timestamp,
             "latestVersion": str(manifest.get("versionName") or latest_version_code),
@@ -101,9 +106,26 @@ class AndroidReleaseCatalog:
             "fileName": path.name,
             "downloadSize": path.stat().st_size,
             "sha256": str(manifest["sha256"]).lower(),
-            "downloadUrl": "/app/update/download?platform=android",
+            "downloadUrl": f"/app/update/download?platform={self.platform}",
         }
 
     def download(self) -> tuple[Path, str]:
         manifest, path = self._verified_manifest()
+        return path, str(manifest.get("mimeType") or "application/octet-stream")
+
+
+class AndroidReleaseCatalog(AppReleaseCatalog):
+    platform = "android"
+    display_name = "Android"
+    package_name = "cn.easyapitool.mobile"
+    file_suffix = ".apk"
+
+    def download(self) -> tuple[Path, str]:
+        manifest, path = self._verified_manifest()
         return path, str(manifest.get("mimeType") or "application/vnd.android.package-archive")
+
+
+class WindowsReleaseCatalog(AppReleaseCatalog):
+    platform = "windows"
+    display_name = "Windows"
+    file_suffix = ".exe"

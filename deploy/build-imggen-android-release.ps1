@@ -2,29 +2,34 @@
 param(
     [Parameter(Mandatory)] [int] $VersionCode,
     [Parameter(Mandatory)] [string] $VersionName,
-    [string] $ReleaseNotes = ''
+    [string] $ReleaseNotes = '',
+    [switch] $Offline
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $mobileRoot = Join-Path $projectRoot 'mobile'
 $releaseRoot = Join-Path $mobileRoot 'release\android'
-$gradle = 'D:\ANDROID\.gradle\wrapper\dists\gradle-8.14.3-all\cbf6zifq8xavouihta8md72jo\gradle-8.14.3\bin\gradle.bat'
+$gradle = Join-Path $mobileRoot 'android\gradlew.bat'
 
-if (-not (Test-Path $gradle)) { throw "Cached Gradle not found: $gradle" }
+if (-not (Test-Path $gradle)) { throw "Gradle wrapper not found: $gradle" }
 if (-not $env:EASYAPITOOL_RELEASE_PROPERTIES) { throw 'Set EASYAPITOOL_RELEASE_PROPERTIES to the external release signing file.' }
 
 $buildTimestampMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $env:EASYAPITOOL_ANDROID_VERSION_CODE = [string]$VersionCode
 $env:EASYAPITOOL_ANDROID_VERSION_NAME = $VersionName
 $env:EASYAPITOOL_ANDROID_BUILD_TIMESTAMP_MS = [string]$buildTimestampMs
-$env:GRADLE_USER_HOME = 'D:\ANDROID\.gradle'
 
 Push-Location $mobileRoot
 try {
     & node scripts\sync-web.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'Web asset synchronization failed.' }
     & .\node_modules\.bin\cap.cmd sync android
-    & $gradle -p android app:assembleRelease --offline --no-daemon
+    if ($LASTEXITCODE -ne 0) { throw 'Capacitor synchronization failed.' }
+    $gradleArguments = @('-p', 'android', 'app:assembleRelease', '--no-daemon')
+    if ($Offline) { $gradleArguments += '--offline' }
+    & $gradle @gradleArguments
+    if ($LASTEXITCODE -ne 0) { throw 'Android release build failed.' }
 } finally {
     Pop-Location
 }

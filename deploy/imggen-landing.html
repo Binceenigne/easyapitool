@@ -3,40 +3,98 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#e7f0f4">
-  <title>DJYX IMGGEN Android</title>
-  <style>
-    :root { font-family: "Microsoft YaHei", "Noto Sans SC", sans-serif; color: #102a32; background: #e7f0f4; }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: linear-gradient(135deg, #e7f0f4 0%, #f7f5ec 58%, #dce9df 100%); }
-    main { width: min(620px, 100%); border: 1px solid #8aa6a5; background: #fffefa; box-shadow: 8px 8px 0 #102a32; padding: clamp(28px, 6vw, 54px); }
-    header { border-bottom: 2px solid #102a32; padding-bottom: 20px; }
-    h1 { margin: 0; font-size: 32px; font-weight: 800; letter-spacing: 0; }
-    p { margin: 10px 0 0; color: #416166; line-height: 1.65; }
-    #release { margin: 28px 0 20px; min-height: 60px; font-size: 15px; line-height: 1.7; }
-    .download { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 22px; border: 2px solid #102a32; color: #fffefa; background: #d44f32; font-weight: 700; text-decoration: none; }
-    .download:focus-visible, .download:hover { outline: 3px solid #d7a127; outline-offset: 3px; }
-    footer { margin-top: 28px; color: #5d7475; font-size: 13px; }
-  </style>
+  <meta name="theme-color" content="#090a0d">
+  <meta name="description" content="Mirra。让灵感，成为作品。下载 Windows 或 Android 正式版，开启你的下一次图像创作。">
+  <title>Mirra · 让灵感，成为作品</title>
+  <link rel="icon" type="image/png" href="./mirra-assets/logo.png">
+  <link rel="preload" href="./mirra-assets/space-regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./mirra-assets/style-26c7974435.css">
+  <link rel="stylesheet" href="./mirra-assets/downloads-v1.2.6.css">
+  <script type="module" src="./mirra-assets/landing-v1.2.6.js"></script>
 </head>
 <body>
+  <header class="navigation">
+    <a class="wordmark" href="#top" aria-label="Mirra 首页"><img src="./mirra-assets/logo.png" alt="" width="30" height="30"><span>mirra</span></a>
+    <nav aria-label="主导航"><a href="#perspective">关于 Mirra</a><a href="#download" class="nav-download">获取应用 <i data-lucide="arrow-up-right" aria-hidden="true"></i></a></nav>
+  </header>
   <main>
-    <header>
-      <h1>DJYX IMGGEN</h1>
-      <p>Android 安装包与应用更新服务</p>
-    </header>
-    <div id="release">正在读取最新发布版本。</div>
-    <a class="download" href="/v1/app/update/download?platform=android">下载 Android APK</a>
-    <footer>下载完成后请在 Android 系统安装器中确认安装。</footer>
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="hero-stage" id="hero-stage">
+        <div class="backdrop-word" aria-hidden="true">mirra</div>
+        <img class="glass-artwork" src="./mirra-assets/mainicon.png" alt="紫色玻璃质感的 Mirra 交织 Logo" width="1254" height="1254" fetchpriority="high">
+        <div class="stage-topline"><span><span class="status-dot"></span> IMAGINATION, UNBOUND.</span><span class="edition">WINDOWS + ANDROID / 02</span></div>
+        <span class="scene-caption" aria-hidden="true">A NEW PERSPECTIVE<br>ON YOUR IMAGINATION.</span>
+        <button class="motion-control icon-button" id="motion-control" type="button" aria-label="暂停动画" title="暂停动画" hidden><i data-lucide="pause" aria-hidden="true"></i></button>
+        <div class="hero-copy">
+          <div class="hero-heading"><p class="eyebrow">YOUR NEXT CREATIVE CHAPTER</p><h1 id="hero-title">Mirra<span>让灵感，<br class="mobile-break">成为作品。</span></h1></div>
+          <div class="hero-action">
+            <p>想象不必止于脑海。<br>在电脑与手机，开启下一次创作。</p>
+            <div class="hero-downloads">
+              <a class="download-button" data-download-platform="windows" href="/v1/app/update/download?platform=windows"><i data-lucide="monitor" aria-hidden="true"></i><span>下载 Windows 版</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></a>
+              <a class="download-button download-button-secondary" data-download-platform="android" href="/v1/app/update/download?platform=android"><i data-lucide="smartphone" aria-hidden="true"></i><span>下载 Android 版</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></a>
+            </div>
+            <p class="release-inline" aria-live="polite"><span data-platform-version="windows">Windows 正式版</span> · <span data-platform-version="android">Android 正式版</span></p>
+          </div>
+        </div>
+      </div>
+      <div class="hero-bottom"><span>DESIGNED FOR YOUR IMAGINATION</span><a href="#perspective" aria-label="探索 Mirra"><span>向下探索</span><i data-lucide="arrow-down" aria-hidden="true"></i></a><span>IDEA → IMAGE</span></div>
+    </section>
+    <section class="perspective" id="perspective" aria-labelledby="perspective-title">
+      <div class="section-label reveal"><span>01 / THE PERSPECTIVE</span><span class="small-cross" aria-hidden="true">+</span></div>
+      <div class="perspective-heading reveal"><h2 id="perspective-title">每一种想象，<br>都值得被<span>看见。</span></h2><p>从最初一闪而过的念头，<br>到最后恰如其分的细节。<br>创作的边界，由你重新定义。</p></div>
+      <div class="chapters">
+        <article class="chapter reveal"><div class="chapter-top"><span>01</span><i data-lucide="sparkles" aria-hidden="true"></i></div><h3>始于灵感。</h3><p>把脑海中的画面，<br>交给一句天马行空的描述。</p><span class="chapter-word" aria-hidden="true">Imagine.</span></article>
+        <article class="chapter reveal"><div class="chapter-top"><span>02</span><i data-lucide="scan-eye" aria-hidden="true"></i></div><h3>不止于此。</h3><p>反复推敲，大胆尝试。<br>让每一次探索，都更接近心中所想。</p><span class="chapter-word" aria-hidden="true">Refine.</span></article>
+        <article class="chapter reveal"><div class="chapter-top"><span>03</span><i data-lucide="aperture" aria-hidden="true"></i></div><h3>终于作品。</h3><p>留住值得收藏的瞬间。<br>也为下一次灵感，留下起点。</p><span class="chapter-word" aria-hidden="true">Create.</span></article>
+      </div>
+    </section>
+    <section class="download-section" id="download" aria-labelledby="download-title">
+      <div class="section-label reveal"><span>02 / MAKE IT YOURS</span><span class="status-pill"><span class="status-dot"></span> WINDOWS + ANDROID</span></div>
+      <div class="download-layout reveal">
+        <div class="download-introduction">
+          <img class="app-icon" src="./mirra-assets/app-icon.webp" alt="Mirra 应用图标" width="80" height="80" loading="lazy">
+          <h2 id="download-title">下一张作品，<br>从这里开始。</h2>
+          <p class="download-intro">Mirra for Windows &amp; Android</p>
+        </div>
+        <div class="release-grid">
+          <article class="release-panel" data-release-platform="windows" aria-labelledby="windows-title">
+            <h3 class="release-heading" id="windows-title"><span>Windows</span><span data-release-field="version">—</span></h3>
+            <p class="release-kind">Windows 10 / 11 · 便携版 · 需 WebView2</p>
+            <dl>
+              <div><dt>安装包大小</dt><dd data-release-field="size">—</dd></div>
+              <div><dt>更新日期</dt><dd data-release-field="date">—</dd></div>
+              <div><dt>发布通道</dt><dd>Windows x64 · EXE</dd></div>
+            </dl>
+            <a class="download-button" data-download-platform="windows" href="/v1/app/update/download?platform=windows"><i data-lucide="download" aria-hidden="true"></i><span>下载 Windows 版</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></a>
+            <p class="release-status" data-release-field="status" aria-live="polite">正在获取正式版信息</p>
+            <button class="text-button" data-release-retry hidden type="button"><i data-lucide="refresh-cw" aria-hidden="true"></i>重新获取版本信息</button>
+            <details data-release-integrity hidden>
+              <summary>安装包校验 <i data-lucide="plus" aria-hidden="true"></i></summary>
+              <p>SHA-256</p><code data-release-field="hash"></code>
+              <button class="text-button" type="button" data-release-copy><i data-lucide="copy" aria-hidden="true"></i><span>复制校验值</span></button>
+            </details>
+          </article>
+          <article class="release-panel" data-release-platform="android" aria-labelledby="android-title">
+            <h3 class="release-heading" id="android-title"><span>Android</span><span data-release-field="version">—</span></h3>
+            <p class="release-kind">Android 7.0 及以上 · 正式版</p>
+            <dl>
+              <div><dt>安装包大小</dt><dd data-release-field="size">—</dd></div>
+              <div><dt>更新日期</dt><dd data-release-field="date">—</dd></div>
+              <div><dt>发布通道</dt><dd>Android APK</dd></div>
+            </dl>
+            <a class="download-button" data-download-platform="android" href="/v1/app/update/download?platform=android"><i data-lucide="download" aria-hidden="true"></i><span>下载 Android 版</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></a>
+            <p class="release-status" data-release-field="status" aria-live="polite">正在获取正式版信息</p>
+            <button class="text-button" data-release-retry hidden type="button"><i data-lucide="refresh-cw" aria-hidden="true"></i>重新获取版本信息</button>
+            <details data-release-integrity hidden>
+              <summary>安装包校验 <i data-lucide="plus" aria-hidden="true"></i></summary>
+              <p>SHA-256</p><code data-release-field="hash"></code>
+              <button class="text-button" type="button" data-release-copy><i data-lucide="copy" aria-hidden="true"></i><span>复制校验值</span></button>
+            </details>
+          </article>
+        </div>
+      </div>
+    </section>
   </main>
-  <script>
-    fetch('/v1/app/update?platform=android&currentVersionCode=0&currentBuildTimestampMs=0', { cache: 'no-store' })
-      .then(response => response.ok ? response.json() : Promise.reject())
-      .then(release => {
-        const time = release.latestBuildTime ? new Date(release.latestBuildTime).toLocaleString('zh-CN') : '未知';
-        document.getElementById('release').textContent = `当前发布 v${release.latestVersion} · 构建时间 ${time} · ${(release.downloadSize / 1048576).toFixed(1)} MB`;
-      })
-      .catch(() => { document.getElementById('release').textContent = '发布信息暂不可用，请稍后重试。'; });
-  </script>
+  <footer class="footer"><a class="wordmark" href="#top" aria-label="返回顶部"><img src="./mirra-assets/logo.png" alt="" width="26" height="26"><span>mirra</span></a><span>让想象，自由发生。</span><a href="#top" class="back-top">BACK TO TOP <i data-lucide="arrow-up-right" aria-hidden="true"></i></a></footer>
 </body>
 </html>

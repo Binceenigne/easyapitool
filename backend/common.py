@@ -61,7 +61,7 @@ except ImportError:
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.2.6"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -81,7 +81,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "52"
+STATIC_UI_VERSION = "53"
 IMAGE_STREAM_DEBUG_LOG_MAX_BYTES = 20 * 1024 * 1024
 WEB_SEARCH_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 WEB_REFERENCE_IMAGE_MAX_BYTES = 16 * 1024 * 1024
@@ -145,13 +145,13 @@ MIN_WINDOW_HEIGHT = 96
 MAX_WINDOW_WIDTH = 8192
 MAX_WINDOW_HEIGHT = 8192
 WINDOW_SIZE_SAVE_DELAY = 0.25
-PROMPT_POLISH_MODEL = "gpt-5.6-terra"
+PROMPT_POLISH_MODEL = "gpt-6.1-terra"
 PROMPT_POLISH_REASONING_EFFORT = "medium"
 PROMPT_RESULT_MARKER = "<<<FINAL_PROMPT>>>"
 IMAGE_CONTINUATION_OPERATIONS = {"edit", "generate"}
 IMAGE_REASONING_MODES = {
     "flash": {
-        "model": "gpt-5.6-luna",
+        "model": "gpt-6-luna",
         "effort": "medium",
         "max_turns": 3,
         "max_references": 3,
@@ -162,7 +162,7 @@ IMAGE_REASONING_MODES = {
         "depth": "Flash 模式：仍须先判断自己要完成什么、哪些要求已明确、是否存在自己不理解或会影响结果的信息缺口；在此基础上迅速选择一个可执行方案。若开启搜索且缺口重要，立即做必要检索并根据结果快速复核，然后形成生图提示词进入迭代。Flash 压缩的是比较和反思轮次，不是省略任务理解与信息缺口判断。",
     },
     "medium": {
-        "model": "gpt-5.6-luna",
+        "model": "gpt-6-luna",
         "effort": "high",
         "max_turns": 5,
         "max_references": 4,
@@ -173,7 +173,7 @@ IMAGE_REASONING_MODES = {
         "depth": "Medium 模式：进行均衡的需求拆解、方案设计和适度信息获取，检查关键可用性后形成生图方案。",
     },
     "high": {
-        "model": "gpt-5.6-terra",
+        "model": "gpt-6.1-terra",
         "effort": "xhigh",
         "max_turns": 7,
         "max_references": 6,
@@ -184,7 +184,7 @@ IMAGE_REASONING_MODES = {
         "depth": "High 模式：详细拆解需求和视觉方案，主动获取有价值的信息，比较主要候选方案，并对构图、事实准确性和生成风险做一轮明确反思后再定稿。",
     },
     "extra": {
-        "model": "gpt-5.6-terra",
+        "model": "gpt-6.1-terra",
         "effort": "max",
         "max_turns": 10,
         "max_references": 6,
@@ -195,7 +195,7 @@ IMAGE_REASONING_MODES = {
         "depth": "Max 模式：先拟定多个足够详细的候选方案，主动且可多轮搜索网页与图片，交叉核对信息并阅读视觉候选；频繁反思遗漏、冲突、构图、材质和事实风险，只有确认信息与方案均充分周全后才形成最终生图提示词。",
     },
     "max": {
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6.1-sol",
         "effort": "max",
         "max_turns": 12,
         "max_references": 8,
@@ -207,9 +207,9 @@ IMAGE_REASONING_MODES = {
     },
 }
 IMAGE_ADVANCED_MODELS = {
-    "luna": "gpt-5.6-luna",
-    "terra": "gpt-5.6-terra",
-    "sol": "gpt-5.6-sol",
+    "luna": "gpt-6-luna",
+    "terra": "gpt-6.1-terra",
+    "sol": "gpt-6.1-sol",
 }
 IMAGE_ADVANCED_REASONING_MODES = {
     "low": {
@@ -269,7 +269,7 @@ IMAGE_ADVANCED_REASONING_MODES = {
     },
 }
 IMAGE_WEB_SEARCH_MODES = set(IMAGE_REASONING_MODES) | {"advanced"}
-IMAGE_CONTINUATION_PLANNER_MODEL = "gpt-5.6-luna"
+IMAGE_CONTINUATION_PLANNER_MODEL = "gpt-6-luna"
 IMAGE_CONTINUATION_PLANNER_EFFORT = "low"
 
 
@@ -288,7 +288,11 @@ def resolve_image_reasoning_config(
         }
     if clean_mode != "advanced":
         raise ValueError("无效的思维模式")
-    clean_model = str(model or "luna").strip().lower().removeprefix("gpt-5.6-")
+    clean_model = str(model or "luna").strip().lower()
+    for model_key, model_id in IMAGE_ADVANCED_MODELS.items():
+        if clean_model in {model_key, model_id, f"gpt-5.6-{model_key}"}:
+            clean_model = model_key
+            break
     clean_effort = str(effort or "low").strip().lower()
     if clean_model not in IMAGE_ADVANCED_MODELS:
         raise ValueError("无效的高级模型")

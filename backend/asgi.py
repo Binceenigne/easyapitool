@@ -18,7 +18,7 @@ from .service import (
     ServiceConfigurationError,
     service_from_environment,
 )
-from .app_updates import AndroidReleaseCatalog, AppReleaseError
+from .app_updates import AndroidReleaseCatalog, WindowsReleaseCatalog, AppReleaseError
 
 
 class GenerationRequest(BaseModel):
@@ -57,9 +57,11 @@ class ServiceApp:
         self,
         service: HeadlessService,
         update_catalog: AndroidReleaseCatalog | None = None,
+        windows_catalog: WindowsReleaseCatalog | None = None,
     ) -> None:
         self.service = service
         self.update_catalog = update_catalog
+        self.release_catalogs = {"android": update_catalog, "windows": windows_catalog}
         self.app = FastAPI(title="API_TOOLS Service", version="1")
         self.app.add_middleware(
             CORSMiddleware,
@@ -124,10 +126,11 @@ class ServiceApp:
             currentVersionCode: int = Query(default=0, ge=0),
             currentBuildTimestampMs: int = Query(default=0, ge=0),
         ) -> dict:
-            if platform != "android" or self.update_catalog is None:
-                raise HTTPException(status_code=404, detail="没有可用的 Android 发布通道")
+            catalog = self.release_catalogs.get(platform)
+            if catalog is None:
+                raise HTTPException(status_code=404, detail="没有可用的发布通道")
             try:
-                return self.update_catalog.check(
+                return catalog.check(
                     current_version_code=currentVersionCode,
                     current_build_timestamp_ms=currentBuildTimestampMs,
                 )
@@ -136,10 +139,11 @@ class ServiceApp:
 
         @app.get("/api/v1/app/update/download")
         def download_app_update(platform: str = Query(default="android")) -> FileResponse:
-            if platform != "android" or self.update_catalog is None:
-                raise HTTPException(status_code=404, detail="没有可用的 Android 发布通道")
+            catalog = self.release_catalogs.get(platform)
+            if catalog is None:
+                raise HTTPException(status_code=404, detail="没有可用的发布通道")
             try:
-                path, content_type = self.update_catalog.download()
+                path, content_type = catalog.download()
             except AppReleaseError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
             return FileResponse(
@@ -305,6 +309,7 @@ class ServiceApp:
 def create_app(
     service: HeadlessService | None = None,
     update_catalog: AndroidReleaseCatalog | None = None,
+    windows_catalog: WindowsReleaseCatalog | None = None,
 ) -> FastAPI:
     if service is None:
         service = service_from_environment()
@@ -312,7 +317,11 @@ def create_app(
         release_dir = os.environ.get("API_TOOLS_ANDROID_RELEASE_DIR", "").strip()
         if release_dir:
             update_catalog = AndroidReleaseCatalog(Path(release_dir))
-    return ServiceApp(service, update_catalog).app
+    if windows_catalog is None:
+        release_dir = os.environ.get("API_TOOLS_WINDOWS_RELEASE_DIR", "").strip()
+        if release_dir:
+            windows_catalog = WindowsReleaseCatalog(Path(release_dir))
+    return ServiceApp(service, update_catalog, windows_catalog).app
 
 
 try:

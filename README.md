@@ -15,7 +15,7 @@ Windows API 密钥额度监控工具。桌面壳使用 Python 3.12、pywebview�
 - 生图模式默认使用顶部当前选中的 API Key；无参考图时调用 `/images/generations`，添加最多 16 张参考图后调用 `/images/edits`。
 - 参考图支持文件选择、剪贴板粘贴和拖拽导入，并以缩略图展示；添加按钮始终紧跟最后一张图片，图片较多时通过窄横向滚动条浏览，新增后会自动定位到最右侧。超过 16 张时仅导入剩余槽位，单张超过 50 MB 时跳过并提示。
 - 提示词输入框会随换行增长到左侧父容器的可用高度，达到 75% 时提供全屏编辑入口，达到上限后仅在输入框内部滚动；全屏编辑器从应用内容区开始，不覆盖标题栏，并通过右上角关闭按钮返回。
-- 提示词输入框右下角提供一键润色入口，使用 Responses API 调用 `gpt-5.6-terra`，并以独立的 `medium` reasoning effort 自动识别艺术创作、工作创作、图像编辑或文字润色场景，再用流式结果替换原提示词。
+- 提示词输入框右下角提供一键润色入口，使用 Responses API 调用 `gpt-6.1-terra`，并以独立的 `medium` reasoning effort 自动识别艺术创作、工作创作、图像编辑或文字润色场景，再用流式结果替换原提示词。
 - 生成按钮支持 Instant、Low、Medium、High、Max 五档思维深度，并通过紧凑的竖向上拉菜单切换。Instant 直接进入 GPT Image 2；其余模式分别使用 Luna + low、Terra + medium、Sol + medium、Sol + xhigh 运行轻量 ReAct，模型 ID 与 reasoning effort 会作为 Responses API 的独立字段发送。最终提示词随后交给原生图流程；右侧只动态展示简短、可审计的工作摘要，不展示模型隐藏思维链，摘要、模型与思考强度会随图片集持久化。
 - 每次可生成 1–9 张图片；应用会发起相应数量的独立请求并限制为最多 3 路并发，不会向不支持 `n` 的 EasyClin 接口传递该参数。
 - 右侧按每次提交创建一个图片集，每张图片的排队、生成、partial 过程预览、完成或失败状态都会实时更新。画布以纯白底开始，三张 partial 依次完成 0→25%、25→50%、50→75% 的高斯渐清阶段，最终完整图以独立的 3 秒动画完成 75→100%，全程不显示黑色遮罩。过程图不可打开，收到明确完成事件后才开放原图查看。
@@ -48,6 +48,14 @@ EasyClin 会把图片请求转换到内部图片工具，并非所有 Images API
 后端的基础常量、平台能力、RPC、存储、网络客户端和搜索服务分别位于 `backend` 的同名模块。`AppController` 由 `backend/controller.py` 装配，其窗口、图像、更新、额度和设置行为位于 `backend/controller_mixins`。桌面进程入口和 pywebview 装配位于 `backend/runtime.py`。
 
 ## 构建
+
+### Mirra Android 与官网发布
+
+Android 正式版通过 `deploy/build-imggen-android-release.ps1 -VersionCode 18 -VersionName 1.2.6` 构建。需要 Java 21、Android SDK 36、`mobile` 的 npm 依赖，以及 `EASYAPITOOL_RELEASE_PROPERTIES` 指向的原发布签名文件。迁移构建机后可用 `EASYAPITOOL_RELEASE_STORE_FILE` 覆盖签名文件中原有的 keystore 路径。默认使用 Gradle wrapper；缓存齐全时可追加 `-Offline`。
+
+官网源码与图片、字体、脚本分别位于 `deploy/imggen-landing.html` 和 `deploy/mirra-assets/`。官网保留现有 Mirra 设计，同时展示 Windows 与 Android 的独立版本、安装包大小、日期及 SHA-256。下载入口为 `/v1/app/update/download?platform=windows` 和 `/v1/app/update/download?platform=android`。服务从 `API_TOOLS_WINDOWS_RELEASE_DIR` 和 `API_TOOLS_ANDROID_RELEASE_DIR` 读取对应的安装包与 `manifest.json`，下载前校验文件大小和 SHA-256。
+
+部署时向 `deploy/deploy-imggen-server.ps1` 传入 `-WindowsReleaseDirectory`，目录内应包含 `API_TOOLS.exe` 和 Windows 发布清单。两端的正式安装包及校验文件分别随 `imagen-v1.1.10`（Windows）和 `android-v1.2.6`（Android）GitHub Release 发布。Windows 保留 `imagen` 更新通道与原有资产名，已有应用可继续自动更新。
 
 构建机需要 Node.js/npm。运行 `build.ps1` 后，脚本会在缺少本地依赖时执行 `npm ci`，随后强制编译 SCSS，并将生成的 CSS、页面资源与 `CHANGELOG.md` 打包为单文件便携版 `dist\API_TOOLS.exe`。同时会生成 `dist\API_TOOLS.exe.sha256`。Python 运行时和 DLL 已嵌入 EXE，目标机器无需安装 Python 或 Node.js，也不要再复制旧目录版中的单独 EXE。目标机器仍需安装 Microsoft Edge WebView2 Runtime（Windows 11 默认包含）。
 

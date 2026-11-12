@@ -29,6 +29,12 @@ install -m 0644 "$stage/release/manifest.json" "$release_root/manifest.json"
 chown -R root:root "$app_root/backend" "$release_root"
 chmod -R a+rX "$app_root/backend" "$release_root"
 
+if [[ -f "$stage/windows-release/manifest.json" && -f "$stage/windows-release/API_TOOLS.exe" ]]; then
+    install -d -m 0755 "$app_root/releases/windows"
+    install -m 0644 "$stage/windows-release/API_TOOLS.exe" "$app_root/releases/windows/API_TOOLS.exe"
+    install -m 0644 "$stage/windows-release/manifest.json" "$app_root/releases/windows/manifest.json"
+fi
+
 install -d -m 0750 -o "$service_user" -g "$service_group" /etc/imggen-api /run/imggen-api
 if [[ ! -f /etc/imggen-api/imggen-api.env ]]; then
     umask 077
@@ -43,11 +49,16 @@ EOF
 fi
 grep -q '^API_TOOLS_ANDROID_RELEASE_DIR=' /etc/imggen-api/imggen-api.env || \
     printf '%s\n' 'API_TOOLS_ANDROID_RELEASE_DIR=/opt/imggen-api/releases/android' >> /etc/imggen-api/imggen-api.env
+grep -q '^API_TOOLS_WINDOWS_RELEASE_DIR=' /etc/imggen-api/imggen-api.env || \
+    printf '%s\n' 'API_TOOLS_WINDOWS_RELEASE_DIR=/opt/imggen-api/releases/windows' >> /etc/imggen-api/imggen-api.env
 
 install -m 0644 "$stage/imggen-api.service" /etc/systemd/system/imggen-api.service
 install -m 0755 "$stage/imggen-api-pair" /usr/local/sbin/imggen-api-pair
 install -m 0644 "$stage/assetlinks.json" "$web_root/.well-known/assetlinks.json"
 install -m 0644 "$stage/imggen-landing.html" "$web_root/index.html"
+install -d -m 0755 "$web_root/mirra-assets"
+cp -a "$stage/mirra-assets/." "$web_root/mirra-assets/"
+chmod -R a+rX "$web_root/mirra-assets"
 install -m 0755 "$stage/imggen-cert-renew-hook.sh" /etc/letsencrypt/renewal-hooks/deploy/imggen-nginx-reload
 
 install -m 0644 "$stage/imggen-http.conf" /www/server/panel/vhost/nginx/imggen.djyx.me.conf

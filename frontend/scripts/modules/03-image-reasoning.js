@@ -33,9 +33,9 @@
             high: '#5865f2', extra: '#6d5dfc', max: '#536dfe', advanced: '#6366f1'
         };
         const IMAGE_ADVANCED_MODEL_DETAILS = {
-            luna: { name: 'gpt5.6luna', hue: 199, description: '轻快响应 · 日常问答首选' },
-            terra: { name: 'gpt5.6terra', hue: 229, description: '均衡全能 · 复杂任务更稳' },
-            sol: { name: 'gpt5.6sol', hue: 258, description: '旗舰推理 · 挑战最难问题' }
+            luna: { name: 'gpt6luna', hue: 199, description: '轻快响应 · 日常问答首选' },
+            terra: { name: 'gpt6.1terra', hue: 229, description: '均衡全能 · 复杂任务更稳' },
+            sol: { name: 'gpt6.1sol', hue: 258, description: '旗舰推理 · 挑战最难问题' }
         };
         const IMAGE_ADVANCED_EFFORT_DETAILS = {
             low: '低耗速答', medium: '适度思考', high: '深度推理', xhigh: '超长思维链', max: '极限反思'
@@ -57,7 +57,7 @@
         }
 
         function normalizeImageAdvancedModel(model) {
-            const cleanModel = String(model || 'luna').toLowerCase().replace(/^gpt-5\.6-/, '');
+            const cleanModel = String(model || 'luna').toLowerCase().replace(/^gpt-(?:5\.6|6\.1|6)-/, '');
             return IMAGE_ADVANCED_MODELS.includes(cleanModel) ? cleanModel : 'luna';
         }
 

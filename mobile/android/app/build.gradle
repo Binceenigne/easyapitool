@@ -41,7 +41,7 @@ android {
     signingConfigs {
         release {
             if (!releaseProperties.isEmpty()) {
-                storeFile file(releaseProperties['storeFile'])
+                storeFile file(System.getenv('EASYAPITOOL_RELEASE_STORE_FILE') ?: releaseProperties['storeFile'])
                 storePassword releaseProperties['storePassword']
                 keyAlias releaseProperties['keyAlias']
                 keyPassword releaseProperties['keyPassword']

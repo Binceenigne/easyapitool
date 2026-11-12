@@ -17,6 +17,8 @@ def safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+# Historical models only. New model costs use the provider's reported usage;
+# do not apply GPT-5.6 tariffs to GPT-6 or GPT-6.1 requests.
 GPT_5_6_PRICING = {
     "gpt-5.6-luna": ((0.20, 0.02, 1.20), (0.40, 0.04, 1.80)),
     "gpt-5.6-terra": ((2.00, 0.20, 12.00), (4.00, 0.40, 18.00)),
