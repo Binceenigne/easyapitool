@@ -3253,14 +3253,14 @@ class ControllerTests(unittest.TestCase):
                 for mode, config in app.IMAGE_REASONING_MODES.items()
             },
             {
-                "flash": ("gpt-5.6-luna", "medium"),
-                "medium": ("gpt-5.6-luna", "high"),
-                "high": ("gpt-5.6-terra", "xhigh"),
-                "extra": ("gpt-5.6-terra", "max"),
-                "max": ("gpt-5.6-sol", "max"),
+                "flash": ("gpt-6-luna", "medium"),
+                "medium": ("gpt-6-luna", "high"),
+                "high": ("gpt-6.1-terra", "xhigh"),
+                "extra": ("gpt-6.1-terra", "max"),
+                "max": ("gpt-6.1-sol", "max"),
             },
         )
-        self.assertEqual(app.PROMPT_POLISH_MODEL, "gpt-5.6-terra")
+        self.assertEqual(app.PROMPT_POLISH_MODEL, "gpt-6.1-terra")
         self.assertEqual(app.PROMPT_POLISH_REASONING_EFFORT, "medium")
         self.assertEqual(
             app.IMAGE_WEB_SEARCH_MODES,
@@ -3319,6 +3319,15 @@ class ControllerTests(unittest.TestCase):
                 for model in app.IMAGE_ADVANCED_MODELS
             }
             self.assertEqual(len(budgets), 1)
+
+    def test_advanced_reasoning_accepts_current_and_saved_legacy_model_ids(self):
+        for key, model_id in app.IMAGE_ADVANCED_MODELS.items():
+            for saved in (key, model_id, f"gpt-5.6-{key}"):
+                with self.subTest(model=saved):
+                    config = app.resolve_image_reasoning_config("advanced", saved, "high")
+                    self.assertEqual(config["modelKey"], key)
+                    self.assertEqual(config["model"], model_id)
+        self.assertEqual(app.IMAGE_CONTINUATION_PLANNER_MODEL, "gpt-6-luna")
 
     def test_generate_image_rejects_invalid_advanced_reasoning_selection(self):
         controller = app.AppController.__new__(app.AppController)
@@ -3424,11 +3433,11 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("alpha", sent_request.fields["prompt"])
         self.assertIn("16:9", sent_request.fields["prompt"])
         self.assertNotIn("内部输出约束", json.dumps(events, ensure_ascii=False))
-        self.assertEqual(result["reasoningModel"], "gpt-5.6-luna")
+        self.assertEqual(result["reasoningModel"], "gpt-6-luna")
         self.assertEqual(result["reasoningEffort"], "high")
         self.assertEqual(service.generate.call_args.args[2].prompt, "A clean professional chart")
         response_call = controller.client.stream_response.call_args
-        self.assertEqual(response_call.args[2], "gpt-5.6-luna")
+        self.assertEqual(response_call.args[2], "gpt-6-luna")
         self.assertEqual(response_call.kwargs["reasoning_effort"], "high")
         self.assertEqual(
             [tool["name"] for tool in response_call.kwargs["tools"]],
@@ -3509,11 +3518,11 @@ class ControllerTests(unittest.TestCase):
         response_call = controller.client.stream_response.call_args
         self.assertTrue(result["ok"])
         self.assertEqual(result["reasoningMode"], "advanced")
-        self.assertEqual(result["reasoningModel"], "gpt-5.6-sol")
+        self.assertEqual(result["reasoningModel"], "gpt-6.1-sol")
         self.assertEqual(result["reasoningEffort"], "high")
         self.assertEqual(result["reasoningDepth"], "high")
         self.assertTrue(result["webSearchEnabled"])
-        self.assertEqual(response_call.args[2], "gpt-5.6-sol")
+        self.assertEqual(response_call.args[2], "gpt-6.1-sol")
         self.assertEqual(response_call.kwargs["reasoning_effort"], "high")
         self.assertEqual(
             [tool["name"] for tool in response_call.kwargs["tools"]],
@@ -3603,11 +3612,11 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(result["reasoningUsage"]["totalTokens"], 250)
         self.assertEqual(result["reasoningUsage"]["callCount"], 1)
-        self.assertEqual(result["reasoningUsage"]["costedCallCount"], 1)
-        self.assertEqual(result["reasoningUsage"]["estimatedCallCount"], 1)
-        self.assertEqual(result["reasoningUsage"]["costSource"], "estimate")
-        self.assertTrue(result["reasoningUsage"]["hasCost"])
-        self.assertAlmostEqual(result["reasoningUsage"]["costUsd"], 0.0001)
+        self.assertEqual(result["reasoningUsage"]["costedCallCount"], 0)
+        self.assertEqual(result["reasoningUsage"]["estimatedCallCount"], 0)
+        self.assertEqual(result["reasoningUsage"]["costSource"], "")
+        self.assertFalse(result["reasoningUsage"]["hasCost"])
+        self.assertEqual(result["reasoningUsage"]["costUsd"], 0.0)
         controller.client.get_json.assert_not_called()
 
     def test_extra_agent_uses_terra_max_with_max_depth_logic(self):
@@ -3634,7 +3643,7 @@ class ControllerTests(unittest.TestCase):
             lambda *_args, **_kwargs: None,
         )
 
-        self.assertEqual(captured["model"], "gpt-5.6-terra")
+        self.assertEqual(captured["model"], "gpt-6.1-terra")
         self.assertEqual(captured["reasoning_effort"], "max")
         self.assertIn(app.IMAGE_REASONING_MODES["max"]["depth"], captured["instructions"])
         self.assertEqual(result["prompt"], "Extra final prompt")
@@ -3941,7 +3950,7 @@ class ControllerTests(unittest.TestCase):
                 return_value={
                     "prompt": "Final prompt",
                     "summary": "Checked a visual reference",
-                    "model": "gpt-5.6-sol",
+                    "model": "gpt-6.1-sol",
                     "webSearchEnabled": True,
                     "webSearchUsed": True,
                     "webSearchResultCount": 1,
@@ -5618,7 +5627,7 @@ class ControllerTests(unittest.TestCase):
                 0,
                 {
                     "reasoningMode": "high",
-                    "reasoningModel": "gpt-5.6-sol",
+                    "reasoningModel": "gpt-6.1-sol",
                     "reasoningEffort": "medium",
                     "reasoningSummary": "识别产品展示场景并比较构图方案。",
                     "reasoningDurationMs": 9_876,
@@ -5643,7 +5652,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(listed["sets"][0]["prompt"], "专业产品图，三分构图")
         self.assertEqual(listed["sets"][0]["originalPrompt"], "制作产品图")
         self.assertEqual(listed["sets"][0]["reasoningMode"], "high")
-        self.assertEqual(listed["sets"][0]["reasoningModel"], "gpt-5.6-sol")
+        self.assertEqual(listed["sets"][0]["reasoningModel"], "gpt-6.1-sol")
         self.assertEqual(listed["sets"][0]["reasoningEffort"], "medium")
         self.assertEqual(listed["sets"][0]["reasoningSummary"], "识别产品展示场景并比较构图方案。")
         self.assertEqual(listed["sets"][0]["reasoningDurationMs"], 9_876)
