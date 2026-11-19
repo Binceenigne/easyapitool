@@ -32,7 +32,15 @@ class QuotaStateMixin:
                 models = list((previous_payload or {}).get("_models") or [])
             payload["_models"] = models
             payload["_models_count"] = len(models)
-            changed_names = annotate_limit_changes(payload, previous_payload)
+            if payload.get("serverQuota"):
+                changed_names = set()
+                if previous_payload and previous_payload.get("serverQuota"):
+                    cursor = int(previous_payload.get("quotaRevision") or 0)
+                    for event in reversed(payload.get("quotaEvents") or []):
+                        if int(event.get("id") or 0) > cursor:
+                            self.notify(f"{record['name']} · 额度更新", str(event.get("message") or "额度已更新"))
+            else:
+                changed_names = annotate_limit_changes(payload, previous_payload)
             alert_metrics = {
                 "quota": "总额度",
                 "5h": "5h 限额",
@@ -97,11 +105,11 @@ class QuotaStateMixin:
         metrics: dict[str, float] = {}
         quota = payload.get("quota") or {}
         if safe_float(quota.get("limit")) > 0:
-            metrics["总额度"] = 100 * safe_float(quota.get("remaining")) / safe_float(quota.get("limit"))
+            metrics["总额度"] = (safe_float(quota["remainingPercent"]) if quota.get("remainingPercent") is not None else 100 * safe_float(quota.get("remaining")) / safe_float(quota.get("limit")))
         for item in payload.get("rate_limits") or []:
             limit = safe_float(item.get("limit"))
             if limit > 0:
-                metrics[f"{item.get('window')} 限额"] = 100 * safe_float(item.get("remaining")) / limit
+                metrics[f"{item.get('window')} 限额"] = (safe_float(item["remainingPercent"]) if item.get("remainingPercent") is not None else 100 * safe_float(item.get("remaining")) / limit)
         for metric, percentage in metrics.items():
             if percentage <= thresholds["critical"]:
                 severity = 3
@@ -129,7 +137,7 @@ class QuotaStateMixin:
         rates_method = getattr(self.store, "rates", None)
         if not callable(rates_method):
             return
-        rates = rates_method(key_id) or {}
+        rates = (payload.get("rates") if payload.get("serverQuota") else rates_method(key_id)) or {}
         intervals = rates.get("intervals") or {}
         for interval_name, seconds in (("10m", 600), ("1h", 3600)):
             interval = intervals.get(interval_name) or {}
@@ -211,6 +219,8 @@ class QuotaStateMixin:
                 "resetTime": item.get("reset_at"),
                 "windowStart": item.get("window_start"),
                 "limitChange": change,
+                "remainingPercent": item.get("remainingPercent"),
+                "severity": item.get("severity"),
                 "unit": item.get("unit") or ("requests" if payload.get("mode") == "request_quota" else "USD"),
             }
 
@@ -241,7 +251,10 @@ class QuotaStateMixin:
             "totalTokens": total.get("total_tokens"),
             "modelsCount": int(payload.get("_models_count") or 0),
             "models": [str(model) for model in payload.get("_models") or [] if str(model).strip()],
-            "rates": self.store.rates(record["id"]),
+            "rates": payload.get("rates", {}) if payload.get("serverQuota") else self.store.rates(record["id"]),
+            "serverQuota": bool(payload.get("serverQuota")),
+            "quotaPercent": quota.get("remainingPercent"),
+            "quotaSeverity": quota.get("severity"),
             "lastError": record["last_error"],
         }
 
