@@ -92,7 +92,7 @@
         function closeKeySwitcher() {
             const button = document.getElementById('keySwitcherButton');
             const menu = document.getElementById('keySwitcherMenu');
-            if (!button || !menu) return;
+            if (!button || !menu || menu.hidden) return;
             menu.hidden = true;
             button.setAttribute('aria-expanded', 'false');
             button.classList.remove('is-open');

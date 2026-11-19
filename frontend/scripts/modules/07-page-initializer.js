@@ -102,6 +102,7 @@
                     closeImageResultModal();
                     closeImageSetDeleteModal();
                     closeImageGenerationStopModal();
+                    closeImageGenerationControls();
                     closeImageReasoningMenu();
                 }
                 handleDevToolsSequence(event);

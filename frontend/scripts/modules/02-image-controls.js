@@ -341,19 +341,20 @@
             const button = document.getElementById('imageGenerationControlsButton');
             const form = document.getElementById('imageEditForm');
             if (!panel || panel.hidden || !button || !form) return;
-            const { layer, scale, rect: layerRect } = pageZoomMetrics();
+            const metrics = pageZoomMetrics();
+            const { layer, scale, rect: layerRect } = metrics;
             if (!layer || !layerRect) return;
             const buttonRect = button.getBoundingClientRect();
             const formRect = form.getBoundingClientRect();
             panel.style.setProperty('--image-popover-left', `${(formRect.left - layerRect.left) / scale + 12}px`);
             panel.style.setProperty('--image-popover-width', `${Math.max(0, formRect.width / scale - 24)}px`);
-            panel.style.setProperty('--image-popover-bottom', `${Math.max(12, (layerRect.bottom - buttonRect.top) / scale + 8)}px`);
+            positionImagePopover(panel, buttonRect, metrics);
         }
 
         function closeImageGenerationControls() {
             const panel = document.getElementById('imageGenerationControlPanel');
             const button = document.getElementById('imageGenerationControlsButton');
-            if (!panel || panel.hidden) return;
+            if (!panel || button?.getAttribute('aria-expanded') !== 'true') return;
             closeImageModelPicker();
             clearTimeout(panel.__hideTimer);
             panel.classList.remove('is-open');
@@ -366,7 +367,7 @@
         function toggleImageGenerationControls() {
             const panel = document.getElementById('imageGenerationControlPanel');
             const button = document.getElementById('imageGenerationControlsButton');
-            if (!panel.hidden) return closeImageGenerationControls();
+            if (button.getAttribute('aria-expanded') === 'true') return closeImageGenerationControls();
             closeImageReasoningMenu();
             clearTimeout(panel.__hideTimer);
             panel.hidden = false;
@@ -374,7 +375,9 @@
             button.setAttribute('aria-expanded', 'true');
             const icon = button.querySelector('[data-lucide="chevron-up"], [data-lucide="chevron-down"], svg:last-child');
             if (icon) setLucideIcon(icon, 'chevron-down');
-            requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.add('is-open')));
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                if (button.getAttribute('aria-expanded') === 'true') panel.classList.add('is-open');
+            }));
         }
 
         const IMAGE_MODEL_LABELS = {

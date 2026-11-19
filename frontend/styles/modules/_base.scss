@@ -88,6 +88,7 @@ textarea {
 }
 
 button { cursor: pointer; }
+button [data-lucide][aria-hidden="true"] { pointer-events: none; }
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,

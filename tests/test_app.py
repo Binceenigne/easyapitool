@@ -1901,11 +1901,12 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn("app.min.css", page)
         self.assertNotIn("tailwind", build_script.lower())
         self.assertNotIn('<script defer src="../vendor/lucide/lucide.min.js"></script>', page)
-        self.assertIn(
-            '<script src="vendor/lucide/lucide.min.js"></script>\n'
-            '    <script src="scripts/modules/00-core-ui.js?v=1"></script>',
+        self.assertRegex(
             page,
+            r'<script src="vendor/lucide/lucide\.min\.js"></script>\s+'
+            r'<script src="scripts/modules/00-core-ui\.js\?v=\d+"></script>',
         )
+        self.assertIn('button [data-lucide][aria-hidden="true"] { pointer-events: none; }', scss_source)
         self.assertIn("window.addEventListener('load', () => {\n            renderLucideIcons();", page)
         self.assertIn("npm.cmd", build_script.lower())
         self.assertIn("run build:css", build_script.lower())
@@ -2335,7 +2336,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("reasoningTurnsForSet(set).forEach(turn =>", page)
         self.assertNotIn("pendingSet?.reasoningTurns.find", page)
         self.assertNotIn("control.closest('.image-generation-footer')?.getBoundingClientRect()", page)
-        self.assertIn("const anchorTop = (controlRect.top - layerRect.top) / scale", page)
+        self.assertIn("positionImagePopover(menu, controlRect, metrics)", page)
+        self.assertIn("const viewportTop = (viewport.top - rect.top) / scale", page)
         self.assertIn("if (appMain && menu.parentElement !== appMain) appMain.append(menu)", page)
         self.assertIn("function copyImagePrompt(text, label)", page)
         self.assertIn("复制原始提示词", page)

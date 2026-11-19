@@ -445,7 +445,8 @@
             const menu = document.getElementById('imageReasoningMenu');
             const control = document.getElementById('imageReasoningControl');
             if (!menu || menu.hidden || !control) return;
-            const { layer, scale, rect: layerRect } = pageZoomMetrics();
+            const metrics = pageZoomMetrics();
+            const { layer, scale, rect: layerRect } = metrics;
             if (!layer || !layerRect) return;
             const controlRect = control.getBoundingClientRect();
             const controlRight = (controlRect.right - layerRect.left) / scale;
@@ -454,8 +455,7 @@
             menu.style.setProperty('--reasoning-menu-right', `${menuRight}px`);
             menu.style.setProperty('--reasoning-menu-normal-width', `${Math.min(220, availableWidth)}px`);
             menu.style.setProperty('--reasoning-menu-advanced-width', `${Math.min(330, availableWidth)}px`);
-            const anchorTop = (controlRect.top - layerRect.top) / scale;
-            menu.style.setProperty('--reasoning-menu-bottom', `${Math.max(12, layer.clientHeight - anchorTop + 8)}px`);
+            positionImagePopover(menu, controlRect, metrics);
         }
 
         function closeImageReasoningMenu() {
@@ -614,7 +614,11 @@
             const menu = document.getElementById('imageReasoningMenu');
             document.getElementById('reasoningMenuMainView').hidden = false;
             document.getElementById('reasoningMenuAdvancedView').hidden = true;
-            menu?.classList.remove('is-advanced');
+            if (menu) {
+                menu.classList.remove('is-advanced');
+                menu.scrollTop = 0;
+                positionImageReasoningMenu();
+            }
         }
 
         function showImageReasoningAdvancedView(activate = true) {
@@ -629,6 +633,8 @@
             document.getElementById('reasoningMenuAdvancedView').hidden = false;
             menu?.classList.add('is-advanced');
             if (menu && !menu.hidden) {
+                menu.scrollTop = 0;
+                positionImageReasoningMenu();
                 requestAnimationFrame(() => document.getElementById('advancedMatrix')?.focus({ preventScroll: true }));
             }
         }

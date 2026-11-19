@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="styles/app.css?v=36">
+    <link rel="stylesheet" href="styles/app.css?v=37">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -162,7 +162,7 @@
                         <span id="imageEditStatus" role="status">填写提示词即可生成，参考图可选</span>
                         <div class="image-generation-command-bar">
                             <div class="image-generation-controls-wrap">
-                                <button type="button" id="imageGenerationControlsButton" aria-expanded="false" onclick="toggleImageGenerationControls()">
+                                <button type="button" id="imageGenerationControlsButton" aria-expanded="false" aria-controls="imageGenerationControlPanel" onclick="toggleImageGenerationControls()">
                                     <i data-lucide="settings-2" aria-hidden="true"></i>
                                     <span id="imageGenerationControlSummary">
                                         <strong id="imageGenerationQualitySummary" data-quality="auto">自动细节</strong>
@@ -937,15 +937,15 @@
     </div>
 
     <script src="vendor/lucide/lucide.min.js"></script>
-    <script src="scripts/modules/00-core-ui.js?v=1"></script>
+    <script src="scripts/modules/00-core-ui.js?v=2"></script>
     <script src="scripts/modules/01-app-state.js?v=2"></script>
-    <script src="scripts/modules/02-image-controls.js?v=2"></script>
-    <script src="scripts/modules/03-image-reasoning.js?v=2"></script>
+    <script src="scripts/modules/02-image-controls.js?v=3"></script>
+    <script src="scripts/modules/03-image-reasoning.js?v=3"></script>
     <script src="scripts/modules/04-image-stream-rendering.js?v=1"></script>
     <script src="scripts/modules/05-image-events-sessions.js?v=3"></script>
     <script src="scripts/modules/06-backend-bridge.js?v=1"></script>
-    <script src="scripts/modules/07-page-initializer.js?v=2"></script>
-    <script src="scripts/modules/08-window-settings-updates.js?v=2"></script>
+    <script src="scripts/modules/07-page-initializer.js?v=3"></script>
+    <script src="scripts/modules/08-window-settings-updates.js?v=3"></script>
     <script src="scripts/modules/09-modals-input-refresh.js?v=1"></script>
     <script src="scripts/modules/10-dashboard-rendering.js?v=2"></script>
     <script src="scripts/modules/11-theme-bootstrap.js?v=1"></script>

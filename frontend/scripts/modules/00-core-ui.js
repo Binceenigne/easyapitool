@@ -30,6 +30,26 @@
             };
         }
 
+        function positionImagePopover(menu, anchor, { layer, scale, rect }) {
+            const viewport = document.getElementById('pageZoomViewport').getBoundingClientRect();
+            const gap = 8;
+            const viewportTop = (viewport.top - rect.top) / scale + gap;
+            const viewportBottom = (viewport.bottom - rect.top) / scale - gap;
+            const aboveEnd = Math.min(viewportBottom, (anchor.top - rect.top) / scale - gap);
+            const belowStart = Math.max(viewportTop, (anchor.bottom - rect.top) / scale + gap);
+            const above = Math.max(0, aboveEnd - viewportTop);
+            const below = Math.max(0, viewportBottom - belowStart);
+            const height = menu.scrollHeight + menu.offsetHeight - menu.clientHeight;
+            const openBelow = above < height && below > above;
+            const available = openBelow ? below : above;
+            const useViewport = available < Math.min(height, 120);
+            const top = useViewport ? viewportTop : openBelow ? belowStart : null;
+            const maxHeight = useViewport ? Math.max(0, viewportBottom - viewportTop) : available;
+            menu.style.setProperty('--image-popover-top', top === null ? 'auto' : `${top}px`);
+            menu.style.setProperty('--image-popover-bottom', top === null ? `${layer.clientHeight - aboveEnd}px` : 'auto');
+            menu.style.setProperty('--image-popover-max-height', `${maxHeight}px`);
+        }
+
         function applyPageZoom(value, persist = false, announce = false) {
             const zoom = normalizePageZoom(value);
             document.documentElement.style.setProperty('--page-zoom', String(zoom));

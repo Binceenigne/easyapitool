@@ -93,6 +93,10 @@ button {
   cursor: pointer;
 }
 
+button [data-lucide][aria-hidden=true] {
+  pointer-events: none;
+}
+
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -1489,13 +1493,14 @@ html.dark #keySwitcherMenu {
   position: fixed;
   z-index: 54;
   right: auto;
+  top: var(--image-popover-top, auto);
   bottom: var(--image-popover-bottom, 58px);
   left: var(--image-popover-left, 12px);
   display: grid;
   width: var(--image-popover-width, 100%);
   padding: 12px;
   gap: 9px;
-  max-height: calc(100vh - var(--image-popover-bottom, 58px) - 12px);
+  max-height: var(--image-popover-max-height);
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--border);
@@ -2047,11 +2052,15 @@ html.dark #keySwitcherMenu {
   position: fixed;
   z-index: 80;
   right: var(--reasoning-menu-right, 12px);
-  bottom: var(--reasoning-menu-bottom, 58px);
+  top: var(--image-popover-top, auto);
+  bottom: var(--image-popover-bottom, 58px);
   left: auto;
   display: flex;
   flex-direction: column;
   width: var(--reasoning-menu-normal-width, 220px);
+  max-height: var(--image-popover-max-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 12px 14px;
   gap: 12px;
   border: 1px solid var(--border);
