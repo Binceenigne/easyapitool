@@ -80,6 +80,10 @@ class Store:
                 );
                 """
             )
+            db.execute(
+                "UPDATE api_keys SET base_url=? WHERE lower(rtrim(base_url, '/'))=?",
+                (MIRRA_API_URL, LEGACY_MIRRA_API_URL),
+            )
             invalid_snapshot_ids: list[int] = []
             for row in db.execute("SELECT id,payload_json FROM usage_snapshots").fetchall():
                 try:

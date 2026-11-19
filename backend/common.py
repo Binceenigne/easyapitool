@@ -51,7 +51,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.1.15"
+APP_VERSION = "1.1.16"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -65,13 +65,16 @@ MUTEX_NAME = "Local\\API_TOOLS_EasyClin_Quota_Monitor"
 SHOW_EVENT_NAME = "Local\\API_TOOLS_EasyClin_Show_Window"
 DEFAULT_BASE_URL = "https://work.easyclin.cn/v1"
 OPENAI_API_URL = "https://api.openai.com/v1"
-MIRRA_API_URL = "https://imggen.djyx.me/openai/v1"
-MIRRA_UPDATE_URL = "https://imggen.djyx.me/v1/app/update"
+MIRRA_ORIGIN = "https://imggen.djyx.pw"
+MIRRA_API_URL = f"{MIRRA_ORIGIN}/openai/v1"
+MIRRA_UPDATE_URL = f"{MIRRA_ORIGIN}/v1/app/update"
+LEGACY_MIRRA_API_URL = "https://imggen.djyx.me/openai/v1"
 
 
 def api_base_url_for_key(key: str) -> str:
     if key.startswith("sk-mirra-"):
-        return os.environ.get("MIRRA_PUBLIC_OPENAI_BASE_URL", MIRRA_API_URL).rstrip("/")
+        base_url = os.environ.get("MIRRA_PUBLIC_OPENAI_BASE_URL", MIRRA_API_URL).rstrip("/")
+        return MIRRA_API_URL if base_url.lower() == LEGACY_MIRRA_API_URL else base_url
     if key.startswith("sk-proj-"):
         return OPENAI_API_URL
     return os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
