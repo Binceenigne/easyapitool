@@ -253,6 +253,7 @@ class QuotaStateMixin:
             "models": [str(model) for model in payload.get("_models") or [] if str(model).strip()],
             "rates": payload.get("rates", {}) if payload.get("serverQuota") else self.store.rates(record["id"]),
             "serverQuota": bool(payload.get("serverQuota")),
+            "appModels": payload.get("appModels") if payload.get("serverQuota") else None,
             "quotaPercent": quota.get("remainingPercent"),
             "quotaSeverity": quota.get("severity"),
             "lastError": record["last_error"],

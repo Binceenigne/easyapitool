@@ -176,6 +176,7 @@
         }
 
         function updateUI() {
+            syncManagedImageControls();
             const keys = window.appState.keys;
             const activeKey = getActiveKey();
             if (!activeKey) {

@@ -270,7 +270,7 @@ class ImageFilesMixin:
             webview.FileDialog.SAVE,
             directory=str(windows_pictures_dir()),
             save_filename=source.name,
-            file_types=("PNG 图片 (*.png)", "JPEG 图片 (*.jpg;*.jpeg)", "WebP 图片 (*.webp)"),
+            file_types=("SVG 图片 (*.svg)",) if source.suffix.lower() == ".svg" else ("PNG 图片 (*.png)", "JPEG 图片 (*.jpg;*.jpeg)", "WebP 图片 (*.webp)"),
         )
         if not selected:
             return {"ok": True, "cancelled": True}

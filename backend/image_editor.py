@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -25,11 +26,13 @@ from .network_log import log_network_error, new_network_request_id
 
 
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+OUTPUT_IMAGE_SUFFIXES = SUPPORTED_IMAGE_SUFFIXES | {".svg"}
 CONTENT_TYPES = {
     ".jpeg": "image/jpeg",
     ".jpg": "image/jpeg",
     ".png": "image/png",
     ".webp": "image/webp",
+    ".svg": "image/svg+xml",
 }
 OUTPUT_PRESETS = {
     "lossless": ("png", None),
@@ -48,11 +51,47 @@ IMAGE_SIZES_BY_RATIO = {
 IMAGE_EXTENSIONS = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}
 
 
+def svg_size(image_bytes: bytes) -> tuple[int, int] | None:
+    data = image_bytes.removeprefix(b"\xef\xbb\xbf").lstrip()
+    if not data.startswith(b"<"):
+        return None
+    if len(data) > 50 * 1024 * 1024 or re.search(rb"<!\s*(?:DOCTYPE|ENTITY)\b", data, re.IGNORECASE):
+        raise ValueError("SVG 内容无效或超过 50 MB")
+    try:
+        root = ET.fromstring(data.decode("utf-8"))
+    except (ET.ParseError, UnicodeDecodeError) as exc:
+        raise ValueError("SVG 内容无效") from exc
+    if root.tag not in {"svg", "{http://www.w3.org/2000/svg}svg"}:
+        raise ValueError("SVG 根节点无效")
+    for element in root.iter():
+        if element.tag.rsplit("}", 1)[-1].lower() in {"script", "foreignobject"}:
+            raise ValueError("SVG 含有无法预览的内容")
+        for attr, value in element.attrib.items():
+            name = attr.rsplit("}", 1)[-1].lower()
+            if name.startswith("on") or (name == "href" and not value.strip().startswith("#")):
+                raise ValueError("SVG 含有无法预览的内容")
+
+    def pixels(value: str) -> int:
+        try:
+            numeric = float(value.removesuffix("px"))
+        except ValueError:
+            return 0
+        return round(numeric) if math.isfinite(numeric) and 0 < numeric <= 100_000 else 0
+
+    width, height = pixels(root.get("width", "")), pixels(root.get("height", ""))
+    view_box = re.split(r"[\s,]+", root.get("viewBox", "").strip())
+    if len(view_box) == 4:
+        width, height = width or pixels(view_box[2]), height or pixels(view_box[3])
+    return width, height
+
+
 def image_preview_bytes(
     image_bytes: bytes,
     max_side: int = 720,
     optimize: bool = True,
 ) -> bytes:
+    if svg_size(image_bytes) is not None:
+        return image_bytes
     with Image.open(io.BytesIO(image_bytes)) as source_image:
         source_image.load()
         preview_image = source_image.copy()
@@ -77,12 +116,7 @@ def image_preview_data_url(
     max_side: int = 720,
     optimize: bool = True,
 ) -> str:
-    preview_bytes = image_preview_bytes(image_bytes, max_side, optimize)
-    with Image.open(io.BytesIO(preview_bytes)) as preview_image:
-        preview_format = preview_image.format
-    encoded = base64.b64encode(preview_bytes).decode("ascii")
-    mime_type = "image/png" if preview_format == "PNG" else "image/jpeg"
-    return f"data:{mime_type};base64,{encoded}"
+    return image_data_url(image_preview_bytes(image_bytes, max_side, optimize))
 
 
 def image_data_url(image_bytes: bytes) -> str:
@@ -92,6 +126,8 @@ def image_data_url(image_bytes: bytes) -> str:
 
 
 def image_file_suffix(image_bytes: bytes) -> str:
+    if svg_size(image_bytes) is not None:
+        return ".svg"
     with Image.open(io.BytesIO(image_bytes)) as image:
         return IMAGE_EXTENSIONS.get(image.format, ".jpg")
 
@@ -399,7 +435,7 @@ class ImageSessionStore:
             return existing
 
         suffix = source_path.suffix.lower()
-        if suffix not in SUPPORTED_IMAGE_SUFFIXES:
+        if suffix not in OUTPUT_IMAGE_SUFFIXES:
             suffix = ".png"
         session_dir = self._session_dir(session_id)
         asset_dir = session_dir / "assets"
@@ -703,7 +739,7 @@ class ImageSessionStore:
                 raise RuntimeError("图片生成轮次不存在")
             round_dir = self._session_dir(clean_session_id) / str(round_data["directory"])
             round_dir.mkdir(parents=True, exist_ok=True)
-            suffix = source_path.suffix.lower() if source_path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES else ".png"
+            suffix = source_path.suffix.lower() if source_path.suffix.lower() in OUTPUT_IMAGE_SUFFIXES else ".png"
             original_path = round_dir / f"image-{item_index + 1:02d}-original{suffix}"
             shutil.copy2(source_path, original_path)
             original_bytes = original_path.read_bytes()
@@ -1188,6 +1224,8 @@ def prepare_image_generation(
     prompt: str,
     image_paths: list[str],
     options: dict[str, Any] | None = None,
+    *,
+    app_models: dict[str, Any] | None = None,
 ) -> ImageGenerationRequest:
     clean_prompt = strip_image_prompt_constraints(prompt)
     if not clean_prompt:
@@ -1240,14 +1278,23 @@ def prepare_image_generation(
     if transparency == "transparent" and fallback_format == "jpeg":
         fallback_format, fallback_compression = "png", None
     output_format = str(clean_options.get("output_format") or fallback_format).lower()
-    if output_format not in {"png", "jpeg", "webp"}:
-        raise ValueError("输出格式必须为 PNG、JPEG 或 WebP")
+    formats = {"png", "jpeg", "webp"}
+    svg = (app_models or {}).get("svg") or {}
+    if svg.get("enabled") is True:
+        formats.add("svg")
+    if output_format not in formats:
+        raise ValueError("所选输出格式未开放")
+    if output_format == "svg":
+        if operation != "generate" or valid_paths or clean_options.get("continuation") or _number(clean_options.get("imageCount"), 1) != 1:
+            raise ValueError("SVG 仅支持单张无参考图生成")
+        stream = False
+        partial_images = 0
     if transparency == "transparent" and output_format == "jpeg":
-        raise ValueError("透明背景需要 PNG 或 WebP")
+        raise ValueError("透明背景需要 PNG、WebP 或 SVG")
     compression = clean_options.get("output_compression")
     if compression is None and not clean_options.get("output_format"):
         compression = fallback_compression
-    if compression is not None and (type(compression) is not int or not 0 <= compression <= 100 or output_format == "png"):
+    if compression is not None and (type(compression) is not int or not 0 <= compression <= 100 or output_format not in {"jpeg", "webp"}):
         raise ValueError("压缩质量仅适用于 JPEG 和 WebP，范围为 0 至 100")
     if quality not in {"low", "medium", "high", "xhigh", "max", "auto"}:
         raise ValueError("无效的图片质量")
@@ -1274,9 +1321,12 @@ def prepare_image_generation(
     if not 0 <= partial_images <= 3:
         raise ValueError("流式预览图数量必须在 0 到 3 之间")
 
-    image_model = str(clean_options.get("imageModel") or "gpt-image-2").strip()
-    if image_model not in IMAGE_MODEL_IDS:
-        raise ValueError("无效的图片模型")
+    profile = app_models or {}
+    default_model = str(profile.get("defaultImage") or "gpt-image-2")
+    allowed_models = profile.get("imageModels") or IMAGE_MODEL_IDS
+    image_model = str(clean_options.get("imageModel") or default_model).strip()
+    if image_model not in allowed_models:
+        raise ValueError("所选图片模型未开放，请刷新配置后重新选择")
     fields = {
         "model": image_model,
         "prompt": clean_prompt,
@@ -1287,6 +1337,14 @@ def prepare_image_generation(
         "moderation": moderation,
         "stream": stream,
     }
+    if output_format == "svg":
+        author = {}
+        if svg.get("model"):
+            author["model"] = svg["model"]
+        if svg.get("effort"):
+            author["reasoning"] = {"effort": svg["effort"]}
+        if author:
+            fields["svg"] = author
     if complexity:
         fields["complexity"] = complexity
     if compression is not None:
@@ -1749,11 +1807,18 @@ class ImageGenerationService:
         except binascii.Error as exc:
             raise RuntimeError("生图接口返回了无效图片数据") from exc
 
-        with Image.open(io.BytesIO(result_bytes)) as source_image:
-            width, height = source_image.size
-            suffix = IMAGE_EXTENSIONS.get(source_image.format)
-            image_format = str(source_image.format).lower()
-            source_image.verify()
+        if request.output_format == "svg":
+            dimensions = svg_size(result_bytes)
+            if dimensions is None:
+                raise RuntimeError("生图接口未返回 SVG 内容")
+            width, height = dimensions
+            suffix, image_format = ".svg", "svg"
+        else:
+            with Image.open(io.BytesIO(result_bytes)) as source_image:
+                width, height = source_image.size
+                suffix = IMAGE_EXTENSIONS.get(source_image.format)
+                image_format = str(source_image.format).lower()
+                source_image.verify()
         if suffix is None:
             raise RuntimeError("生图接口返回了不支持的图片格式")
         output_path = output_dir / (
@@ -1779,6 +1844,7 @@ class ImageGenerationService:
             "partialImagesRequested": request.partial_images if request.stream else 0,
             "partialImagesReceived": int(response.get("partial_images_received") or 0),
             "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
+            "svgUsage": response.get("svg_usage") if isinstance(response.get("svg_usage"), dict) else {},
             "referenceCount": len(request.image_paths),
             "operation": request.operation,
             "transportOperation": "edit" if request.image_paths else "generate",

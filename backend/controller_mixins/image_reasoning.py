@@ -908,6 +908,28 @@ class ImageReasoningMixin:
                 )
             except ValueError as exc:
                 return {"ok": False, "error": str(exc)}
+        record = self.store.get_key_record(str(key_id or ""))
+        if record is None:
+            return {"ok": False, "error": "请选择有效的 API Key"}
+        secret = self.store.get_secret(record["id"])
+        profile = None
+        if secret.startswith("sk-mirra-"):
+            snapshot = self.store.latest_payload(record["id"]) or {}
+            profile = snapshot.get("appModels")
+
+        def prepare_request(text, paths, requested_options):
+            return prepare_image_generation(text, paths, requested_options, app_models=profile)
+
+        if profile and reasoning_config:
+            if reasoning_mode == "advanced":
+                slot = reasoning_config["modelKey"]
+            else:
+                slot = {"flash": "luna", "medium": "luna", "high": "terra", "extra": "terra", "max": "sol"}.get(reasoning_mode)
+            preset = (profile.get("reasoning") or {}).get(slot) or {}
+            if preset.get("model"):
+                reasoning_config["model"] = preset["model"]
+            if reasoning_mode != "advanced" and preset.get("effort"):
+                reasoning_config["effort"] = preset["effort"]
         requested_web_search = clean_options.get("webSearchEnabled")
         web_search_enabled = (
             reasoning_mode != "instant"
@@ -928,7 +950,7 @@ class ImageReasoningMixin:
             validation_options = dict(clean_options)
             if continuation_enabled:
                 validation_options["operation"] = "generate"
-            request = prepare_image_generation(prompt, image_paths, validation_options)
+            request = prepare_request(prompt, image_paths, validation_options)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         clean_options["operation"] = request.operation
@@ -938,10 +960,6 @@ class ImageReasoningMixin:
                 str(path) for path in submitted_image_paths
             ]
 
-        record = self.store.get_key_record(str(key_id or ""))
-        if record is None:
-            return {"ok": False, "error": "请选择有效的 API Key"}
-        secret = self.store.get_secret(record["id"])
         session_store = self._image_session_store()
         session_activity_reserved = False
         pending_asset_source = False
@@ -1161,7 +1179,7 @@ class ImageReasoningMixin:
                 }
             )
             try:
-                request = prepare_image_generation(
+                request = prepare_request(
                     final_prompt,
                     selected_asset_paths,
                     clean_options,
@@ -1171,20 +1189,20 @@ class ImageReasoningMixin:
                 release_session_activity()
                 return {"ok": False, "error": f"续作规划失败：{exc}"}
         elif reasoning_mode != "instant":
-            request = prepare_image_generation(
+            request = prepare_request(
                 final_prompt,
                 [str(path) for path in request.image_paths],
                 clean_options,
             )
         else:
-            request = prepare_image_generation(
+            request = prepare_request(
                 final_prompt,
                 [str(path) for path in request.image_paths],
                 clean_options,
             )
         if reasoning_mode != "instant":
             try:
-                available_slots = max(0, 16 - len(request.image_paths))
+                available_slots = 0 if request.output_format == "svg" else max(0, 16 - len(request.image_paths))
                 web_candidates = list(agent_result.get("webCandidates") or [])
                 if web_candidates and available_slots:
                     staged_web_references = self._call_with_task_context(
@@ -1202,7 +1220,7 @@ class ImageReasoningMixin:
                     )
                 combined_paths = [str(path) for path in request.image_paths]
                 combined_paths.extend(str(path) for path in web_reference_paths)
-                request = prepare_image_generation(final_prompt, combined_paths, clean_options)
+                request = prepare_request(final_prompt, combined_paths, clean_options)
             except (OSError, RuntimeError, ValueError) as exc:
                 discard_pending_assets()
                 release_session_activity()
