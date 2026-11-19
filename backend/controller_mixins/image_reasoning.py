@@ -920,19 +920,26 @@ class ImageReasoningMixin:
         def prepare_request(text, paths, requested_options):
             return prepare_image_generation(text, paths, requested_options, app_models=profile)
 
-        if profile and reasoning_config:
+        if profile:
+            slots = profile.get("reasoning") or {}
             if reasoning_mode == "advanced":
-                slot = reasoning_config["modelKey"]
+                model = (slots.get(reasoning_config["modelKey"]) or {}).get("model")
+                if model:
+                    reasoning_config["model"] = model
             else:
+                modes = profile.get("reasoningModes") or {}
                 slot = {"flash": "luna", "medium": "luna", "high": "terra", "extra": "terra", "max": "sol"}.get(reasoning_mode)
-            preset = (profile.get("reasoning") or {}).get(slot) or {}
-            if preset.get("model"):
-                reasoning_config["model"] = preset["model"]
-            if reasoning_mode != "advanced" and preset.get("effort"):
-                reasoning_config["effort"] = preset["effort"]
+                preset = modes.get(reasoning_mode) or slots.get(slot) or {}
+                if preset.get("model"):
+                    if reasoning_config is None:
+                        reasoning_config = {**resolve_image_reasoning_config("flash"), "mode": "instant"}
+                    reasoning_config["model"] = preset["model"]
+                    if preset.get("effort"):
+                        reasoning_config["effort"] = preset["effort"]
+        use_reasoning = reasoning_config is not None
         requested_web_search = clean_options.get("webSearchEnabled")
         web_search_enabled = (
-            reasoning_mode != "instant"
+            use_reasoning
             and (
                 reasoning_mode == "advanced"
                 or requested_web_search is not False
@@ -1081,7 +1088,7 @@ class ImageReasoningMixin:
                     for asset_id in visible_asset_ids
                     if asset_id in asset_by_id
                 ]
-                if reasoning_mode == "instant":
+                if not use_reasoning:
                     continuation_plan = self._run_instant_image_continuation_planner(
                         record,
                         secret,
@@ -1094,7 +1101,7 @@ class ImageReasoningMixin:
                 discard_pending_assets()
                 release_session_activity()
                 return {"ok": False, "error": f"续作规划失败：{exc}"}
-        if reasoning_mode != "instant":
+        if use_reasoning:
             reasoning_effort = str((reasoning_config or {})["effort"])
             try:
                 agent_result = self._run_image_prompt_agent(
@@ -1188,19 +1195,13 @@ class ImageReasoningMixin:
                 discard_pending_assets()
                 release_session_activity()
                 return {"ok": False, "error": f"续作规划失败：{exc}"}
-        elif reasoning_mode != "instant":
-            request = prepare_request(
-                final_prompt,
-                [str(path) for path in request.image_paths],
-                clean_options,
-            )
         else:
             request = prepare_request(
                 final_prompt,
                 [str(path) for path in request.image_paths],
                 clean_options,
             )
-        if reasoning_mode != "instant":
+        if use_reasoning:
             try:
                 available_slots = 0 if request.output_format == "svg" else max(0, 16 - len(request.image_paths))
                 web_candidates = list(agent_result.get("webCandidates") or [])

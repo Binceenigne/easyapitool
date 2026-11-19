@@ -518,13 +518,9 @@
                 ? '收起完整更新日志'
                 : '查看完整更新日志';
             const progress = document.getElementById('updateProgress');
-            renderProgressBar(progress, busy || ready ? Number(current.percent) || 0 : 0, 100, {
-                update: true,
-                active: busy
+            renderProgressBar(progress, ready ? 100 : busy ? Number(current.percent) || 0 : 0, 100, {
+                updateStatus: current.status
             });
-            progress.classList.toggle('is-complete', ready);
-            progress.classList.remove('bar-good', 'bar-warn', 'bar-danger', 'bar-critical');
-            progress.classList.add(current.status === 'failed' ? 'bar-critical' : 'bar-good');
             if (current.showPrompt) openUpdateModal();
         };
 
@@ -536,13 +532,14 @@
         async function checkForUpdates() {
             if (!window.pywebview?.api?.check_for_updates) return;
             window.applyUpdateState({
-                status: 'checking', percent: 8, message: '正在检查 GitHub Release', showPrompt: true
+                status: 'checking', percent: 0, message: '正在检查服务器更新', showPrompt: true
             });
             try {
                 const result = await window.pywebview.api.check_for_updates();
                 if (!result?.ok) throw new Error(result?.error || '无法检查更新');
                 if (result.update) window.applyUpdateState(result.update);
             } catch (error) {
+                window.applyUpdateState({ status: 'failed', percent: 0, message: error.message || String(error) });
                 showToast(error.message || String(error), 'error');
             }
         }

@@ -147,6 +147,9 @@
     .slider-thumb,
     .toggle-slider,
     .toggle-slider::before { transition-duration: 0.01ms !important; }
+    .update-progress-track:has(> .update-progress.is-active)::after,
+    .linear-progress.bar-critical,
+    .matrix-progress.bar-critical,
     .image-reasoning-control[data-mode] > button,
     .image-reasoning-control[data-mode],
     .reasoning-gradient,

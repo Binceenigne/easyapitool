@@ -1618,7 +1618,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("iconMarkup('infinity'", page)
         self.assertIn("[data-lucide]", page)
         self.assertIn("selectMostConstrainedWindow", page)
-        self.assertIn('<link rel="stylesheet" href="styles/app.css?v=35">', page)
+        self.assertRegex(page, r'<link rel="stylesheet" href="styles/app\.css\?v=\d+">')
         self.assertNotIn('id="keyTotal"', page)
         self.assertNotIn('id="keyUsed"', page)
         self.assertNotIn('id="keyTodayUsed"', page)
@@ -1856,8 +1856,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("window.__progressTrackResizeObserver", page)
         self.assertIn("Math.round(entry.contentRect.width)", page)
         self.assertIn("matrix-progress", scss_source)
-        self.assertIn("matrix-dot is-filled", page)
-        self.assertIn("border: 1px solid rgba(var(--progress-rgb), 0.08)", scss_source)
+        self.assertIn("motion.dots[index].style.setProperty('--dot-fill'", page)
+        self.assertIn("opacity: var(--dot-fill, 0)", scss_source)
         self.assertIn("background: transparent", scss_source)
         self.assertIn("rateLimitProgressMode", page)
         self.assertIn("changeRateLimitProgressMode('used')", page)
@@ -1881,10 +1881,10 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("closeAnimatedModal", page)
         self.assertIn("MODAL_ANIMATION_MS = 260", page)
         self.assertIn("if (barElement.id === 'updateProgress') return 4", page)
-        self.assertIn("const filledDots = Math.round(totalDots * fill / 100)", page)
+        self.assertIn("const position = motion.value * motion.dots.length / 100", page)
         self.assertNotIn("globalFilledIndexes", page)
-        self.assertIn("const blockFill = Math.max(0, Math.min(dotsPerBlock, filledDots - consumed))", page)
-        self.assertIn("active: busy", page)
+        self.assertIn("const decay = Math.exp(-progressResponse * dt)", page)
+        self.assertIn("updateStatus: current.status", page)
         self.assertIn(".update-progress.is-active", scss_source)
         self.assertIn("@keyframes updateProgressScan", scss_source)
         self.assertIn("status: 'downloading', percent: 0, message: '正在连接下载源'", page)
@@ -4361,6 +4361,7 @@ class ControllerTests(unittest.TestCase):
                 ]
             )
 
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=True)
 
             controller._github_json.assert_called_once_with("/releases?per_page=20")
@@ -4383,12 +4384,13 @@ class ControllerTests(unittest.TestCase):
                 side_effect=app.NetworkTransportError("curl schannel failed")
             )
 
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=True)
 
             self.assertEqual(controller.update_state["status"], "failed")
             self.assertEqual(
                 controller.update_state["message"],
-                "检查更新失败：无法连接 GitHub，请检查网络或代理后重试",
+                "检查更新失败：无法连接更新服务器，请检查网络或代理后重试",
             )
             self.assertNotIn("SSL", controller.update_state["message"])
 
@@ -4743,6 +4745,46 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(thread.return_value.start.call_count, 3)
         controller.check_for_updates.assert_called_once_with(manual=False)
 
+    def test_mirra_update_uses_the_manifest_integrity_on_both_download_sources(self):
+        data = b"new package"
+        download_urls = []
+        controller = app.AppController.__new__(app.AppController)
+        controller.update_lock = __import__("threading").Lock()
+        controller.update_state = {}
+        controller.window = None
+        controller.visible = False
+        controller._github_json = Mock()
+        manifest = {
+            "ok": True, "platform": "windows", "latestVersion": "9.9.9",
+            "fileName": "API_TOOLS.exe", "sha256": app.sha256_bytes(data),
+            "downloadSize": len(data), "releaseNotes": "- 新配置",
+        }
+
+        def download(urls, target, message, size):
+            download_urls.extend(urls)
+            self.assertEqual(size, len(data))
+            target.write_bytes(b"wrong bytes" if len(download_urls) == 1 else data)
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            controller_updates, "get_small_url_bytes", return_value=json.dumps(manifest).encode()
+        ) as fetch, patch.object(
+            controller_updates, "app_data_dir", return_value=Path(temp)
+        ), patch.object(
+            controller, "_download_release_file", side_effect=download
+        ), patch.object(controller, "_download_text") as checksum:
+            controller.store = app.Store(Path(temp) / "test.db")
+            controller._check_for_updates_worker(manual=True)
+            self.assertEqual(controller.update_state["status"], "available")
+            self.assertIn("platform=windows", fetch.call_args.args[0].full_url)
+            self.assertIn("currentVersionCode=", fetch.call_args.args[0].full_url)
+            controller._github_json.assert_not_called()
+            controller._download_update_worker()
+            self.assertEqual(controller.update_state["status"], "ready")
+            self.assertEqual(Path(controller.update_state["downloadedPath"]).read_bytes(), data)
+            self.assertEqual(download_urls[0], "https://imggen.djyx.me/v1/app/update/download?platform=windows")
+            self.assertIn("/releases/download/imagen-v9.9.9/API_TOOLS.exe", download_urls[1])
+            checksum.assert_not_called()
+
     def test_automatic_update_check_respects_ignored_version(self):
         with tempfile.TemporaryDirectory() as temp:
             controller = app.AppController.__new__(app.AppController)
@@ -4759,6 +4801,7 @@ class ControllerTests(unittest.TestCase):
                 "assets": [{"name": app.RELEASE_ASSET_NAME, "url": "api", "browser_download_url": "web"}],
             }
 
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=False)
 
             self.assertTrue(controller.update_state["available"])
@@ -4780,6 +4823,7 @@ class ControllerTests(unittest.TestCase):
                 "assets": [{"name": app.RELEASE_ASSET_NAME, "url": "api", "browser_download_url": "web"}],
             }
 
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=True)
 
             self.assertTrue(controller.update_state["available"])
@@ -4814,6 +4858,7 @@ class ControllerTests(unittest.TestCase):
                     ],
                 }
             ]
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=True)
 
             self.assertEqual(requested_paths, ["/releases?per_page=20"])
@@ -4853,6 +4898,7 @@ class ControllerTests(unittest.TestCase):
                 ]
             )
 
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=True)
 
             controller._github_json.assert_called_once_with("/releases?per_page=20")
@@ -4928,6 +4974,7 @@ class ControllerTests(unittest.TestCase):
                 },
             ]
 
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=True)
 
             notes = controller.update_state["releaseNotes"]
@@ -5131,7 +5178,7 @@ class ControllerTests(unittest.TestCase):
         controller.visible = False
 
         with tempfile.TemporaryDirectory() as temp, patch.object(
-            controller_image_files, "app_data_dir", return_value=Path(temp)
+            controller_updates, "app_data_dir", return_value=Path(temp)
         ), patch.object(
             controller,
             "_download_release_file",
@@ -5167,7 +5214,7 @@ class ControllerTests(unittest.TestCase):
         controller.visible = False
 
         with tempfile.TemporaryDirectory() as temp, patch.object(
-            controller_image_files, "app_data_dir", return_value=Path(temp)
+            controller_updates, "app_data_dir", return_value=Path(temp)
         ), patch.object(
             controller,
             "_download_release_file",

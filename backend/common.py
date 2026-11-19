@@ -51,7 +51,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.1.13"
+APP_VERSION = "1.1.14"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -66,6 +66,7 @@ SHOW_EVENT_NAME = "Local\\API_TOOLS_EasyClin_Show_Window"
 DEFAULT_BASE_URL = "https://work.easyclin.cn/v1"
 OPENAI_API_URL = "https://api.openai.com/v1"
 MIRRA_API_URL = "https://imggen.djyx.me/openai/v1"
+MIRRA_UPDATE_URL = "https://imggen.djyx.me/v1/app/update"
 
 
 def api_base_url_for_key(key: str) -> str:

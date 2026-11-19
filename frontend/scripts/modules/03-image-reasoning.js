@@ -104,28 +104,46 @@
                 };
         }
 
-        function reasoningPresetText(mode) {
+        function normalReasoningPreset(mode) {
+            const profile = activeImageProfile();
             const slot = { flash: 'luna', medium: 'luna', high: 'terra', extra: 'terra', max: 'sol' }[mode];
-            const configured = activeImageProfile()?.reasoning?.[slot];
-            const depth = { flash: 'medium', medium: 'high', high: 'xhigh', extra: 'xhigh', max: 'xhigh' }[mode];
-            return configured?.model
-                ? [configured.model, configured.effort || depth].filter(Boolean).join(' · ')
+            return profile?.reasoningModes?.[mode] || profile?.reasoning?.[slot];
+        }
+
+        function imageModeUsesReasoning(mode) {
+            return mode !== 'instant' || Boolean(normalReasoningPreset(mode)?.model);
+        }
+
+        function reasoningPresetText(mode) {
+            const configured = normalReasoningPreset(mode);
+            return configured?.model ? [configured.model, configured.effort].filter(Boolean).join(' · ')
                 : IMAGE_REASONING_DESCRIPTIONS[mode];
         }
 
         function syncImageReasoningLabels() {
             const state = window.imageEditState;
             const mode = normalizeImageReasoningMode(state.reasoningMode);
+            const slots = activeImageProfile()?.reasoning;
+            document.querySelectorAll('.advanced-y-label').forEach(label => {
+                const slot = IMAGE_ADVANCED_MODELS[Number(label.dataset.yLabel)];
+                const model = slots?.[slot]?.model || IMAGE_ADVANCED_MODEL_DETAILS[slot].name;
+                label.firstElementChild.textContent = model;
+                label.title = model;
+            });
             if (mode === 'advanced') updateImageAdvancedSelectionUi(state.reasoningAdvancedModel, state.reasoningAdvancedEffort);
-            else document.getElementById('reasoningSliderDesc').textContent = reasoningPresetText(mode);
+            else {
+                const description = document.getElementById('reasoningSliderDesc');
+                description.textContent = description.title = reasoningPresetText(mode);
+            }
+            document.getElementById('imageWebSearchEnabled').disabled = !imageModeUsesReasoning(mode);
         }
 
         function imageReasoningModeLabel(mode, model = '', effort = '') {
             const cleanMode = normalizeImageReasoningMode(mode);
             if (cleanMode !== 'advanced') return IMAGE_REASONING_LABELS[cleanMode];
-            const cleanModel = normalizeImageAdvancedModel(model);
-            const cleanEffort = normalizeImageAdvancedEffort(effort);
-            return `高级 ${cleanModel} · ${cleanEffort}`;
+            const slot = IMAGE_ADVANCED_MODELS.includes(model) ? model : '';
+            const label = activeImageProfile()?.reasoning?.[slot]?.model || model || 'luna';
+            return `高级 ${label} · ${normalizeImageAdvancedEffort(effort)}`;
         }
 
         function imageAdvancedHue(modelIndex, effortIndex) {
@@ -253,11 +271,12 @@
             }
             const description = document.getElementById('advancedDesc');
             if (description) {
-                description.textContent = [
-                    activeImageProfile()?.reasoning?.[cleanModel]?.model || modelDetails.name,
+                const configured = activeImageProfile()?.reasoning?.[cleanModel]?.model;
+                description.textContent = description.title = [
+                    configured || modelDetails.name,
                     IMAGE_ADVANCED_EFFORT_DETAILS[cleanEffort],
-                    modelDetails.description
-                ].join(' · ');
+                    configured ? '' : modelDetails.description
+                ].filter(Boolean).join(' · ');
             }
             updateImageAdvancedHighlights(effortIndex, modelIndex, false);
             applyImageAdvancedButtonTheme(modelIndex, effortIndex);
@@ -528,10 +547,10 @@
             const badge = document.getElementById('reasoningBadge');
             badge.textContent = IMAGE_REASONING_LABELS[cleanMode];
             badge.dataset.mode = cleanMode;
-            document.getElementById('reasoningSliderDesc').textContent = reasoningPresetText(cleanMode);
+            syncImageReasoningLabels();
             document.getElementById('imageReasoningMenuButton').title = `思维深度：${IMAGE_REASONING_LABELS[cleanMode]}`;
             const searchToggle = document.getElementById('imageWebSearchEnabled');
-            searchToggle.disabled = cleanMode === 'instant';
+            searchToggle.disabled = !imageModeUsesReasoning(cleanMode);
             searchToggle.checked = window.imageEditState.webSearchEnabled;
             scheduleNextImageReasoningPulse(true);
             if (persist) persistImageGenerationPreferences();

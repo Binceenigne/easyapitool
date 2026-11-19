@@ -266,11 +266,15 @@ class ImageFilesMixin:
             source.is_relative_to(root) for root in (output_root, pictures_root)
         ):
             return {"ok": False, "error": "只能保存本应用生成的图片"}
+        file_types = {
+            ".gif": ("GIF 动图 (*.gif)",),
+            ".svg": ("SVG 图片 (*.svg)",),
+        }.get(source.suffix.lower(), ("PNG 图片 (*.png)", "JPEG 图片 (*.jpg;*.jpeg)", "WebP 图片 (*.webp)"))
         selected = self.window.create_file_dialog(
             webview.FileDialog.SAVE,
             directory=str(windows_pictures_dir()),
             save_filename=source.name,
-            file_types=("SVG 图片 (*.svg)",) if source.suffix.lower() == ".svg" else ("PNG 图片 (*.png)", "JPEG 图片 (*.jpg;*.jpeg)", "WebP 图片 (*.webp)"),
+            file_types=file_types,
         )
         if not selected:
             return {"ok": True, "cancelled": True}

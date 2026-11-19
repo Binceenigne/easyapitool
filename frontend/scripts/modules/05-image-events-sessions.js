@@ -320,7 +320,7 @@
             set.continuation = result.continuation === true || set.continuation;
             set.continuationRationale = result.continuationRationale || set.continuationRationale;
             if (Array.isArray(result.selectedAssetIds)) set.selectedAssetIds = [...result.selectedAssetIds];
-            set.effectivePrompt = result.reasoningMode && result.reasoningMode !== 'instant'
+            set.effectivePrompt = result.reasoningModel || set.reasoningStatus !== 'idle'
                 ? result.prompt || set.effectivePrompt
                 : set.effectivePrompt;
             set.webSearchEnabled = result.webSearchEnabled === true || set.webSearchEnabled;
@@ -399,9 +399,11 @@
                     prompt: document.getElementById('imageEditPrompt').value,
                     transparency: window.imageEditState.transparency,
                     quality: window.imageEditState.quality,
-                    complexity: window.imageEditState.complexity,
-                    outputFormat: window.imageEditState.outputFormat,
+                    complexity: window.imageEditState.preferredImageComplexity,
+                    outputFormat: window.imageEditState.preferredImageFormat,
                     outputCompression: window.imageEditState.outputCompression,
+                    frameCount: window.imageEditState.frameCount,
+                    frameDuration: window.imageEditState.frameDuration,
                     imageModel: window.imageEditState.imageModel,
                     aspectRatio: window.imageEditState.aspectRatio,
                     reasoningMode: window.imageEditState.reasoningMode,
@@ -453,9 +455,12 @@
                 setImageModel(draft.imageModel || 'gpt-image-2', false);
                 setImageAspectRatio(draft.aspectRatio || 'auto', false);
                 setImageQuality(draft.quality || 'auto', false);
-                setImageComplexity(draft.complexity || 'auto', false);
-                setImageOutputFormat(draft.outputFormat || 'png', false);
+                window.imageEditState.preferredImageComplexity = draft.complexity || 'auto';
+                window.imageEditState.preferredImageFormat = draft.outputFormat || 'png';
+                setImageComplexity(window.imageEditState.preferredImageComplexity, false);
+                setImageOutputFormat(window.imageEditState.preferredImageFormat, false);
                 setImageOutputCompression(draft.outputCompression, false);
+                setImageAnimationOptions(draft.frameCount ?? 9, draft.frameDuration ?? 200, false);
                 window.imageEditState.reasoningPreviousMode = normalizeImageReasoningPreset(draft.reasoningPreviousMode);
                 setImageReasoningSelection(
                     draft.reasoningMode,
@@ -878,12 +883,13 @@
             const imageCount = window.imageEditState.imageCount;
             const aspectRatio = window.imageEditState.aspectRatio;
             const transparency = window.imageEditState.transparency;
-            const { outputFormat, outputCompression, complexity, quality } = window.imageEditState;
+            const { outputFormat, outputCompression, complexity, quality, frameCount, frameDuration } = window.imageEditState;
             if (outputFormat === 'svg' && (files.length || session || imageCount !== 1)) {
                 return showToast('SVG 仅支持单张生成，请先移除参考图并退出续作', 'error');
             }
             const finalPrompt = visibleImagePrompt(prompt);
             const reasoningOptions = currentImageReasoningRequestOptions();
+            const useReasoning = imageModeUsesReasoning(reasoningOptions.reasoningMode);
             const requestOptions = {
                 imageModel: window.imageEditState.imageModel,
                 size: document.getElementById('imageEditSize').value,
@@ -892,6 +898,7 @@
                 quality,
                 ...(complexity === 'auto' ? {} : { complexity }),
                 output_format: outputFormat,
+                ...(outputFormat === 'gif' ? { frame_count: frameCount, frame_duration_ms: frameDuration } : {}),
                 ...(['jpeg', 'webp'].includes(outputFormat) && outputCompression !== null
                     ? { output_compression: outputCompression } : {}),
                 imageCount,
@@ -906,8 +913,7 @@
                     ? window.imageEditState.reasoningAdvancedEffort
                     : '',
                 webSearchEnabled: window.imageEditState.reasoningAdvanced
-                    ? true
-                    : window.imageEditState.webSearchEnabled
+                    || useReasoning && window.imageEditState.webSearchEnabled
             };
             window.imageEditState.pendingSubmission = { requestId, unlockAt: performance.now() + 500, confirmed: false };
             button.disabled = true;
@@ -926,9 +932,9 @@
                 continuation: Boolean(session),
                 ...reasoningOptions,
                 reasoningDepth: requestOptions.reasoningDepth,
-                reasoningStatus: reasoningOptions.reasoningMode === 'instant' ? 'idle' : 'running',
+                reasoningStatus: useReasoning ? 'running' : 'idle',
                 reasoningStartedAt: Date.now(),
-                reasoningTurns: reasoningOptions.reasoningMode === 'instant' ? [] : [{
+                reasoningTurns: useReasoning ? [{
                     turn: 1,
                     title: '正在分析问题',
                     text: '',
@@ -936,9 +942,8 @@
                     startedAt: Date.now(),
                     completedAt: 0,
                     tools: []
-                }],
-                webSearchEnabled: reasoningOptions.reasoningMode === 'advanced'
-                    || reasoningOptions.reasoningMode !== 'instant' && window.imageEditState.webSearchEnabled
+                }] : [],
+                webSearchEnabled: requestOptions.webSearchEnabled
             });
             closeImageGenerationControls();
             closeImageReasoningMenu();
@@ -948,7 +953,7 @@
                 parentSetId: requestOptions.parentSetId,
                 startedAt: Date.now()
             });
-            status.textContent = reasoningOptions.reasoningMode !== 'instant'
+            status.textContent = useReasoning
                 ? `${imageReasoningModeLabel(
                     reasoningOptions.reasoningMode,
                     reasoningOptions.reasoningModel,

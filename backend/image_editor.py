@@ -26,12 +26,13 @@ from .network_log import log_network_error, new_network_request_id
 
 
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
-OUTPUT_IMAGE_SUFFIXES = SUPPORTED_IMAGE_SUFFIXES | {".svg"}
+OUTPUT_IMAGE_SUFFIXES = SUPPORTED_IMAGE_SUFFIXES | {".svg", ".gif"}
 CONTENT_TYPES = {
     ".jpeg": "image/jpeg",
     ".jpg": "image/jpeg",
     ".png": "image/png",
     ".webp": "image/webp",
+    ".gif": "image/gif",
     ".svg": "image/svg+xml",
 }
 OUTPUT_PRESETS = {
@@ -48,7 +49,7 @@ IMAGE_SIZES_BY_RATIO = {
     "9:16": "720x1280", "2:3": "768x1152", "3:4": "768x1024", "1:1": "1024x1024",
     "4:3": "1024x768", "3:2": "1152x768", "16:9": "1280x720", "21:9": "1344x576",
 }
-IMAGE_EXTENSIONS = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}
+IMAGE_EXTENSIONS = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp", "GIF": ".gif"}
 
 
 def svg_size(image_bytes: bytes) -> tuple[int, int] | None:
@@ -93,6 +94,8 @@ def image_preview_bytes(
     if svg_size(image_bytes) is not None:
         return image_bytes
     with Image.open(io.BytesIO(image_bytes)) as source_image:
+        if source_image.format == "GIF":
+            return image_bytes
         source_image.load()
         preview_image = source_image.copy()
     preview_image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
@@ -1017,8 +1020,8 @@ class ImageSessionStore:
                             "reasoningSummary": reasoning_summary,
                             "reasoningDurationMs": max(0, int(options.get("reasoningDurationMs") or 0)),
                             "reasoningUsage": self._reasoning_usage(options.get("reasoningUsage")),
-                            "reasoningStatus": "completed" if reasoning_mode != "instant" and reasoning_summary else "idle",
-                            "effectivePrompt": strip_image_prompt_constraints(round_data.get("prompt") or "") if reasoning_mode != "instant" else "",
+                            "reasoningStatus": "completed" if reasoning_summary else "idle",
+                            "effectivePrompt": strip_image_prompt_constraints(round_data.get("prompt") or "") if reasoning_mode != "instant" or reasoning_summary else "",
                             "webSearchEnabled": bool(options.get("webSearchEnabled")),
                             "webSearchUsed": bool(options.get("webSearchUsed")),
                             "webSearchFailed": bool(options.get("webSearchFailed")),
@@ -1278,7 +1281,7 @@ def prepare_image_generation(
     if transparency == "transparent" and fallback_format == "jpeg":
         fallback_format, fallback_compression = "png", None
     output_format = str(clean_options.get("output_format") or fallback_format).lower()
-    formats = {"png", "jpeg", "webp"}
+    formats = {"png", "jpeg", "webp", "gif"}
     svg = (app_models or {}).get("svg") or {}
     if svg.get("enabled") is True:
         formats.add("svg")
@@ -1287,15 +1290,29 @@ def prepare_image_generation(
     if output_format == "svg":
         if operation != "generate" or valid_paths or clean_options.get("continuation") or _number(clean_options.get("imageCount"), 1) != 1:
             raise ValueError("SVG 仅支持单张无参考图生成")
+    if output_format in {"svg", "gif"}:
         stream = False
         partial_images = 0
-    if transparency == "transparent" and output_format == "jpeg":
+    if transparency == "transparent" and output_format not in {"png", "webp", "svg"}:
         raise ValueError("透明背景需要 PNG、WebP 或 SVG")
     compression = clean_options.get("output_compression")
     if compression is None and not clean_options.get("output_format"):
         compression = fallback_compression
     if compression is not None and (type(compression) is not int or not 0 <= compression <= 100 or output_format not in {"jpeg", "webp"}):
         raise ValueError("压缩质量仅适用于 JPEG 和 WebP，范围为 0 至 100")
+    frames = {}
+    for name, minimum, maximum, message in (
+        ("frame_count", 2, 16, "GIF 帧数须为 2 至 16"),
+        ("frame_duration_ms", 20, 2000, "GIF 每帧时长须为 20 至 2000 毫秒"),
+    ):
+        value = clean_options.get(name)
+        if value is None:
+            continue
+        if output_format != "gif":
+            raise ValueError("帧数和每帧时长仅适用于 GIF")
+        if type(value) is not int or not minimum <= value <= maximum:
+            raise ValueError(message)
+        frames[name] = value
     if quality not in {"low", "medium", "high", "xhigh", "max", "auto"}:
         raise ValueError("无效的图片质量")
     if complexity not in {"", "low", "medium", "high"}:
@@ -1336,6 +1353,7 @@ def prepare_image_generation(
         "background": transparency,
         "moderation": moderation,
         "stream": stream,
+        **frames,
     }
     if output_format == "svg":
         author = {}

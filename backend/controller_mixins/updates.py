@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from ..common import *
 from ..platform import *
 from ..usage import *
@@ -48,6 +50,38 @@ class UpdateMixin:
         return releases
 
     @staticmethod
+    def _gateway_release() -> dict[str, Any]:
+        major, minor, patch = version_tuple(APP_VERSION)
+        code = major * 1_000_000 + minor * 1_000 + patch
+        request = urllib.request.Request(
+            f"{MIRRA_UPDATE_URL}?platform=windows&currentVersionCode={code}",
+            headers={"Accept": "application/json", "User-Agent": f"{APP_NAME}/{APP_VERSION}"},
+        )
+        manifest = json.loads(get_small_url_bytes(request, timeout=6))
+        if not isinstance(manifest, dict) or manifest.get("ok") is not True or manifest.get("platform") != "windows":
+            raise ValueError("Mirra 更新清单无效")
+        version = manifest.get("latestVersion")
+        digest, size = manifest.get("sha256"), manifest.get("downloadSize")
+        if (
+            not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version)
+            or not isinstance(digest, str) or not re.fullmatch(r"[A-Fa-f0-9]{64}", digest)
+            or type(size) is not int or size <= 0
+            or manifest.get("fileName") != RELEASE_ASSET_NAME
+        ):
+            raise ValueError("Mirra 更新清单缺少有效的版本、文件或校验值")
+        return {
+            "version": version,
+            "notes": str(manifest.get("releaseNotes") or ""),
+            "downloadSize": size,
+            "sha256": digest.lower(),
+            "downloadApiUrl": f"{MIRRA_UPDATE_URL}/download?platform=windows",
+            "downloadUrl": (
+                f"https://github.com/{GITHUB_REPOSITORY}/releases/download/"
+                f"{RELEASE_TAG_PREFIX}{version}/{RELEASE_ASSET_NAME}"
+            ),
+        }
+
+    @staticmethod
     def _github_api_rate_limited(error: BaseException) -> bool:
         return (
             isinstance(error, urllib.error.HTTPError)
@@ -79,16 +113,22 @@ class UpdateMixin:
         with self.update_lock:
             self._set_update_state(
                 status="checking",
-                percent=8,
-                message="正在检查 imagen 更新通道",
+                percent=0,
+                message="正在检查 Mirra 网关更新",
                 showPrompt=manual,
             )
             try:
                 try:
+                    gateway_release = self._gateway_release()
+                except (OSError, ValueError, NetworkTransportError):
+                    self._set_update_state(message="正在检查 GitHub 备用通道")
+                else:
+                    self._apply_checked_release(gateway_release, manual)
+                    return
+                try:
                     release_payload = self._github_json("/releases?per_page=20")
-                except Exception as list_error:
+                except Exception:
                     self._set_update_state(
-                        percent=38,
                         message="主检查通道不可用，正在尝试 imagen 备用通道",
                     )
                     release_payload = self._github_release_feed()
@@ -112,68 +152,28 @@ class UpdateMixin:
                     stable_releases,
                     key=lambda item: version_tuple(item.get("tag_name")),
                 )
-                self.store.set_last_update_check(time.time())
                 release_tag = str(release.get("tag_name") or "")
                 latest = release_version(release_tag)
                 assets = {
                     str(asset.get("name")): asset
                     for asset in release.get("assets") or []
                 }
-                available = is_newer_version(latest) and RELEASE_ASSET_NAME in assets
-                full_notes = bundled_changelog()
                 pending_notes = release_notes_since(stable_releases, APP_VERSION)
-                concise_notes = (
-                    pending_notes
-                    if available and pending_notes
-                    else changelog_for_update(
-                        full_notes,
-                        APP_VERSION,
-                        latest or APP_VERSION,
-                        str(release.get("body") or ""),
-                    )
-                )
-                complete_notes = (
-                    f"{pending_notes}\n\n{full_notes}" if pending_notes else full_notes
-                )
-                self.update_state["release"] = {
+                asset = assets.get(RELEASE_ASSET_NAME) or {}
+                checksum = assets.get(f"{RELEASE_ASSET_NAME}.sha256") or {}
+                release_info = {
                     "version": latest,
                     "notes": str(release.get("body") or ""),
-                    "downloadSize": int(
-                        (assets.get(RELEASE_ASSET_NAME) or {}).get("size") or 0
-                    ),
-                    "downloadApiUrl": str(
-                        (assets.get(RELEASE_ASSET_NAME) or {}).get("url") or ""
-                    ),
-                    "downloadUrl": str(
-                        (assets.get(RELEASE_ASSET_NAME) or {}).get("browser_download_url") or ""
-                    ),
-                    "checksumApiUrl": str(
-                        (assets.get(f"{RELEASE_ASSET_NAME}.sha256") or {}).get("url") or ""
-                    ),
-                    "checksumUrl": str(
-                        (assets.get(f"{RELEASE_ASSET_NAME}.sha256") or {}).get(
-                            "browser_download_url"
-                        )
-                        or ""
-                    ),
+                    "downloadSize": int(asset.get("size") or 0),
+                    "downloadApiUrl": str(asset.get("url") or ""),
+                    "downloadUrl": str(asset.get("browser_download_url") or ""),
+                    "checksumApiUrl": str(checksum.get("url") or ""),
+                    "checksumUrl": str(checksum.get("browser_download_url") or ""),
                 }
-                self._set_update_state(
-                    status="available" if available else "current",
-                    percent=100,
-                    message=(f"发现新版本 v{latest}" if available else "当前已是最新版本"),
-                    latestVersion=latest or APP_VERSION,
-                    releaseNotes=concise_notes,
-                    fullReleaseNotes=complete_notes,
-                    available=available,
-                    showPrompt=available and (
-                        manual or self.store.get_ignored_update_version() != release_tag
-                    ),
-                )
-                if manual and not available:
-                    self.notify("API_TOOLS 更新", "当前已是最新版本。")
+                self._apply_checked_release(release_info, manual, pending_notes)
             except Exception as exc:
                 message = (
-                    "检查更新失败：无法连接 GitHub，请检查网络或代理后重试"
+                    "检查更新失败：无法连接更新服务器，请检查网络或代理后重试"
                     if self._github_transport_failed(exc)
                     else f"检查更新失败: {exc}"
                 )
@@ -183,6 +183,28 @@ class UpdateMixin:
                     message=message,
                     showPrompt=manual,
                 )
+
+    def _apply_checked_release(self, release: dict[str, Any], manual: bool, pending_notes: str = "") -> None:
+        self.store.set_last_update_check(time.time())
+        latest = release["version"] or APP_VERSION
+        available = is_newer_version(latest) and bool(release["downloadApiUrl"] or release["downloadUrl"])
+        full_notes = bundled_changelog()
+        concise_notes = pending_notes if available and pending_notes else changelog_for_update(
+            full_notes, APP_VERSION, latest, release["notes"]
+        )
+        self._set_update_state(
+            status="available" if available else "current",
+            percent=100,
+            message=f"发现新版本 v{latest}" if available else "当前已是最新版本",
+            latestVersion=latest,
+            releaseNotes=concise_notes,
+            fullReleaseNotes=f"{pending_notes}\n\n{full_notes}" if pending_notes else full_notes,
+            release=release,
+            available=available,
+            showPrompt=available and (manual or self.store.get_ignored_update_version() != ignored_release_key(latest)),
+        )
+        if manual and not available:
+            self.notify("API_TOOLS 更新", "当前已是最新版本。")
 
     def ignore_update_version(self, version: Any) -> dict[str, Any]:
         clean = self.store.set_ignored_update_version(ignored_release_key(version))
@@ -301,7 +323,7 @@ class UpdateMixin:
                         downloaded = destination.stat().st_size if destination.is_file() else 0
                         if downloaded != last_downloaded:
                             percent = (
-                                min(99, int(downloaded * 100 / expected_size))
+                                min(99, downloaded * 100 / expected_size)
                                 if expected_size > 0
                                 else 0
                             )
@@ -356,21 +378,19 @@ class UpdateMixin:
             try:
                 self._set_update_state(status="downloading", percent=0, message="正在连接下载源")
                 download_urls = [release.get("downloadApiUrl"), release.get("downloadUrl")]
-                self._download_release_file(
-                    download_urls,
-                    temporary,
-                    "正在连接下载源",
-                    int(release.get("downloadSize") or 0),
-                )
+                size = int(release.get("downloadSize") or 0)
+                expected = release.get("sha256")
+                if expected:
+                    self._download_verified_release(download_urls, temporary, size, expected)
+                else:
+                    self._download_release_file(download_urls, temporary, "正在连接下载源", size)
+                    checksum_urls = [release.get("checksumApiUrl"), release.get("checksumUrl")]
+                    if not any(checksum_urls):
+                        raise RuntimeError("Release 缺少 SHA-256 校验文件")
+                    expected = self._download_text(checksum_urls).split()[0].lower()
+                    if expected != sha256_file(temporary):
+                        raise RuntimeError("下载文件 SHA-256 校验失败")
                 os.replace(temporary, target)
-                checksum_urls = [release.get("checksumApiUrl"), release.get("checksumUrl")]
-                if not any(checksum_urls):
-                    raise RuntimeError("Release 缺少 SHA-256 校验文件")
-                expected = self._download_text(checksum_urls).split()[0].lower()
-                actual = sha256_file(target)
-                if expected != actual:
-                    target.unlink(missing_ok=True)
-                    raise RuntimeError("下载文件 SHA-256 校验失败")
                 self._set_update_state(
                     status="ready",
                     percent=100,
@@ -385,6 +405,23 @@ class UpdateMixin:
                     else f"更新失败: {exc}"
                 )
                 self._set_update_state(status="failed", percent=0, message=message)
+
+    def _download_verified_release(self, urls: list[str], destination: Path, size: int, digest: str) -> None:
+        candidates = list(dict.fromkeys(url for url in urls if url))
+        if not candidates:
+            raise ValueError("没有可用的更新下载地址")
+        for index, url in enumerate(candidates):
+            try:
+                message = "正在连接 Mirra 网关" if index == 0 else "正在连接 GitHub 备用下载"
+                self._download_release_file([url], destination, message, size)
+                self._set_update_state(message="正在校验安装包")
+                if destination.stat().st_size != size or sha256_file(destination) != digest:
+                    raise ValueError("下载文件 SHA-256 或大小校验失败")
+                return
+            except (OSError, ValueError, NetworkTransportError):
+                destination.unlink(missing_ok=True)
+                if index == len(candidates) - 1:
+                    raise
 
     def restart_update(self) -> dict[str, Any]:
         if self.update_lock.locked():
