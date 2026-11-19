@@ -398,6 +398,10 @@
                     files: [...window.imageEditState.files],
                     prompt: document.getElementById('imageEditPrompt').value,
                     transparency: window.imageEditState.transparency,
+                    quality: window.imageEditState.quality,
+                    complexity: window.imageEditState.complexity,
+                    outputFormat: window.imageEditState.outputFormat,
+                    outputCompression: window.imageEditState.outputCompression,
                     imageModel: window.imageEditState.imageModel,
                     aspectRatio: window.imageEditState.aspectRatio,
                     reasoningMode: window.imageEditState.reasoningMode,
@@ -448,6 +452,10 @@
                 setImageTransparency(draft.transparency || 'auto', false);
                 setImageModel(draft.imageModel || 'gpt-image-2', false);
                 setImageAspectRatio(draft.aspectRatio || 'auto', false);
+                setImageQuality(draft.quality || 'auto', false);
+                setImageComplexity(draft.complexity || 'auto', false);
+                setImageOutputFormat(draft.outputFormat || 'png', false);
+                setImageOutputCompression(draft.outputCompression, false);
                 window.imageEditState.reasoningPreviousMode = normalizeImageReasoningPreset(draft.reasoningPreviousMode);
                 setImageReasoningSelection(
                     draft.reasoningMode,
@@ -870,15 +878,22 @@
             const imageCount = window.imageEditState.imageCount;
             const aspectRatio = window.imageEditState.aspectRatio;
             const transparency = window.imageEditState.transparency;
+            const { outputFormat, outputCompression, complexity, quality } = window.imageEditState;
+            if (outputFormat === 'svg' && (files.length || session || imageCount !== 1)) {
+                return showToast('SVG 仅支持单张生成，请先移除参考图并退出续作', 'error');
+            }
             const finalPrompt = visibleImagePrompt(prompt);
             const reasoningOptions = currentImageReasoningRequestOptions();
             const requestOptions = {
                 imageModel: window.imageEditState.imageModel,
                 size: document.getElementById('imageEditSize').value,
                 aspectRatio,
-                transparency,
-                quality: document.getElementById('imageEditQuality').value,
-                outputPreset: document.getElementById('imageEditOutputPreset').value,
+                background: transparency,
+                quality,
+                ...(complexity === 'auto' ? {} : { complexity }),
+                output_format: outputFormat,
+                ...(['jpeg', 'webp'].includes(outputFormat) && outputCompression !== null
+                    ? { output_compression: outputCompression } : {}),
                 imageCount,
                 requestId,
                 sessionId: session?.sessionId || requestId,

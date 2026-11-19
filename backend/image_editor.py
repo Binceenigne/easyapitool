@@ -7,6 +7,7 @@ import io
 import json
 import math
 import os
+import re
 import shutil
 import threading
 import time
@@ -36,6 +37,15 @@ OUTPUT_PRESETS = {
     "medium": ("jpeg", 75),
     "small": ("jpeg", 55),
 }
+IMAGE_MODEL_IDS = {
+    "gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
+    "gpt-image-2.6-flare", "gpt-image-2.6-sunburst",
+}
+IMAGE_SIZES_BY_RATIO = {
+    "9:16": "720x1280", "2:3": "768x1152", "3:4": "768x1024", "1:1": "1024x1024",
+    "4:3": "1024x768", "3:2": "1152x768", "16:9": "1280x720", "21:9": "1344x576",
+}
+IMAGE_EXTENSIONS = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}
 
 
 def image_preview_bytes(
@@ -76,15 +86,14 @@ def image_preview_data_url(
 
 
 def image_data_url(image_bytes: bytes) -> str:
-    with Image.open(io.BytesIO(image_bytes)) as image:
-        mime_type = "image/png" if image.format == "PNG" else "image/jpeg"
+    mime_type = CONTENT_TYPES[image_file_suffix(image_bytes)]
     encoded = base64.b64encode(image_bytes).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
 
 
 def image_file_suffix(image_bytes: bytes) -> str:
     with Image.open(io.BytesIO(image_bytes)) as image:
-        return ".png" if image.format == "PNG" else ".jpg"
+        return IMAGE_EXTENSIONS.get(image.format, ".jpg")
 
 
 class ImageSessionStore:
@@ -1165,38 +1174,14 @@ def _number(value: Any, default: float) -> float:
 
 def strip_image_prompt_constraints(prompt: str) -> str:
     clean_prompt = str(prompt or "").strip()
-    legacy_suffix = __import__("re").compile(
-        r"(?:\s*以以下比例要求为准：强制生成比例为\d+:\d+的图片|"
+    legacy_suffix = re.compile(
+        r"(?:\s*\[内部输出约束\][\s\S]*?\[/内部输出约束\]|"
+        r"\s*以以下比例要求为准：强制生成比例为\d+:\d+的图片|"
         r"\s*以以下透明度要求为准：强制生成(?:不透明|透明)背景的图片)$"
     )
     while legacy_suffix.search(clean_prompt):
         clean_prompt = legacy_suffix.sub("", clean_prompt).rstrip()
     return clean_prompt
-
-
-def image_prompt_with_constraints(prompt: str, options: dict[str, Any]) -> str:
-    requirements = []
-    aspect_ratio = str(options.get("aspectRatio") or "auto")
-    if aspect_ratio != "auto":
-        if aspect_ratio not in {"9:16", "2:3", "3:4", "1:1", "4:3", "3:2", "16:9", "21:9"}:
-            raise ValueError("无效的图片比例")
-        requirements.append(
-            f"最终输出画布的宽高比必须为 {aspect_ratio}（宽:高）。请按此比例重新构图并铺满画布，"
-            "不得使用白边、黑边、边框或在其他比例画布中嵌入目标比例图片来替代。"
-        )
-    transparency = options.get("transparency", "auto")
-    if transparency == "transparent":
-        requirements.append(
-            "最终文件必须为带真实 alpha 通道的透明背景 PNG，主体外背景像素的 alpha 必须为 0，"
-            "主体边缘保留自然抗锯齿与半透明细节。不得以白色、纯色、棋盘格或绘制的网格模拟透明，"
-            "不得添加背景场景、底板或边框。"
-        )
-    elif transparency == "opaque":
-        requirements.append("最终画面必须完全不透明，所有像素 alpha 为 255；背景完整铺满画布，不留透明区域。")
-    clean_prompt = strip_image_prompt_constraints(prompt)
-    if not requirements:
-        return clean_prompt
-    return clean_prompt + "\n\n[内部输出约束]\n以下要求优先于描述或参考图中的冲突设置，必须全部满足；不要将这些指令绘制为画面文字。\n" + "\n".join(requirements) + "\n生成前核对画布比例和背景透明度，仅输出符合要求的图片。\n[/内部输出约束]"
 
 
 def prepare_image_generation(
@@ -1239,19 +1224,39 @@ def prepare_image_generation(
     output_preset = str(clean_options.get("outputPreset") or "lossless").lower()
     quality = str(clean_options.get("quality") or "auto").lower()
     size = str(clean_options.get("size") or "auto").lower()
-    transparency = str(clean_options.get("transparency") or "auto").lower()
+    ratio = str(clean_options.get("aspectRatio") or "auto")
+    if ratio != "auto" and ratio not in IMAGE_SIZES_BY_RATIO:
+        raise ValueError("无效的图片比例")
+    if size == "auto":
+        size = IMAGE_SIZES_BY_RATIO.get(ratio, "auto")
+    transparency = str(clean_options.get("background") or clean_options.get("transparency") or "auto").lower()
+    complexity = str(clean_options.get("complexity") or "").lower()
     moderation = str(clean_options.get("moderation") or "low").lower()
     stream = bool(clean_options.get("stream"))
-    partial_images = int(_number(clean_options.get("partialImages"), 0))
+    partial_images = int(_number(clean_options.get("partial_images", clean_options.get("partialImages")), 0))
     if output_preset not in OUTPUT_PRESETS:
         raise ValueError("无效的输出大小")
-    output_format, _jpeg_quality = OUTPUT_PRESETS[output_preset]
-    if quality not in {"low", "medium", "high", "auto"}:
+    fallback_format, fallback_compression = OUTPUT_PRESETS[output_preset]
+    if transparency == "transparent" and fallback_format == "jpeg":
+        fallback_format, fallback_compression = "png", None
+    output_format = str(clean_options.get("output_format") or fallback_format).lower()
+    if output_format not in {"png", "jpeg", "webp"}:
+        raise ValueError("输出格式必须为 PNG、JPEG 或 WebP")
+    if transparency == "transparent" and output_format == "jpeg":
+        raise ValueError("透明背景需要 PNG 或 WebP")
+    compression = clean_options.get("output_compression")
+    if compression is None and not clean_options.get("output_format"):
+        compression = fallback_compression
+    if compression is not None and (type(compression) is not int or not 0 <= compression <= 100 or output_format == "png"):
+        raise ValueError("压缩质量仅适用于 JPEG 和 WebP，范围为 0 至 100")
+    if quality not in {"low", "medium", "high", "xhigh", "max", "auto"}:
         raise ValueError("无效的图片质量")
+    if complexity not in {"", "low", "medium", "high"}:
+        raise ValueError("无效的图片复杂度")
     if transparency not in {"auto", "opaque", "transparent"}:
         raise ValueError("无效的透明度模式")
     if size != "auto":
-        size_match = __import__("re").fullmatch(r"(\d+)x(\d+)", size)
+        size_match = re.fullmatch(r"([1-9]\d{0,3})x([1-9]\d{0,3})", size)
         if not size_match:
             raise ValueError("图片尺寸必须是 auto 或 WIDTHxHEIGHT")
         width, height = (int(value) for value in size_match.groups())
@@ -1270,16 +1275,22 @@ def prepare_image_generation(
         raise ValueError("流式预览图数量必须在 0 到 3 之间")
 
     image_model = str(clean_options.get("imageModel") or "gpt-image-2").strip()
-    if image_model not in {"gpt-image-2", "gpt-image-2.5"}:
+    if image_model not in IMAGE_MODEL_IDS:
         raise ValueError("无效的图片模型")
     fields = {
         "model": image_model,
-        "prompt": image_prompt_with_constraints(clean_prompt, clean_options),
+        "prompt": clean_prompt,
+        "size": size,
         "quality": quality,
-        "output_format": "png",
+        "output_format": output_format,
+        "background": transparency,
         "moderation": moderation,
         "stream": stream,
     }
+    if complexity:
+        fields["complexity"] = complexity
+    if compression is not None:
+        fields["output_compression"] = compression
     if stream:
         fields["partial_images"] = partial_images
     return ImageGenerationRequest(
@@ -1679,16 +1690,22 @@ class ImageGenerationService:
     ) -> dict[str, Any]:
         output_dir.mkdir(parents=True, exist_ok=True)
         generation_id = uuid.uuid4().hex[:12]
+        fields = request.fields
+        if base_url.rstrip("/") == "https://api.openai.com/v1" and fields["model"] == "gpt-image-2.5":
+            fields = {**fields, "model": "gpt-image-2.5-flare"}
 
         def persist_partial(image_data: str, partial_index: int) -> None:
             try:
                 partial_bytes = base64.b64decode(image_data, validate=True)
                 with Image.open(io.BytesIO(partial_bytes)) as partial_image:
                     width, height = partial_image.size
+                    suffix = IMAGE_EXTENSIONS.get(partial_image.format)
                     partial_image.verify()
+                if suffix is None:
+                    return
                 partial_dir = output_dir / "partials"
                 partial_dir.mkdir(parents=True, exist_ok=True)
-                partial_path = partial_dir / f"{generation_id}-{partial_index}.png"
+                partial_path = partial_dir / f"{generation_id}-{partial_index}{suffix}"
                 partial_path.write_bytes(partial_bytes)
                 if on_partial is not None:
                     on_partial(
@@ -1714,14 +1731,14 @@ class ImageGenerationService:
                 base_url,
                 secret,
                 request.image_paths,
-                request.fields,
+                fields,
                 on_partial=persist_partial,
             )
         else:
             response = self.client.generate_image(
                 base_url,
                 secret,
-                request.fields,
+                fields,
                 on_partial=persist_partial,
             )
         image_data = ((response.get("data") or [{}])[0] or {}).get("b64_json")
@@ -1733,43 +1750,26 @@ class ImageGenerationService:
             raise RuntimeError("生图接口返回了无效图片数据") from exc
 
         with Image.open(io.BytesIO(result_bytes)) as source_image:
-            source_image.load()
-            result_image = source_image.copy()
-            width, height = result_image.size
-
-        save_as_png = request.output_format == "png" or request.transparency == "transparent"
-        suffix = ".png" if save_as_png else ".jpg"
+            width, height = source_image.size
+            suffix = IMAGE_EXTENSIONS.get(source_image.format)
+            image_format = str(source_image.format).lower()
+            source_image.verify()
+        if suffix is None:
+            raise RuntimeError("生图接口返回了不支持的图片格式")
         output_path = output_dir / (
             f"image-generation-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}{suffix}"
         )
-        output_buffer = io.BytesIO()
-        if save_as_png:
-            result_image.save(output_buffer, format="PNG")
-        else:
-            if result_image.mode in {"RGBA", "LA"} or "transparency" in result_image.info:
-                rgba_image = result_image.convert("RGBA")
-                flattened = Image.new("RGB", rgba_image.size, "white")
-                flattened.paste(rgba_image, mask=rgba_image.getchannel("A"))
-                result_image = flattened
-            else:
-                result_image = result_image.convert("RGB")
-            result_image.save(
-                output_buffer,
-                format="JPEG",
-                quality=OUTPUT_PRESETS[request.output_preset][1],
-                optimize=True,
-            )
-        output_bytes = output_buffer.getvalue()
-        output_path.write_bytes(output_bytes)
+        preview_uri = image_preview_data_url(result_bytes)
+        output_path.write_bytes(result_bytes)
         return {
             "ok": True,
             "path": str(output_path),
             "uri": output_path.as_uri(),
-            "previewUri": image_preview_data_url(output_bytes),
+            "previewUri": preview_uri,
             "width": width,
             "height": height,
-            "sizeBytes": len(output_bytes),
-            "format": "png" if save_as_png else request.output_format,
+            "sizeBytes": len(result_bytes),
+            "format": image_format,
             "outputPreset": request.output_preset,
             "quality": response.get("quality") or request.fields["quality"],
             "requestedQuality": request.requested_quality,

@@ -177,24 +177,30 @@
                                 </button>
                                 <div id="imageGenerationControlPanel" class="image-generation-popover" hidden>
                                     <div class="image-quality-controls">
-                                        <section class="image-control-section">
-                                            <span>生成细节</span>
-                                            <div id="imageQualityButtons" class="image-control-segmented" role="radiogroup" aria-label="生成细节">
-                                                <button type="button" class="is-active" data-quality="auto" aria-pressed="true" onclick="setImageQuality('auto')">自动</button>
-                                                <button type="button" data-quality="low" aria-pressed="false" onclick="setImageQuality('low')">低</button>
-                                                <button type="button" data-quality="medium" aria-pressed="false" onclick="setImageQuality('medium')">中</button>
-                                                <button type="button" data-quality="high" aria-pressed="false" onclick="setImageQuality('high')">高</button>
-                                            </div>
-                                        </section>
-                                        <section class="image-control-section">
-                                            <span>保存质量</span>
-                                            <div id="imageOutputPresetButtons" class="image-control-segmented" role="radiogroup" aria-label="保存质量">
-                                                <button type="button" data-preset="small" aria-pressed="false" onclick="setImageOutputPreset('small')">小</button>
-                                                <button type="button" data-preset="medium" aria-pressed="false" onclick="setImageOutputPreset('medium')">中</button>
-                                                <button type="button" data-preset="large" aria-pressed="false" onclick="setImageOutputPreset('large')">大</button>
-                                                <button type="button" class="is-active" data-preset="lossless" aria-pressed="true" onclick="setImageOutputPreset('lossless')">无损</button>
-                                            </div>
-                                        </section>
+                                        <label class="image-control-section">
+                                            <span>质量</span>
+                                            <select id="imageEditQuality" onchange="setImageQuality(this.value)">
+                                                <option value="auto">自动</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option>
+                                                <option value="xhigh">超高</option><option value="max">最高</option>
+                                            </select>
+                                        </label>
+                                        <label class="image-control-section">
+                                            <span>复杂度</span>
+                                            <select id="imageEditComplexity" onchange="setImageComplexity(this.value)">
+                                                <option value="auto">模型默认</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option>
+                                            </select>
+                                        </label>
+                                        <label class="image-control-section">
+                                            <span>输出格式</span>
+                                            <select id="imageEditOutputFormat" onchange="setImageOutputFormat(this.value)">
+                                                <option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option>
+                                                <option value="svg" hidden disabled>SVG</option>
+                                            </select>
+                                        </label>
+                                        <label class="image-control-section" id="imageEditCompressionLabel" hidden>
+                                            <span>压缩质量</span>
+                                            <input id="imageEditCompression" type="number" min="0" max="100" step="1" placeholder="自动（0–100）" onchange="setImageOutputCompression(this.value)">
+                                        </label>
                                     </div>
                                     <section class="image-control-section">
                                         <span>比例</span>
@@ -212,20 +218,24 @@
                                     </section>
                                     <div class="image-transparency-model-controls">
                                     <section class="image-control-section">
-                                        <span>透明度</span>
+                                        <span>背景</span>
                                         <div id="imageTransparencyButtons" class="image-control-segmented" role="radiogroup" aria-label="图片透明度">
                                             <button type="button" class="is-active" data-transparency="auto" aria-pressed="true" onclick="setImageTransparency('auto')">自动</button>
                                             <button type="button" data-transparency="opaque" aria-pressed="false" onclick="setImageTransparency('opaque')">不透明</button>
                                             <button type="button" data-transparency="transparent" aria-pressed="false" onclick="setImageTransparency('transparent')">透明</button>
                                         </div>
                                     </section>
-                                    <section class="image-control-section">
+                                    <label class="image-control-section">
                                         <span>模型</span>
-                                        <div id="imageModelPicker" class="image-control-segmented" role="group" aria-label="图片模型">
-                                            <button type="button" class="is-active" data-image-model="gpt-image-2" aria-pressed="true" title="均衡快速" onclick="setImageModel('gpt-image-2')">2.0</button>
-                                            <button type="button" data-image-model="gpt-image-2.5" aria-pressed="false" title="顶级画面质量，更优质画面一致性" onclick="setImageModel('gpt-image-2.5')">2.5</button>
-                                        </div>
-                                    </section>
+                                        <select id="imageModelPicker" onchange="setImageModel(this.value)">
+                                            <option value="gpt-image-2">2.0</option>
+                                            <option value="gpt-image-2.5">2.5（中转）</option>
+                                            <option value="gpt-image-2.5-flare">2.5 Flare</option>
+                                            <option value="gpt-image-2.5-sunburst">2.5 Sunburst</option>
+                                            <option value="gpt-image-2.6-flare">2.6 Flare</option>
+                                            <option value="gpt-image-2.6-sunburst">2.6 Sunburst</option>
+                                        </select>
+                                    </label>
                                     </div>
                                     <section class="image-control-section image-count-control">
                                         <span>生成数量</span>
@@ -242,8 +252,6 @@
                                         </div>
                                     </section>
                                     <input id="imageEditSize" type="hidden" value="auto">
-                                    <input id="imageEditQuality" type="hidden" value="auto">
-                                    <input id="imageEditOutputPreset" type="hidden" value="lossless">
                                 </div>
                             </div>
                             <div id="imageReasoningControl" class="image-reasoning-control" data-mode="instant">

@@ -211,7 +211,7 @@ class ImageEditorTests(unittest.TestCase):
         self.assertEqual(legacy_usage["costSource"], "")
         self.assertFalse(legacy_usage["hasCost"])
 
-    def test_output_presets_use_fixed_png_api_requests(self):
+    def test_legacy_output_presets_translate_to_native_format_and_compression(self):
         self.assertEqual(
             image_editor.OUTPUT_PRESETS,
             {
@@ -221,13 +221,14 @@ class ImageEditorTests(unittest.TestCase):
                 "small": ("jpeg", 55),
             },
         )
-        for preset, (output_format, _quality) in image_editor.OUTPUT_PRESETS.items():
+        for preset, (output_format, compression) in image_editor.OUTPUT_PRESETS.items():
             request = image_editor.prepare_image_generation(
                 "Generate an image",
                 [],
                 {"outputPreset": preset},
             )
-            self.assertEqual(request.fields["output_format"], "png")
+            self.assertEqual(request.fields["output_format"], output_format)
+            self.assertEqual(request.fields.get("output_compression"), compression)
             self.assertEqual(request.output_format, output_format)
             self.assertEqual(request.output_preset, preset)
 
@@ -348,8 +349,8 @@ class ImageEditorTests(unittest.TestCase):
     def test_service_routes_without_references_to_generations(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            result_image = root / "result.png"
-            Image.new("RGB", (8, 8), "red").save(result_image, format="PNG")
+            result_image = root / "result.webp"
+            Image.new("RGBA", (8, 8), (255, 0, 0, 100)).save(result_image, format="WEBP")
             encoded = base64.b64encode(result_image.read_bytes()).decode("ascii")
             client = SimpleNamespace(
                 generate_image=Mock(
@@ -358,7 +359,7 @@ class ImageEditorTests(unittest.TestCase):
                         "output_format": "webp",
                         "quality": "auto",
                         "size": "1254x1254",
-                        "background": "opaque",
+                        "background": "transparent",
                         "usage": {
                             "input_tokens": 120,
                             "output_tokens": 240,
@@ -374,8 +375,11 @@ class ImageEditorTests(unittest.TestCase):
                 {
                     "size": "768x1024",
                     "quality": "low",
-                    "outputPreset": "medium",
-                    "background": "opaque",
+                    "imageModel": "gpt-image-2.6-flare",
+                    "complexity": "low",
+                    "output_format": "webp",
+                    "output_compression": 75,
+                    "background": "transparent",
                     "moderation": "low",
                 },
             )
@@ -400,16 +404,17 @@ class ImageEditorTests(unittest.TestCase):
                 result["usage"],
                 {"input_tokens": 120, "output_tokens": 240},
             )
-            self.assertEqual(request.fields["output_format"], "png")
-            self.assertNotIn("output_compression", request.fields)
-            self.assertNotIn("background", request.fields)
-            self.assertNotIn("size", request.fields)
+            self.assertEqual(request.fields["output_format"], "webp")
+            self.assertEqual(request.fields["output_compression"], 75)
+            self.assertEqual(request.fields["background"], "transparent")
+            self.assertEqual(request.fields["complexity"], "low")
+            self.assertEqual(request.fields["size"], "768x1024")
             self.assertEqual(request.fields["moderation"], "low")
-            self.assertEqual(result["format"], "jpeg")
-            self.assertEqual(result["outputPreset"], "medium")
-            self.assertEqual(Path(result["path"]).suffix, ".jpg")
+            self.assertEqual(result["format"], "webp")
+            self.assertEqual(Path(result["path"]).suffix, ".webp")
+            self.assertEqual(Path(result["path"]).read_bytes(), result_image.read_bytes())
             with Image.open(result["path"]) as saved_image:
-                self.assertEqual(saved_image.format, "JPEG")
+                self.assertEqual(saved_image.format, "WEBP")
             client.generate_image.assert_called_once()
             client.edit_images.assert_not_called()
 
@@ -443,11 +448,11 @@ class ImageEditorTests(unittest.TestCase):
         client.edit_images.assert_called_once()
         client.generate_image.assert_not_called()
 
-    def test_jpeg_presets_use_backend_compression_quality(self):
+    def test_jpeg_presets_keep_the_upstream_bytes(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = io.BytesIO()
-            Image.new("RGBA", (64, 64), (20, 40, 60, 128)).save(source, format="PNG")
+            Image.new("RGB", (64, 64), (20, 40, 60)).save(source, format="JPEG")
             encoded = base64.b64encode(source.getvalue()).decode("ascii")
             client = SimpleNamespace(
                 generate_image=Mock(return_value={"data": [{"b64_json": encoded}]}),
@@ -461,50 +466,38 @@ class ImageEditorTests(unittest.TestCase):
                     [],
                     {"outputPreset": preset},
                 )
-                with __import__("unittest.mock").mock.patch.object(
-                    Image.Image,
-                    "save",
-                    autospec=True,
-                    wraps=Image.Image.save,
-                ) as save_image:
-                    result = service.generate(
-                        "https://example.test/v1",
-                        "secret",
-                        request,
-                        root / preset,
-                    )
-
-                jpeg_calls = [
-                    call for call in save_image.call_args_list
-                    if call.kwargs.get("format") == "JPEG"
-                ]
-                self.assertEqual(
-                    [call.kwargs["quality"] for call in jpeg_calls],
-                    [expected_quality, 78],
+                result = service.generate(
+                    "https://example.test/v1",
+                    "secret",
+                    request,
+                    root / preset,
                 )
+                self.assertEqual(client.generate_image.call_args.args[2]["output_compression"], expected_quality)
+                self.assertEqual(Path(result["path"]).read_bytes(), source.getvalue())
                 self.assertEqual(result["format"], "jpeg")
                 self.assertEqual(result["outputPreset"], preset)
 
-    def test_prompt_driven_transparency_does_not_add_background_parameter(self):
+    def test_transparency_sets_background_and_requires_an_alpha_format(self):
         request = image_editor.prepare_image_generation(
             "Generate a transparent image",
             [],
             {"background": "transparent", "outputPreset": "large"},
         )
-        self.assertNotIn("background", request.fields)
-        self.assertNotIn("size", request.fields)
+        self.assertEqual(request.fields["background"], "transparent")
+        self.assertEqual(request.fields["size"], "auto")
+        self.assertEqual(request.fields["output_format"], "png")
 
         request = image_editor.prepare_image_generation(
             "Generate a transparent image",
             [],
             {"background": "transparent", "outputPreset": "lossless"},
         )
-        self.assertNotIn("background", request.fields)
-        self.assertNotIn("size", request.fields)
+        self.assertEqual(request.fields["background"], "transparent")
+        self.assertEqual(request.fields["size"], "auto")
         self.assertEqual(request.fields["output_format"], "png")
         self.assertEqual(request.output_format, "png")
 
-    def test_image_model_selection_and_private_constraints(self):
+    def test_image_model_selection_and_native_constraints(self):
         for model in ("gpt-image-2", "gpt-image-2.5"):
             with self.subTest(model=model):
                 request = image_editor.prepare_image_generation(
@@ -513,10 +506,9 @@ class ImageEditorTests(unittest.TestCase):
                 )
                 self.assertEqual(request.fields["model"], model)
                 self.assertEqual(request.prompt, "A glass bottle")
-                self.assertIn("16:9", request.fields["prompt"])
-                self.assertIn("alpha", request.fields["prompt"])
-                self.assertNotIn("background", request.fields)
-                self.assertNotIn("size", request.fields)
+                self.assertEqual(request.fields["prompt"], "A glass bottle")
+                self.assertEqual(request.fields["background"], "transparent")
+                self.assertEqual(request.fields["size"], "1280x720")
         with self.assertRaises(ValueError):
             image_editor.prepare_image_generation("test", [], {"imageModel": "unknown"})
 
@@ -527,7 +519,8 @@ class ImageEditorTests(unittest.TestCase):
         )
         self.assertEqual(request.prompt, "A bottle")
         self.assertNotIn("1:1", request.fields["prompt"])
-        self.assertIn("255", request.fields["prompt"])
+        self.assertEqual(request.fields["prompt"], "A bottle")
+        self.assertEqual(request.fields["background"], "opaque")
 
     def test_transparent_mode_preserves_alpha_with_jpeg_preset(self):
         with tempfile.TemporaryDirectory() as temp:

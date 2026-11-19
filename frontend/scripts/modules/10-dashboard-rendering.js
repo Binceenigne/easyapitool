@@ -85,9 +85,11 @@
             percentElement.textContent = window.appState.rateLimitProgressMode === 'used'
                 ? `${(100 - percent).toFixed(2)}% 已用`
                 : `${percent.toFixed(2)}% 剩余`;
-            remainingElement.innerHTML = `${remaining.toFixed(4)} <span class="limit-unit">USD 可用</span>`;
-            totalElement.textContent = formatLimitChange(data.limitChange, `上限 ${data.limit.toFixed(2)} USD`);
-            if (usedElement) usedElement.textContent = `${data.used.toFixed(4)} USD`;
+            const requests = data.unit === 'requests';
+            const unit = requests ? '次' : 'USD';
+            remainingElement.innerHTML = `${remaining.toFixed(requests ? 0 : 4)} <span class="limit-unit">${unit} 可用</span>`;
+            totalElement.textContent = formatLimitChange(data.limitChange, `上限 ${data.limit.toFixed(requests ? 0 : 2)} ${unit}`);
+            if (usedElement) usedElement.textContent = `${data.used.toFixed(requests ? 0 : 4)} ${unit}`;
             renderProgressBar(bar, displayPercent, percent, { unlimited: false });
             return percent;
         }
@@ -154,8 +156,9 @@
                 const progress = document.getElementById(`micro${item.name}Progress`);
                 row.style.order = String(index);
                 row.classList.toggle('is-tightest', index === 0);
-                remain.textContent = item.configured ? item.remaining.toFixed(2) : '不限';
-                suffix.textContent = item.configured ? ' USD 可用' : '';
+                const requests = item.data.unit === 'requests';
+                remain.textContent = item.configured ? item.remaining.toFixed(requests ? 0 : 2) : '不限';
+                suffix.textContent = item.configured ? (requests ? ' 次可用' : ' USD 可用') : '';
                 const displayPercent = window.appState.rateLimitProgressMode === 'used'
                     ? 100 - item.percent
                     : item.percent;
@@ -251,9 +254,13 @@
                     : `${remainingDays} 天后到期`;
 
             // 用量次数
-            document.getElementById('todayUsageVal').textContent = activeKey.todayCost.toFixed(7) + " USD";
-            document.getElementById('todayRequestsVal').textContent = `共 ${activeKey.todayRequests} 次成功请求`;
-            document.getElementById('totalUsageVal').textContent = activeKey.totalCost.toFixed(7) + " USD";
+            const usageValue = (cost, tokens) => activeKey.hasPricedUsage === false
+                ? (tokens == null ? '—' : Number(tokens).toLocaleString() + ' tokens')
+                : cost.toFixed(7) + ' USD';
+            document.getElementById('todayUsageVal').textContent = usageValue(activeKey.todayCost, activeKey.todayTokens);
+            const requestLabel = ['request_quota', 'usd_quota'].includes(activeKey.mode) ? '次请求' : '次成功请求';
+            document.getElementById('todayRequestsVal').textContent = '共 ' + activeKey.todayRequests + ' ' + requestLabel;
+            document.getElementById('totalUsageVal').textContent = usageValue(activeKey.totalCost, activeKey.totalTokens);
 
             // 计算使用流速
             calculateUsageRateMetrics(activeKey);

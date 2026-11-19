@@ -51,7 +51,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.1.10"
+APP_VERSION = "1.1.11"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -64,6 +64,18 @@ RELEASE_TAG_PREFIX = "imagen-v"
 MUTEX_NAME = "Local\\API_TOOLS_EasyClin_Quota_Monitor"
 SHOW_EVENT_NAME = "Local\\API_TOOLS_EasyClin_Show_Window"
 DEFAULT_BASE_URL = "https://work.easyclin.cn/v1"
+OPENAI_API_URL = "https://api.openai.com/v1"
+MIRRA_API_URL = "https://imggen.djyx.me/openai/v1"
+
+
+def api_base_url_for_key(key: str) -> str:
+    if key.startswith("sk-mirra-"):
+        return os.environ.get("MIRRA_PUBLIC_OPENAI_BASE_URL", MIRRA_API_URL).rstrip("/")
+    if key.startswith("sk-proj-"):
+        return OPENAI_API_URL
+    return os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
+
+
 FOREGROUND_INTERVAL = 60
 BACKGROUND_INTERVAL = 300
 BACKGROUND_UI_RELEASE_DELAY = 300
@@ -71,7 +83,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "53"
+STATIC_UI_VERSION = "54"
 IMAGE_STREAM_DEBUG_LOG_MAX_BYTES = 20 * 1024 * 1024
 WEB_SEARCH_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 WEB_REFERENCE_IMAGE_MAX_BYTES = 16 * 1024 * 1024

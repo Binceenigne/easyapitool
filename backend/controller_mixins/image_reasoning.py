@@ -918,7 +918,6 @@ class ImageReasoningMixin:
         )
         clean_options.update(
             {
-                "background": "auto",
                 "moderation": "low",
                 "stream": True,
                 "partialImages": 3,

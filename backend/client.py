@@ -28,10 +28,16 @@ class EasyClinClient:
             raise RuntimeError(f"网络请求失败: {exc.reason if hasattr(exc, 'reason') else exc}") from None
 
     def fetch(self, base_url: str, secret: str) -> tuple[dict[str, Any], list[str] | None]:
-        usage = self.get_json(base_url, secret, "/usage?days=30")
+        official = base_url.rstrip("/") == OPENAI_API_URL
+        usage = (
+            {"isValid": True, "status": "active", "mode": "official"}
+            if official else self.get_json(base_url, secret, "/usage?days=30")
+        )
         try:
             models = self.get_json(base_url, secret, "/models")
         except RuntimeError:
+            if official:
+                raise
             return usage, None
         model_ids: list[str] = []
         seen: set[str] = set()

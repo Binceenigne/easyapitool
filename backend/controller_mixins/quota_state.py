@@ -211,6 +211,7 @@ class QuotaStateMixin:
                 "resetTime": item.get("reset_at"),
                 "windowStart": item.get("window_start"),
                 "limitChange": change,
+                "unit": item.get("unit") or ("requests" if payload.get("mode") == "request_quota" else "USD"),
             }
 
         expires = payload.get("expires_at") or ((payload.get("subscription") or {}).get("expires_at"))
@@ -234,6 +235,10 @@ class QuotaStateMixin:
             "totalRequests": int(total.get("requests") or 0),
             "todayCost": safe_float(today.get("cost")),
             "totalCost": safe_float(total.get("cost")),
+            "hasPricedUsage": total.get("cost") is not None or payload.get("mode") not in {"request_quota", "usd_quota", "official"},
+            "quotaUnit": payload.get("quotaUnit"),
+            "todayTokens": today.get("total_tokens"),
+            "totalTokens": total.get("total_tokens"),
             "modelsCount": int(payload.get("_models_count") or 0),
             "models": [str(model) for model in payload.get("_models") or [] if str(model).strip()],
             "rates": self.store.rates(record["id"]),
@@ -284,7 +289,7 @@ class QuotaStateMixin:
         value = (value or "").strip()
         if not name or not value:
             return {"ok": False, "error": "昵称和密钥不能为空"}
-        base_url = os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
+        base_url = api_base_url_for_key(value)
         key_id = self.store.add_key(name, value, base_url)
         with self.refresh_lock:
             self._refresh_key(key_id)

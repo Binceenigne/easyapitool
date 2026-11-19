@@ -295,7 +295,8 @@
 #imageGenerationQualitySummary[data-quality="low"] { color: var(--good); }
 #imageGenerationQualitySummary[data-quality="medium"] { color: var(--warn); }
 #imageGenerationQualitySummary[data-quality="high"],
-#imageGenerationOutputSummary[data-preset="lossless"] { color: var(--image-purple); }
+#imageGenerationQualitySummary[data-quality="xhigh"],
+#imageGenerationQualitySummary[data-quality="max"] { color: var(--image-purple); }
 #imageGenerationControlPanel {
     position: fixed;
     z-index: 54;
@@ -306,7 +307,9 @@
     width: var(--image-popover-width, 100%);
     padding: 16px;
     gap: 14px;
-    overflow: hidden;
+    max-height: calc(100vh - var(--image-popover-bottom, 58px) - 12px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--surface);
@@ -323,6 +326,21 @@
 .image-control-section > span,
 .image-quality-controls .image-control-section > span { color: var(--muted); font-size: 9px; font-weight: 700; }
 .image-quality-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+#imageGenerationControlPanel select,
+#imageGenerationControlPanel input[type='number'] {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 32px;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 4px 6px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+}
+#imageGenerationControlPanel select:disabled { opacity: .6; }
+#imageEditCompressionLabel[hidden] { display: none; }
 .image-control-segmented {
     display: grid;
     grid-auto-flow: column;
@@ -349,19 +367,6 @@
     font-weight: 700;
     box-shadow: 0 1px 5px rgba(2, 6, 23, 0.14);
     transform: translateY(-1px);
-}
-#imageQualityButtons button[data-quality="auto"].is-active {
-    background: var(--image-blue-soft);
-    color: var(--image-blue);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--image-blue) 28%, transparent), 0 1px 5px rgba(37, 99, 235, 0.12);
-}
-#imageQualityButtons button[data-quality="low"].is-active { color: var(--good); }
-#imageQualityButtons button[data-quality="medium"].is-active { color: var(--warn); }
-#imageQualityButtons button[data-quality="high"].is-active,
-#imageOutputPresetButtons button[data-preset="lossless"].is-active {
-    background: var(--image-purple-soft);
-    color: var(--image-purple);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--image-purple) 28%, transparent), 0 1px 5px rgba(124, 58, 237, 0.14);
 }
 .image-aspect-options {
     display: grid;

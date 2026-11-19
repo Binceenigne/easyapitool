@@ -119,7 +119,7 @@ class Store:
                         return
                 except OSError:
                     continue
-        self.add_key("环境变量 Key", secret, os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL))
+        self.add_key("环境变量 Key", secret, api_base_url_for_key(secret))
 
     def list_key_records(self) -> list[sqlite3.Row]:
         with self.lock, self.connect() as db:
@@ -153,6 +153,8 @@ class Store:
         today = usage.get("today") or {}
         total = usage.get("total") or {}
         total_cost_raw = total.get("cost")
+        if total_cost_raw is None and payload.get("mode") in {"request_quota", "usd_quota", "official"}:
+            total_cost_raw = 0
         try:
             total_cost = float(total_cost_raw)
         except (TypeError, ValueError):

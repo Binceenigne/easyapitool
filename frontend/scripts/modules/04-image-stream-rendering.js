@@ -776,7 +776,7 @@
                     : set.status === 'failed'
                         ? `第 ${set.roundNumber || 1} 轮 · 生成失败 · 保留 ${completedCount} 张`
                         : `第 ${set.roundNumber || 1} 轮 · ${completedCount}/${set.requestedCount} 张 · 已保存`;
-                meta.textContent += set.imageModel === 'gpt-image-2.5' ? ' · Image 2.5' : ' · Image 2.0';
+                meta.textContent += ' · Image ' + (IMAGE_MODEL_LABELS[set.imageModel] || set.imageModel || '2.0');
                 heading.append(titleRow, meta);
                 const actions = document.createElement('div');
                 actions.className = 'image-generation-set-actions';
