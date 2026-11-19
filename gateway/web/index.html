@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mirra 网关</title>
+  <link rel="stylesheet" href="/admin.css">
+  <script src="/admin.js" defer></script>
+</head>
+<body>
+  <header><h1>Mirra 网关</h1><button id="logout" type="button" hidden>退出</button></header>
+  <main>
+    <form id="login">
+      <label>管理 PIN<input type="password" name="pin" inputmode="numeric" pattern="[0-9]{6,64}" required autofocus></label>
+      <button>登录</button>
+    </form>
+    <p id="message" role="status" hidden></p>
+    <div id="settings" hidden>
+      <section>
+        <h2>上游</h2>
+        <form id="upstream">
+          <input name="id" type="hidden">
+          <label>名称<input name="name" maxlength="120" required></label>
+          <label>API 地址<input name="baseUrl" type="url" placeholder="https://api.openai.com/v1" required></label>
+          <label>负载池<input name="pool" maxlength="64" placeholder="例如 openai"></label>
+          <p class="hint">同一 API 地址和池名的上游组成一组，分发密钥按小时绑定。</p>
+          <label>上游 API Key<input name="apiKey" type="password" autocomplete="off" maxlength="4096"></label>
+          <label class="check"><input name="enabled" type="checkbox" checked>启用</label>
+          <div class="actions"><button>保存上游</button><button type="reset">清空</button></div>
+        </form>
+        <ul id="upstreams"></ul>
+      </section>
+      <section>
+        <h2>分发密钥</h2>
+        <form id="key">
+          <input name="id" type="hidden">
+          <label>名称<input name="name" maxlength="120" required></label>
+          <label>上游<select name="upstreamId" required></select></label>
+          <details><summary>请求次数</summary>
+            <label>5 小时上限（次）<input name="limit5h" type="number" min="0" max="1000000" value="10" required></label>
+            <label>7 天上限（次）<input name="limit7d" type="number" min="0" max="1000000" value="50" required></label>
+          </details>
+          <label class="check"><input name="customOn" type="checkbox" data-reveal="custom-key">自定义密钥</label>
+          <div id="custom-key" hidden><label>密钥后缀<input name="customKey" pattern="[A-Za-z0-9_\-]{16,128}" maxlength="128" autocomplete="off"></label><p class="hint">至少 16 位，网关会加上 sk-mirra- 前缀。</p></div>
+          <label class="check"><input name="ipOn" type="checkbox" data-reveal="ip-list">IP 限制</label>
+          <div id="ip-list" hidden><label>IP 白名单<textarea name="ips" rows="2" placeholder="203.0.113.10&#10;2001:db8::/32"></textarea></label><p class="hint">每行一个地址或 CIDR。</p></div>
+          <label>总额度（USD）<input name="totalUsd" type="number" min="0" max="1000000" step="0.000001" value="0"></label>
+          <label class="check"><input name="rateOn" type="checkbox" data-reveal="usd-windows">分时额度（USD）</label>
+          <div id="usd-windows" class="stack" hidden>
+            <label>5 小时<input name="fiveHourUsd" type="number" min="0" max="1000000" step="0.000001" value="0"></label>
+            <label>24 小时<input name="dayUsd" type="number" min="0" max="1000000" step="0.000001" value="0"></label>
+            <label>7 天<input name="weekUsd" type="number" min="0" max="1000000" step="0.000001" value="0"></label>
+          </div>
+          <label class="check"><input name="expiryOn" type="checkbox" data-reveal="expiry">密钥有效期</label>
+          <div id="expiry" class="stack" hidden>
+            <div class="actions" id="expiry-presets"><button type="button" data-days="7">7 天</button><button type="button" data-days="30">30 天</button><button type="button" data-days="90">90 天</button><button type="button" data-days="0">自定义</button></div>
+            <label>到期时间<input name="expiresAt" type="datetime-local"></label>
+          </div>
+          <label class="check"><input name="enabled" type="checkbox" checked>启用</label>
+          <p class="hint">填 0 即不设上限。</p>
+          <div class="actions"><button id="save-key">签发密钥</button><button type="reset">清空</button></div>
+        </form>
+        <div id="issued" hidden><label>新密钥仅显示一次<input id="secret" readonly></label><button id="copy" type="button">复制</button></div>
+        <ul id="keys"></ul>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

@@ -51,11 +51,11 @@ EasyClin 会把图片请求转换到内部图片工具，并非所有 Images API
 
 ### Mirra Android 与官网发布
 
-Android 正式版通过 `deploy/build-imggen-android-release.ps1 -VersionCode 18 -VersionName 1.2.6` 构建。需要 Java 21、Android SDK 36、`mobile` 的 npm 依赖，以及 `EASYAPITOOL_RELEASE_PROPERTIES` 指向的原发布签名文件。迁移构建机后可用 `EASYAPITOOL_RELEASE_STORE_FILE` 覆盖签名文件中原有的 keystore 路径。默认使用 Gradle wrapper；缓存齐全时可追加 `-Offline`。
+Android 正式版通过 `deploy/build-imggen-android-release.ps1 -VersionCode 19 -VersionName 1.2.7` 构建。需要 Java 21、Android SDK 36、`mobile` 的 npm 依赖，以及 `EASYAPITOOL_RELEASE_PROPERTIES` 指向的原发布签名文件。迁移构建机后可用 `EASYAPITOOL_RELEASE_STORE_FILE` 覆盖签名文件中原有的 keystore 路径。默认使用 Gradle wrapper；缓存齐全时可追加 `-Offline`。
 
 官网源码与图片、字体、脚本分别位于 `deploy/imggen-landing.html` 和 `deploy/mirra-assets/`。官网保留现有 Mirra 设计，同时展示 Windows 与 Android 的独立版本、安装包大小、日期及 SHA-256。下载入口为 `/v1/app/update/download?platform=windows` 和 `/v1/app/update/download?platform=android`。服务从 `API_TOOLS_WINDOWS_RELEASE_DIR` 和 `API_TOOLS_ANDROID_RELEASE_DIR` 读取对应的安装包与 `manifest.json`，下载前校验文件大小和 SHA-256。
 
-部署时向 `deploy/deploy-imggen-server.ps1` 传入 `-WindowsReleaseDirectory`，目录内应包含 `API_TOOLS.exe` 和 Windows 发布清单。两端的正式安装包及校验文件分别随 `imagen-v1.1.10`（Windows）和 `android-v1.2.6`（Android）GitHub Release 发布。Windows 保留 `imagen` 更新通道与原有资产名，已有应用可继续自动更新。
+两端的正式安装包及校验文件分别随 `imagen-v1.1.11`（Windows）和 `android-v1.2.7`（Android）GitHub Release 发布。Windows 保留 `imagen` 更新通道与原有资产名，已有应用可继续自动更新。服务端的 `.env`、上游密钥池、限额和部署方式见 [Go 网关文档](gateway/README.md)。
 
 构建机需要 Node.js/npm。运行 `build.ps1` 后，脚本会在缺少本地依赖时执行 `npm ci`，随后强制编译 SCSS，并将生成的 CSS、页面资源与 `CHANGELOG.md` 打包为单文件便携版 `dist\API_TOOLS.exe`。同时会生成 `dist\API_TOOLS.exe.sha256`。Python 运行时和 DLL 已嵌入 EXE，目标机器无需安装 Python 或 Node.js，也不要再复制旧目录版中的单独 EXE。目标机器仍需安装 Microsoft Edge WebView2 Runtime（Windows 11 默认包含）。
 

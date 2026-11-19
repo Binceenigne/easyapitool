@@ -1,0 +1,30 @@
+[Unit]
+Description=Mirra Go image gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=imggenapi
+Group=imggenapi
+WorkingDirectory=/opt/imggen-gateway
+EnvironmentFile=/etc/imggen-api/imggen-api.env
+Environment=MIRRA_DATA_DIR=/var/lib/imggen-gateway
+Environment=MIRRA_ASSET_DIR=/var/cache/imggen-gateway
+Environment=GOMEMLIMIT=220MiB
+ExecStart=/opt/imggen-gateway/mirra-gateway -env /etc/imggen-gateway/.env
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+StateDirectory=imggen-gateway
+StateDirectoryMode=0700
+CacheDirectory=imggen-gateway
+CacheDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/imggen-api
+
+[Install]
+WantedBy=multi-user.target

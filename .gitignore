@@ -15,6 +15,9 @@ mobile/release/
 # Build output
 build/
 dist/
+gateway/data/
+gateway/.env
+gateway/mirra-gateway.exe
 *.sha256
 
 # Local application data

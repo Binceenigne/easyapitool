@@ -352,12 +352,13 @@
         return {
             ...remote,
             keys: metadata.map(key => ({
+                ...remoteKeys.get(String(key.id)),
                 id: String(key.id),
                 name: key.name || 'API Key',
                 value: maskedKeyValue(),
                 baseUrl: '',
                 status: remoteKeys.get(String(key.id))?.status || (registrationErrors.length ? 'unknown' : 'active'),
-                lastError: registrationErrors.length ? registrationErrors[0].message : null
+                lastError: registrationErrors.length ? registrationErrors[0].message : remoteKeys.get(String(key.id))?.lastError || null
             })),
             appName: 'Mirra(觅然)',
             appVersion: (await getAppUpdateInfo().catch(() => ({ versionName: 'android' }))).versionName || 'android',
@@ -745,8 +746,8 @@
             originalPrompt: String(prompt || pending?.prompt || ''),
             imageModel: options?.imageModel || 'gpt-image-2',
             aspectRatio: options?.aspectRatio || 'auto',
-            transparency: ['auto', 'opaque', 'transparent'].includes(options?.transparency)
-                ? options.transparency
+            transparency: ['auto', 'opaque', 'transparent'].includes(options?.background || options?.transparency)
+                ? options.background || options.transparency
                 : ['auto', 'opaque', 'transparent'].includes(pending?.transparency)
                     ? pending.transparency
                     : 'auto',
@@ -784,7 +785,7 @@
                 roundNumber: Number(options.roundNumber) || 1,
                 prompt,
                 requestedCount: Number(options.imageCount) || 1,
-                transparency: options.transparency || 'auto',
+                transparency: options.background || options.transparency || 'auto',
                 imageModel: options.imageModel || 'gpt-image-2',
                 aspectRatio: options.aspectRatio || 'auto',
                 createdAt: new Date().toISOString()

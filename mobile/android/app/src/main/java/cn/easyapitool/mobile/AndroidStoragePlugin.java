@@ -793,6 +793,8 @@ public class AndroidStoragePlugin extends Plugin {
         if ("image/png".equals(mimeType)) return ".png";
         if ("image/jpeg".equals(mimeType)) return ".jpg";
         if ("image/webp".equals(mimeType)) return ".webp";
+        if ("image/svg+xml".equals(mimeType)) return ".svg";
+        if ("image/gif".equals(mimeType)) return ".gif";
         return null;
     }
 
@@ -800,6 +802,8 @@ public class AndroidStoragePlugin extends Plugin {
         String lower = name.toLowerCase();
         if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
         if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".svg")) return "image/svg+xml";
+        if (lower.endsWith(".gif")) return "image/gif";
         return "image/png";
     }
 
