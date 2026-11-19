@@ -102,8 +102,7 @@ func loadConfig(path string) (config, error) {
 		return c, err
 	}
 	if c.egressProxy != "" {
-		proxy, err := url.Parse(c.egressProxy)
-		if err != nil || proxy.Hostname() == "" || (proxy.Scheme != "http" && proxy.Scheme != "https" && proxy.Scheme != "socks5" && proxy.Scheme != "socks5h") {
+		if _, err := parseProxyURL(c.egressProxy); err != nil {
 			return c, fmt.Errorf("invalid MIRRA_EGRESS_PROXY")
 		}
 	}

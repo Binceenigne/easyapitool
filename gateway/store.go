@@ -21,15 +21,13 @@ import (
 var errInvalidKey = errors.New("API Key 无效、已停用或上游未启用")
 
 type quotaError struct {
-	resetAt  time.Time
-	currency bool
+	resetAt              time.Time
+	window               string
+	limit, used, reserve int64
 }
 
 func (e *quotaError) Error() string {
-	if e.currency {
-		return "USD 余额不足或已达分时额度"
-	}
-	return "请求次数已达用量上限"
+	return windowLabel(e.window) + "可用 USD 额度不足"
 }
 
 type upstream struct {
@@ -46,8 +44,6 @@ type accessKey struct {
 	Name     string    `json:"name"`
 	Prefix   string    `json:"prefix"`
 	Upstream string    `json:"upstreamId"`
-	Limit5h  int64     `json:"limit5h"`
-	Limit7d  int64     `json:"limit7d"`
 	Policy   keyPolicy `json:"policy"`
 	Enabled  bool      `json:"enabled"`
 }
@@ -108,7 +104,17 @@ func openStore(path, secret string) (*store, error) {
 		  pool TEXT NOT NULL, hour INTEGER NOT NULL, key_id TEXT NOT NULL REFERENCES access_keys(id),
 		  upstream_id TEXT NOT NULL REFERENCES upstreams(id), weight INTEGER NOT NULL,
 		  PRIMARY KEY (pool,hour,key_id)
-		);`)
+		);
+		CREATE TABLE IF NOT EXISTS gateway_settings (name TEXT PRIMARY KEY, value BLOB NOT NULL);
+		CREATE TABLE IF NOT EXISTS quota_periods (
+		  key_id TEXT NOT NULL REFERENCES access_keys(id), window TEXT NOT NULL, start_ms INTEGER NOT NULL,
+		  after_request INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(key_id,window)
+		);
+		CREATE TABLE IF NOT EXISTS quota_events (
+		  id INTEGER PRIMARY KEY, key_id TEXT NOT NULL REFERENCES access_keys(id), created INTEGER NOT NULL,
+		  kind TEXT NOT NULL, window TEXT NOT NULL, before_micro INTEGER NOT NULL, after_micro INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS quota_events_by_key ON quota_events(key_id,id);`)
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -130,8 +136,30 @@ func keyDigest(secret string) string {
 }
 
 func (s *store) saveUpstream(ctx context.Context, u upstream) error {
+	return s.writeUpstream(ctx, s.db, u)
+}
+
+type contextExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func (s *store) seal(data []byte, purpose string) []byte {
+	nonce := make([]byte, s.aead.NonceSize())
+	rand.Read(nonce)
+	return s.aead.Seal(nonce, nonce, data, []byte(purpose))
+}
+
+func (s *store) unseal(sealed []byte, purpose string) ([]byte, error) {
+	n := s.aead.NonceSize()
+	if len(sealed) < n {
+		return nil, fmt.Errorf("invalid encrypted value")
+	}
+	return s.aead.Open(nil, sealed[:n], sealed[n:], []byte(purpose))
+}
+
+func (s *store) writeUpstream(ctx context.Context, db contextExecer, u upstream) error {
 	if u.Secret == "" {
-		res, err := s.db.ExecContext(ctx, `UPDATE upstreams SET name=?, pool=?, enabled=? WHERE id=? AND url=?`, u.Name, u.Pool, u.Enabled, u.ID, u.URL)
+		res, err := db.ExecContext(ctx, `UPDATE upstreams SET name=?, pool=?, enabled=? WHERE id=? AND url=?`, u.Name, u.Pool, u.Enabled, u.ID, u.URL)
 		if err != nil {
 			return err
 		}
@@ -141,12 +169,8 @@ func (s *store) saveUpstream(ctx context.Context, u upstream) error {
 		}
 		return err
 	}
-	nonce := make([]byte, s.aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return err
-	}
-	sealed := s.aead.Seal(nonce, nonce, []byte(u.Secret), []byte(u.ID))
-	_, err := s.db.ExecContext(ctx, `INSERT INTO upstreams (id,name,url,pool,credential,enabled) VALUES (?,?,?,?,?,?)
+	sealed := s.seal([]byte(u.Secret), u.ID)
+	_, err := db.ExecContext(ctx, `INSERT INTO upstreams (id,name,url,pool,credential,enabled) VALUES (?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name,url=excluded.url,pool=excluded.pool,credential=excluded.credential,enabled=excluded.enabled`,
 		u.ID, u.Name, u.URL, u.Pool, sealed, u.Enabled)
 	return err
@@ -176,31 +200,39 @@ func (s *store) getUpstream(ctx context.Context, id string) (upstream, error) {
 	if err != nil {
 		return u, err
 	}
-	nonceSize := s.aead.NonceSize()
-	if len(sealed) < nonceSize {
-		return u, fmt.Errorf("invalid upstream credential")
-	}
-	secret, err := s.aead.Open(nil, sealed[:nonceSize], sealed[nonceSize:], []byte(u.ID))
+	secret, err := s.unseal(sealed, u.ID)
 	u.Secret = string(secret)
 	return u, err
 }
 
-func (s *store) issue(ctx context.Context, k accessKey, custom string) (accessKey, string, error) {
+func (s *store) issue(ctx context.Context, k accessKey, custom string) (accessKey, string, object, error) {
 	if custom == "" {
 		custom = randomID(32)
 	}
 	secret := "sk-mirra-" + custom
-	k.ID, k.Prefix, k.Enabled = randomID(15), secret[:16], true
-	_, err := s.db.ExecContext(ctx, `INSERT INTO access_keys (id,name,prefix,digest,upstream_id,limit_5h,limit_7d,policy,enabled) VALUES (?,?,?,?,?,?,?,?,1)`,
-		k.ID, k.Name, k.Prefix, keyDigest(secret), k.Upstream, k.Limit5h, k.Limit7d, k.Policy.encode())
+	k.ID, k.Prefix = randomID(15), secret[:16]
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return accessKey{}, "", err
+		return accessKey{}, "", nil, err
 	}
-	return k, secret, nil
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO access_keys (id,name,prefix,digest,upstream_id,limit_5h,limit_7d,policy,enabled) VALUES (?,?,?,?,?,0,0,?,?)`,
+		k.ID, k.Name, k.Prefix, keyDigest(secret), k.Upstream, k.Policy.encode(), k.Enabled)
+	if err != nil {
+		return accessKey{}, "", nil, err
+	}
+	snapshot, err := s.usageTx(ctx, tx, k, time.Now())
+	if err != nil {
+		return accessKey{}, "", nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return accessKey{}, "", nil, err
+	}
+	return k, secret, snapshot, nil
 }
 
 func (s *store) listKeys(ctx context.Context) ([]accessKey, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,prefix,upstream_id,limit_5h,limit_7d,policy,enabled FROM access_keys ORDER BY name,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,prefix,upstream_id,policy,enabled FROM access_keys ORDER BY name,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +241,7 @@ func (s *store) listKeys(ctx context.Context) ([]accessKey, error) {
 	for rows.Next() {
 		var k accessKey
 		var policy string
-		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.Upstream, &k.Limit5h, &k.Limit7d, &policy, &k.Enabled); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.Upstream, &policy, &k.Enabled); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(policy), &k.Policy); err != nil {
@@ -220,24 +252,11 @@ func (s *store) listKeys(ctx context.Context) ([]accessKey, error) {
 	return items, rows.Err()
 }
 
-func (s *store) updateKey(ctx context.Context, k accessKey) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE access_keys SET name=?,upstream_id=?,limit_5h=?,limit_7d=?,policy=?,enabled=? WHERE id=?`,
-		k.Name, k.Upstream, k.Limit5h, k.Limit7d, k.Policy.encode(), k.Enabled, k.ID)
-	if err != nil {
-		return err
-	}
-	changed, err := res.RowsAffected()
-	if err == nil && changed == 0 {
-		return sql.ErrNoRows
-	}
-	return err
-}
-
 func (s *store) authenticate(ctx context.Context, secret string) (accessKey, upstream, error) {
 	var k accessKey
 	var policy string
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,prefix,upstream_id,limit_5h,limit_7d,policy,enabled FROM access_keys WHERE digest=?`, keyDigest(secret)).
-		Scan(&k.ID, &k.Name, &k.Prefix, &k.Upstream, &k.Limit5h, &k.Limit7d, &policy, &k.Enabled)
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,prefix,upstream_id,policy,enabled FROM access_keys WHERE digest=?`, keyDigest(secret)).
+		Scan(&k.ID, &k.Name, &k.Prefix, &k.Upstream, &policy, &k.Enabled)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !k.Enabled) {
 		return k, upstream{}, errInvalidKey
 	}
@@ -254,34 +273,6 @@ func (s *store) authenticate(ctx context.Context, secret string) (accessKey, ups
 	return k, u, err
 }
 
-type usageWindow struct {
-	Limit       int64 `json:"limit"`
-	Used        int64 `json:"used"`
-	Remaining   any   `json:"remaining"`
-	ResetAt     any   `json:"reset_at"`
-	WindowStart any   `json:"window_start"`
-}
-
-type queryRow interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
-
-func readWindow(ctx context.Context, q queryRow, keyID string, limit int64, duration time.Duration, now time.Time) (usageWindow, error) {
-	window := usageWindow{Limit: limit}
-	var oldest sql.NullInt64
-	err := q.QueryRowContext(ctx, `SELECT COUNT(*), MIN(created) FROM requests WHERE key_id=? AND created>?`,
-		keyID, now.Add(-duration).UnixMilli()).Scan(&window.Used, &oldest)
-	if limit > 0 {
-		window.Remaining = max(0, limit-window.Used)
-	}
-	if oldest.Valid {
-		start := time.UnixMilli(oldest.Int64).UTC()
-		window.WindowStart = start
-		window.ResetAt = start.Add(duration)
-	}
-	return window, err
-}
-
 func (s *store) reserve(ctx context.Context, selected route, now time.Time, estimate int64) (int64, error) {
 	k := selected.key
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -291,9 +282,9 @@ func (s *store) reserve(ctx context.Context, selected route, now time.Time, esti
 	defer tx.Rollback()
 	var currentUpstream, anchorPool, anchorURL, pool, upstreamURL, policy string
 	var enabled bool
-	err = tx.QueryRowContext(ctx, `SELECT a.upstream_id,a.enabled AND u.enabled,a.limit_5h,a.limit_7d,a.policy,anchor.pool,anchor.url,u.pool,u.url
+	err = tx.QueryRowContext(ctx, `SELECT a.upstream_id,a.enabled AND u.enabled,a.policy,anchor.pool,anchor.url,u.pool,u.url
 		FROM access_keys a JOIN upstreams anchor ON anchor.id=a.upstream_id JOIN upstreams u ON u.id=? WHERE a.id=?`, selected.upstream.ID, k.ID).
-		Scan(&currentUpstream, &enabled, &k.Limit5h, &k.Limit7d, &policy, &anchorPool, &anchorURL, &pool, &upstreamURL)
+		Scan(&currentUpstream, &enabled, &policy, &anchorPool, &anchorURL, &pool, &upstreamURL)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && (!enabled || currentUpstream != k.Upstream || upstreamURL != selected.upstream.URL ||
 		(currentUpstream != selected.upstream.ID && (pool == "" || pool != anchorPool || upstreamURL != anchorURL)))) {
 		return 0, errInvalidKey
@@ -307,29 +298,9 @@ func (s *store) reserve(ctx context.Context, selected route, now time.Time, esti
 	if err := k.Policy.check(selected.clientIP, now); err != nil {
 		return 0, err
 	}
-	var retryAt time.Time
-	for _, rule := range []struct {
-		limit int64
-		span  time.Duration
-	}{{k.Limit5h, 5 * time.Hour}, {k.Limit7d, 7 * 24 * time.Hour}} {
-		if rule.limit == 0 {
-			continue
-		}
-		var eligible int64
-		err := tx.QueryRowContext(ctx, `SELECT created FROM requests WHERE key_id=? AND created>? ORDER BY created DESC,id DESC LIMIT 1 OFFSET ?`,
-			k.ID, now.Add(-rule.span).UnixMilli(), rule.limit-1).Scan(&eligible)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return 0, err
-		}
-		if reset := time.UnixMilli(eligible).Add(rule.span); reset.After(retryAt) {
-			retryAt = reset
-		}
-	}
-	if !retryAt.IsZero() {
-		return 0, &quotaError{resetAt: retryAt}
+	periods, err := loadPeriods(ctx, tx, k, now, true)
+	if err != nil {
+		return 0, err
 	}
 	held := int64(0)
 	if k.Policy.usdLimited() {
@@ -337,7 +308,7 @@ func (s *store) reserve(ctx context.Context, selected route, now time.Time, esti
 			return 0, errPricingUnavailable
 		}
 		held = estimate
-		if err := checkBudget(ctx, tx, k, now, held); err != nil {
+		if err := checkBudget(ctx, tx, k, periods, held); err != nil {
 			return 0, err
 		}
 	}
@@ -370,28 +341,49 @@ func (s *store) finish(ctx context.Context, requestID int64, status int, count *
 }
 
 func (s *store) usage(ctx context.Context, k accessKey, now time.Time) (object, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	k, err = readKey(ctx, tx, k.ID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := s.usageTx(ctx, tx, k, now)
+	if err != nil {
+		return nil, err
+	}
+	return data, tx.Commit()
+}
+
+func (s *store) usageTx(ctx context.Context, tx *sql.Tx, k accessKey, now time.Time) (object, error) {
+	cycles, err := loadPeriods(ctx, tx, k, now, false)
+	if err != nil {
+		return nil, err
+	}
 	windows := object{}
-	rateLimits := []object{}
-	for _, entry := range []struct {
-		name string
-		time time.Duration
-		cap  int64
-	}{{"5h", 5 * time.Hour, k.Limit5h}, {"1d", 24 * time.Hour, 0}, {"7d", 7 * 24 * time.Hour, k.Limit7d}} {
-		window, err := readWindow(ctx, tx, k.ID, entry.cap, entry.time, now)
+	budget := object{}
+	requestsByWindow := object{}
+	var rateLimits []object
+	for _, rule := range k.Policy.budgets() {
+		item, err := budgetState(ctx, tx, k.ID, rule, cycles[rule.name])
 		if err != nil {
 			return nil, err
 		}
-		windows[entry.name] = window
-		rateLimits = append(rateLimits, object{"window": entry.name, "limit": window.Limit, "used": window.Used,
-			"remaining": window.Remaining, "reset_at": window.ResetAt, "window_start": window.WindowStart})
+		budget[rule.name] = item
+		if rule.span != 0 {
+			var count int64
+			if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM requests WHERE key_id=? AND created>?", k.ID, now.Add(-rule.span).UnixMilli()).Scan(&count); err != nil {
+				return nil, err
+			}
+			requestsByWindow[rule.name] = count
+			windows[rule.name] = item
+			rateLimits = append(rateLimits, item)
+		}
 	}
 	periods := object{}
-	for name, start := range map[string]int64{"today": now.UTC().Truncate(24 * time.Hour).UnixMilli(), "total": 0} {
+	for name, start := range map[string]int64{"today": midnight(now).UnixMilli(), "total": 0} {
 		var requests, metered, input, output, total, priced, settled, held int64
 		err := tx.QueryRowContext(ctx, `SELECT COUNT(*),COUNT(total_tokens),COALESCE(SUM(input_tokens),0),
 			COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(cost_micro),COALESCE(SUM(cost_micro),0),
@@ -407,24 +399,22 @@ func (s *store) usage(ctx context.Context, k accessKey, now time.Time) (object, 
 		}
 	}
 	payload := object{
-		"isValid": k.Enabled, "status": "active", "mode": "request_quota", "planName": k.Name,
-		"quotaUnit": "requests", "usage": periods, "rate_limits": rateLimits, "windows": windows, "expires_at": k.Policy.ExpiresAt,
+		"isValid": k.Enabled, "status": "active", "mode": "usd_quota", "planName": k.Name,
+		"quotaUnit": "USD", "usage": periods, "rate_limits": rateLimits, "windows": windows,
+		"expires_at": k.Policy.ExpiresAt, "quota": budget["total"], "usdBudget": budget, "requestCounts": requestsByWindow,
 	}
-	if k.Policy.usdLimited() {
-		payload["mode"], payload["quotaUnit"] = "usd_quota", "USD"
-		budget := object{}
-		for _, rule := range k.Policy.budgets() {
-			item, err := budgetState(ctx, tx, k.ID, rule, now)
-			if err != nil {
-				return nil, err
-			}
-			budget[rule.name] = item
-		}
-		payload["usdBudget"] = budget
-		payload["quota"] = budget["total"]
-		if k.Policy.H5 > 0 || k.Policy.D1 > 0 || k.Policy.D7 > 0 {
-			payload["rate_limits"] = []object{asObject(budget["5h"]), asObject(budget["1d"]), asObject(budget["7d"])}
-		}
+	events, err := readQuotaEvents(ctx, tx, k.ID, 0, true)
+	if err != nil {
+		return nil, err
 	}
-	return payload, tx.Commit()
+	attachQuotaFeedback(payload, events, now)
+	stats, err := usageRates(ctx, tx, k.ID, now)
+	if err != nil {
+		return nil, err
+	}
+	payload["rates"] = stats
+	if k.Policy.ExpiresAt != nil {
+		payload["expires_at"] = k.Policy.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	return payload, nil
 }

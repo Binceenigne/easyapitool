@@ -251,7 +251,7 @@ func (m *mobile) state(ctx context.Context, owner string, ip netip.Addr) object 
 		items = append(items, copy.state())
 	}
 	return object{"appName": appName, "keys": items, "activeTasks": active, "storageMode": "android-filesystem-sqlite-index", "serverPersistence": false,
-		"features": object{"nativeImageOptions": true, "svg": m.g.cfg.svgEnabled}}
+		"usagePersistence": "server-sqlite", "features": object{"serverQuota": true, "nativeImageOptions": true, "svg": m.g.cfg.svgEnabled}}
 }
 
 func (m *mobile) refresh(w http.ResponseWriter, r *http.Request, owner string) {
@@ -314,8 +314,8 @@ func (k mobileKey) state() object {
 		if unit == nil && payload["mode"] == "request_quota" {
 			unit = "requests"
 		}
-		return object{"limit": getNumber(item["limit"]), "used": getNumber(item["used"]), "remaining": item["remaining"], "unit": unit,
-			"resetTime": item["reset_at"], "windowStart": item["window_start"], "limitChange": nil}
+		return object{"remainingPercent": item["remainingPercent"], "severity": item["severity"], "limit": getNumber(item["limit"]), "used": getNumber(item["used"]), "remaining": item["remaining"], "unit": unit,
+			"resetTime": item["reset_at"], "windowStart": item["window_start"], "limitChange": asObject(payload["_limit_changes"])[name]}
 	}
 	quota, usage := asObject(payload["quota"]), asObject(payload["usage"])
 	today, total := asObject(usage["today"]), asObject(usage["total"])
@@ -347,7 +347,7 @@ func (k mobileKey) state() object {
 		masked = k.Value[:4] + "..." + k.Value[len(k.Value)-4:]
 	}
 	return object{"id": k.KeyID, "name": k.Name, "value": masked, "baseUrl": k.BaseURL, "status": status,
-		"mode": payload["mode"], "planName": payload["planName"], "expireDateStr": expires, "expireTimestamp": expiresAt,
+		"serverQuota": payload["serverQuota"], "rates": payload["rates"], "quotaEvents": payload["quotaEvents"], "quotaRevision": payload["quotaRevision"], "quotaSeverity": quota["severity"], "quotaPercent": quota["remainingPercent"], "quotaLimitChange": asObject(payload["_limit_changes"])["quota"], "mode": payload["mode"], "planName": payload["planName"], "expireDateStr": expires, "expireTimestamp": expiresAt,
 		"totalQuota": limit, "usedQuota": used, "remainingQuota": remaining, "quotaUnit": payload["quotaUnit"],
 		"win5h": window("5h"), "win1d": window("1d"), "win7d": window("7d"),
 		"todayRequests": today["requests"], "totalRequests": total["requests"], "todayCost": today["cost"], "totalCost": total["cost"],
@@ -387,4 +387,26 @@ func (m *mobile) getKey(owner, keyID string) (keyInput, error) {
 		return keyInput{}, errors.New("请选择有效的 API Key")
 	}
 	return key.keyInput, nil
+}
+
+func (g *gateway) notifyQuota(id string, snapshot object) {
+	if g.onQuotaChange != nil {
+		revision, _ := snapshot["quotaRevision"].(int64)
+		g.onQuotaChange(id, revision)
+	}
+}
+
+// Notify owners of registered copies. The subsequent state request performs the usual IP and key checks.
+func (m *mobile) quotaChanged(id string, revision int64) {
+	var digest string
+	if err := m.g.store.db.QueryRowContext(m.ctx, "SELECT digest FROM access_keys WHERE id=?", id).Scan(&digest); err != nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for device, key := range m.keys {
+		if key.BaseURL == m.g.cfg.publicBase && keyDigest(key.Value) == digest {
+			m.emitLocked(device.owner, object{"type": "quota_changed", "keyId": key.KeyID, "revision": revision})
+		}
+	}
 }

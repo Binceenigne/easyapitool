@@ -364,6 +364,7 @@
             appVersion: (await getAppUpdateInfo().catch(() => ({ versionName: 'android' }))).versionName || 'android',
             storageMode: 'android-filesystem-sqlite-index',
             serverPersistence: false,
+            usagePersistence: remote.usagePersistence || null,
             closeAction: 'exit',
             alwaysOnTop: false,
             backgroundUiMode: 'active',
@@ -508,6 +509,13 @@
 
     async function handleServerEvent(event) {
         if (!event || typeof event !== 'object') return;
+        if (event.type === 'quota_changed') {
+            window.applyBackendState?.(await getState());
+            return;
+        }
+        if (event.type === 'task_result' && event.quota) {
+            getState().then(state => window.applyBackendState?.(state)).catch(() => {});
+        }
         const requestId = String(event.requestId || event.result?.requestId || '');
         const pending = pendingTasks.get(requestId);
         if (requestId && !pending) return;

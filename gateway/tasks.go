@@ -131,18 +131,23 @@ func (m *mobile) publishLocked(id credentialID, data object, terminal bool) {
 	if job == nil || job.cancel == nil {
 		return
 	}
-	m.sequence++
-	data["requestId"], data["eventId"] = id.id, m.sequence
+	data["requestId"] = id.id
 	job.lastEvent, job.lastChanged = data, time.Now()
 	if terminal {
 		job.cancel = nil
 	}
+	m.emitLocked(id.owner, data)
+}
+
+func (m *mobile) emitLocked(owner string, data object) {
+	m.sequence++
+	data["eventId"] = m.sequence
 	if len(m.events) >= 2048 {
 		copy(m.events, m.events[512:])
 		clear(m.events[len(m.events)-512:])
 		m.events = m.events[:len(m.events)-512]
 	}
-	m.events = append(m.events, event{m.sequence, id.owner, data})
+	m.events = append(m.events, event{m.sequence, owner, data})
 	close(m.changed)
 	m.changed = make(chan struct{})
 }
@@ -251,7 +256,17 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 			result["cancelled"] = true
 			result["error"] = "生成已取消"
 		}
-		m.publish(id, object{"type": "task_result", "result": result}, true)
+		event := object{"type": "task_result", "result": result}
+		if key.BaseURL == m.g.cfg.publicBase {
+			query, cancel := context.WithTimeout(m.ctx, 3*time.Second)
+			if selected, err := m.resolveKey(query, key, ip, false); err == nil {
+				if snapshot, err := m.g.store.usage(query, selected.key, time.Now()); err == nil {
+					event["quota"] = object{"keyId": key.KeyID, "quota": snapshot["quota"], "windows": snapshot["windows"], "revision": snapshot["quotaRevision"], "asOf": snapshot["asOf"]}
+				}
+			}
+			cancel()
+		}
+		m.publish(id, event, true)
 	}()
 	select {
 	case m.capacity <- struct{}{}:

@@ -1,0 +1,90 @@
+{
+  "gpt-image-2": {
+    "image": true,
+    "textInput": "5",
+    "textCached": "1.25",
+    "imageInput": "8",
+    "imageCached": "2",
+    "output": "30"
+  },
+  "gpt-image-2-2026-04-21": {
+    "image": true,
+    "textInput": "5",
+    "textCached": "1.25",
+    "imageInput": "8",
+    "imageCached": "2",
+    "output": "30"
+  },
+  "gpt-image-2.5-flare": {
+    "image": true,
+    "textInput": "5",
+    "textCached": "1.25",
+    "imageInput": "8",
+    "imageCached": "2",
+    "output": "30"
+  },
+  "gpt-image-2.5-flare-2026-09-08": {
+    "image": true,
+    "textInput": "5",
+    "textCached": "1.25",
+    "imageInput": "8",
+    "imageCached": "2",
+    "output": "30"
+  },
+  "gpt-image-2.5-sunburst": {
+    "image": true,
+    "textInput": "5",
+    "textCached": "1.25",
+    "imageInput": "8",
+    "imageCached": "2",
+    "output": "30"
+  },
+  "gpt-image-2.5-sunburst-2026-09-08": {
+    "image": true,
+    "textInput": "5",
+    "textCached": "1.25",
+    "imageInput": "8",
+    "imageCached": "2",
+    "output": "30"
+  },
+  "gpt-image-2.6-flare": {
+    "image": true,
+    "textInput": "5",
+    "textCached": "1.25",
+    "imageInput": "8",
+    "imageCached": "2",
+    "output": "30"
+  },
+  "gpt-image-2.6-sunburst": {
+    "image": true,
+    "textInput": "5",
+    "textCached": "1.25",
+    "imageInput": "8",
+    "imageCached": "2",
+    "output": "30"
+  },
+  "gpt-6.1-sol": {
+    "textInput": "2",
+    "textCached": "0.1",
+    "output": "10",
+    "write30m": "2.5",
+    "write12h": "5",
+    "longContextThreshold": 272000
+  },
+  "gpt-6.1-terra": {
+    "textInput": "1",
+    "textCached": "0.05",
+    "output": "5",
+    "write30m": "1.25",
+    "write12h": "2.5",
+    "longContextThreshold": 272000
+  },
+  "gpt-6-luna": {
+    "textInput": "0.1",
+    "textCached": "0.01",
+    "output": "0.5",
+    "write30m": "0.125",
+    "write12h": "0.25",
+    "longContextThreshold": 272000
+  }
+}

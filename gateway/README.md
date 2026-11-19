@@ -8,19 +8,18 @@
 
 手机接口位于 `/api/v1`，现有 Nginx `/v1/` 继续映射到它。桌面和 SDK 的 OpenAI 兼容地址在外部是 `/openai/v1`，内部是 `/v1`。网关转发图片生成、编辑、变体和 Responses 请求，支持 JSON、multipart 和 SSE。用 `GET /openai/v1/usage` 查看分发密钥的配额和 API 回执用量。Nginx 配置在转发时覆盖 `X-Real-IP`，启用 `MIRRA_TRUST_LOCAL_PROXY` 后，网关只信任来自环回地址的该头部。
 
-5 小时和 7 天请求限额统计已准入的上游调用。一次生成多张或使用思维模式可能产生多次调用。USD 模式可设置累计和滚动 5 小时、24 小时、7 天额度。开启前填写 `MIRRA_USD_RESERVE_PER_REQUEST` 和 `MIRRA_PRICING_FILE`。请求开始时按配置预留，完成后根据上游返回的 token 和配置的费率核算。缺少可计价用量、使用外部工具或特殊服务费率时，保留预留金额。若实际金额高于预留，网关记入实际核算额并据此限制后续请求。此金额用于网关限额，OpenAI 账单以平台结算为准。
+### 管理工作区
 
-费率文件是按模型 ID 索引的 JSON。费率单位为每百万 token 的 USD，填字符串以保留小数精度。文本模型需要 `textInput` 和 `output`。图像模型还需要 `image: true` 和 `imageInput`。可选 `textCached` 和 `imageCached` 用于上游明确报告的缓存 token。下面的值仅演示文件格式。
+总览、上游号池、分发密钥、用量明细和代理配置分别有独立导航。号池可以批量创建成员、追加成员、测试连通性、停用成员或重命名。代理支持跟随 `.env`、直连和自定义 HTTP(S) / SOCKS5(SOCKS5H)；自定义代理可以只用于 OpenAI 官方接口。测试连接仅访问官方模型列表。保存后对新请求立即生效，代理凭证在 SQLite 中加密。
 
-```json
-{
-  "example-image-model": {
-    "image": true,
-    "textInput": "5.00",
-    "imageInput": "8.00",
-    "output": "30.00"
-  }
-}
-```
+### USD 窗口和回执
+
+三个窗口及累计额度均以 USD 为单位，0 表示不限。与 Sub2 的窗口起算规则一致，5 小时从首个请求起算，日窗口在北京时间零点刷新，7 天窗口以起算日的北京时间零点为锚。窗口到期后，下一次请求或读取会刷新状态。管理员可调整各限额、分别重置累计或分时用量，或选择一个窗口重置。修改上限保留已用额。重置后的新窗口从下一次请求起算。重置之前已受理的请求在之后结算仍计入历史账目。数据库保留请求、token、结算金额与额度变动记录。
+
+`POST /admin/keys` 返回操作结果和完整的 `usage`。管理端使用 `POST /admin/keys/{id}/reset`，提交 `scope` 和上次快照的 `revision`。范围可以是 `5h`、`1d`、`7d`、`windows`、`total` 或 `all`。刷新、修改、重置共用服务端计算的 `remaining`、`remainingPercent`、`reset_at` 和 USD 单位。客户端使用 `GET /openai/v1/usage` 读取状态、统计和近期变动，用 `GET /openai/v1/usage/events?after=0` 按游标顺序读变动，每页最多 64 条。手机端收到额度变动 SSE 后刷新状态，任务完成也返回额度快照。统计曲线按请求发生时间归档，支持 10 分钟和 1 小时的费用明细。
+
+`MIRRA_PRICING_FILE` 指定费率表，`MIRRA_USD_RESERVE_PER_REQUEST` 指定有限额密钥每次请求的预留金额。附带的 `openai-standard.json` 覆盖 GPT Image 2、2.5/2.6 Flare 和 Sunburst，以及三个默认推理模型。值为每百万 token 的 USD。标准文本费用区分缓存读取和 30 分钟、12 小时缓存写入。2026-11-19 核对的标准费率见 [OpenAI Pricing](https://developers.openai.com/api/docs/pricing)。
+
+实际可计价回执到达后，网关按微美元结算；缺少可计价回执、使用额外工具或特殊处理费率时保留预留金额。实际费用超过预留时按实际费用入账，并据此限制后续请求。网关额度和供应商账单分别结算。
 
 SVG、SVG 作者模型和思维模型在 `.env` 配置。手机端仅在 `MIRRA_SVG_ENABLED=true` 时提供 SVG 选项。官方套餐权限与模型参数由当前上游决定。

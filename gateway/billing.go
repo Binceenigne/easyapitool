@@ -86,68 +86,85 @@ func (p keyPolicy) budgets() []budgetRule {
 	return []budgetRule{{"total", 0, p.Total}, {"5h", 5 * time.Hour, p.H5}, {"1d", 24 * time.Hour, p.D1}, {"7d", 168 * time.Hour, p.D7}}
 }
 
-func checkBudget(ctx context.Context, tx *sql.Tx, k accessKey, now time.Time, estimate int64) error {
-	for _, rule := range k.Policy.budgets() {
-		if rule.limit == 0 {
+func periodUsage(ctx context.Context, tx *sql.Tx, keyID string, p quotaPeriod) (int64, error) {
+	var used int64
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(COALESCE(cost_micro,reserve_micro)),0) FROM requests WHERE key_id=? AND created>=? AND id>?`, keyID, p.start, p.afterID).Scan(&used)
+	return used, err
+}
+
+func checkBudget(ctx context.Context, tx *sql.Tx, k accessKey, periods map[string]quotaPeriod, estimate int64) error {
+	var blocked *quotaError
+	for _, r := range k.Policy.budgets() {
+		if r.limit == 0 {
 			continue
 		}
-		var used int64
-		var oldest sql.NullInt64
-		start := int64(0)
-		if rule.span != 0 {
-			start = now.Add(-rule.span).UnixMilli()
-		}
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(COALESCE(cost_micro,reserve_micro)),0),
-			MIN(CASE WHEN COALESCE(cost_micro,reserve_micro)>0 THEN created END) FROM requests WHERE key_id=? AND created>?`, k.ID, start).
-			Scan(&used, &oldest); err != nil {
+		p := periods[r.name]
+		used, err := periodUsage(ctx, tx, k.ID, p)
+		if err != nil {
 			return err
 		}
-		if used+estimate > rule.limit {
-			var retry time.Time
-			if rule.span != 0 && oldest.Valid && estimate <= rule.limit {
-				retry = time.UnixMilli(oldest.Int64).Add(rule.span)
-			}
-			return &quotaError{resetAt: retry, currency: true}
+		if used+estimate <= r.limit {
+			continue
 		}
+		item := &quotaError{window: r.name, limit: r.limit, used: used, reserve: estimate}
+		if r.span == 0 || estimate > r.limit {
+			return item
+		}
+		item.resetAt = time.UnixMilli(p.start).Add(r.span)
+		if blocked == nil || item.resetAt.After(blocked.resetAt) {
+			blocked = item
+		}
+	}
+	if blocked != nil {
+		return blocked
 	}
 	return nil
 }
 
-func budgetState(ctx context.Context, tx *sql.Tx, keyID string, rule budgetRule, now time.Time) (object, error) {
-	start := int64(0)
-	if rule.span != 0 {
-		start = now.Add(-rule.span).UnixMilli()
+func budgetState(ctx context.Context, tx *sql.Tx, keyID string, rule budgetRule, p quotaPeriod) (object, error) {
+	used, err := periodUsage(ctx, tx, keyID, p)
+	if err != nil {
+		return nil, err
 	}
-	var used int64
-	var oldest sql.NullInt64
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(COALESCE(cost_micro,reserve_micro)),0),
-		MIN(CASE WHEN COALESCE(cost_micro,reserve_micro)>0 THEN created END) FROM requests WHERE key_id=? AND created>?`, keyID, start).
-		Scan(&used, &oldest)
-	const factor = 1_000_000.0
-	item := object{"window": rule.name, "unit": "USD", "limit": float64(rule.limit) / factor, "used": float64(used) / factor}
+	item := object{"window": rule.name, "unit": "USD", "limit": float64(rule.limit) / 1e6, "used": float64(used) / 1e6, "remaining": nil,
+		"remainingPercent": nil, "severity": 0, "reset_at": nil, "window_start": nil}
 	if rule.limit > 0 {
-		item["remaining"] = float64(max(0, rule.limit-used)) / factor
+		remaining := max(0, rule.limit-used)
+		percent := float64(remaining) * 100 / float64(rule.limit)
+		item["remaining"], item["remainingPercent"] = float64(remaining)/1e6, percent
+		switch {
+		case percent <= 10:
+			item["severity"] = 3
+		case percent <= 25:
+			item["severity"] = 2
+		case percent <= 50:
+			item["severity"] = 1
+		}
 	}
-	if rule.span != 0 && oldest.Valid {
-		windowStart := time.UnixMilli(oldest.Int64).UTC()
-		item["window_start"], item["reset_at"] = windowStart, windowStart.Add(rule.span)
+	if rule.span != 0 && p.start != 0 {
+		start := time.UnixMilli(p.start).UTC()
+		item["window_start"], item["reset_at"] = start, start.Add(rule.span)
 	}
-	return item, err
+	return item, nil
 }
 
 // Values are millionths of a dollar per one million tokens.
 type priceCard struct {
 	TextInput, TextCached, ImageInput, ImageCached, Output int64
+	Write30m, Write12h, LongContextThreshold               int64
 	Image                                                  bool
 }
 
 type priceInput struct {
-	TextInput   string `json:"textInput"`
-	TextCached  string `json:"textCached"`
-	ImageInput  string `json:"imageInput"`
-	ImageCached string `json:"imageCached"`
-	Output      string `json:"output"`
-	Image       bool   `json:"image"`
+	TextInput            string `json:"textInput"`
+	TextCached           string `json:"textCached"`
+	ImageInput           string `json:"imageInput"`
+	ImageCached          string `json:"imageCached"`
+	Output               string `json:"output"`
+	Write30m             string `json:"write30m"`
+	Write12h             string `json:"write12h"`
+	LongContextThreshold int64  `json:"longContextThreshold"`
+	Image                bool   `json:"image"`
 }
 
 var moneyPattern = regexp.MustCompile(`^[0-9]{1,7}(\.[0-9]{1,6})?$`)
@@ -178,13 +195,14 @@ func loadPricing(path string) (map[string]priceCard, error) {
 	}
 	result := make(map[string]priceCard, len(inputs))
 	for model, input := range inputs {
-		card := priceCard{Image: input.Image}
+		card := priceCard{Image: input.Image, LongContextThreshold: input.LongContextThreshold}
 		for _, value := range []struct {
 			raw         string
 			destination *int64
 		}{
 			{input.TextInput, &card.TextInput}, {input.TextCached, &card.TextCached}, {input.ImageInput, &card.ImageInput},
 			{input.ImageCached, &card.ImageCached}, {input.Output, &card.Output},
+			{input.Write30m, &card.Write30m}, {input.Write12h, &card.Write12h},
 		} {
 			if value.raw == "" {
 				*value.destination = -1
@@ -195,7 +213,7 @@ func loadPricing(path string) (map[string]priceCard, error) {
 				return nil, fmt.Errorf("invalid price for %s", model)
 			}
 		}
-		if card.TextInput < 0 || card.Output < 0 || (card.Image && card.ImageInput < 0) {
+		if card.TextInput < 0 || card.Output < 0 || card.LongContextThreshold < 0 || (card.Image && card.ImageInput < 0) {
 			return nil, fmt.Errorf("missing required prices for %s", model)
 		}
 		result[model] = card
@@ -213,6 +231,13 @@ func quoteTokens(card priceCard, usage object) (*big.Int, bool) {
 	text, image := input, int64(0)
 	cachedText, _ := tokenCount(details["cached_tokens"])
 	cachedImage := int64(0)
+	writes, _ := tokenCount(details["cache_write_tokens"])
+	writeBreakdown := asObject(details["cache_write_tokens_details"])
+	shortWrites, _ := tokenCount(writeBreakdown["ttl_30m_tokens"])
+	longWrites, _ := tokenCount(writeBreakdown["ttl_12h_tokens"])
+	if shortWrites+longWrites != writes {
+		return nil, false
+	}
 	if card.Image {
 		var hasText, hasImage bool
 		text, hasText = tokenCount(details["text_tokens"])
@@ -229,11 +254,21 @@ func quoteTokens(card priceCard, usage object) (*big.Int, bool) {
 			cachedImage, _ = tokenCount(cacheDetails["image_tokens"])
 		}
 	}
-	if cachedText > text || cachedImage > image {
+	if cachedText+writes > text || cachedImage > image || (card.Image && writes != 0) {
 		return nil, false
 	}
+	if card.LongContextThreshold > 0 && input > card.LongContextThreshold {
+		card.TextInput *= 2
+		card.TextCached *= 2
+		card.Write30m *= 2
+		card.Write12h *= 2
+		if card.Output%2 != 0 {
+			return nil, false
+		}
+		card.Output += card.Output / 2
+	}
 	sum := new(big.Int)
-	for _, part := range [][2]int64{{text - cachedText, card.TextInput}, {cachedText, card.TextCached}, {image - cachedImage, card.ImageInput}, {cachedImage, card.ImageCached}, {output, card.Output}} {
+	for _, part := range [][2]int64{{text - cachedText - writes, card.TextInput}, {cachedText, card.TextCached}, {shortWrites, card.Write30m}, {longWrites, card.Write12h}, {image - cachedImage, card.ImageInput}, {cachedImage, card.ImageCached}, {output, card.Output}} {
 		if part[0] == 0 {
 			continue
 		}

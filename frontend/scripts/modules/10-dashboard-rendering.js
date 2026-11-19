@@ -51,7 +51,7 @@
         function renderLimitWindow(windowName, data) {
             const configured = data && Number(data.limit) > 0;
             const remaining = configured ? Math.max(0, Math.min(data.limit, Number(data.remaining) || 0)) : 0;
-            const percent = configured ? Math.max(0, Math.min(100, remaining / data.limit * 100)) : 100;
+            const percent = Number.isFinite(data?.remainingPercent) ? data.remainingPercent : (configured ? Math.max(0, Math.min(100, remaining / data.limit * 100)) : 100);
             const displayPercent = window.appState.rateLimitProgressMode === 'used'
                 ? 100 - percent
                 : percent;
@@ -96,6 +96,7 @@
 
         function formatLimitChange(change, fallback) {
             if (!change) return fallback;
+            if (change.message) return fallback + ' · ' + change.message;
             const previous = Number(change.previous) || 0;
             const current = Number(change.current) || 0;
             if (current <= 0 && previous > 0) {
@@ -193,16 +194,17 @@
 
             // 2. 算可用率
             const remaining = Number.isFinite(activeKey.remainingQuota) ? activeKey.remainingQuota : (activeKey.totalQuota - activeKey.usedQuota);
-            const rawPercent = activeKey.totalQuota > 0 ? (remaining / activeKey.totalQuota) * 100 : 0;
-            const percentStr = rawPercent.toFixed(2) + "%";
+            const rawPercent = Number.isFinite(activeKey.quotaPercent) ? activeKey.quotaPercent : (activeKey.totalQuota > 0 ? (remaining / activeKey.totalQuota) * 100 : 0);
+            const unlimitedTotal = activeKey.serverQuota && activeKey.totalQuota <= 0;
+            const percentStr = unlimitedTotal ? '不限' : rawPercent.toFixed(2) + '%';
 
             // 3. 常规与微型模式并列渲染
-            document.getElementById('bigRemainingVal').textContent = remaining.toFixed(6);
-            document.getElementById('microRemainVal').textContent = remaining.toFixed(2);
+            document.getElementById('bigRemainingVal').textContent = unlimitedTotal ? '不限' : remaining.toFixed(6);
+            document.getElementById('microRemainVal').textContent = unlimitedTotal ? '不限' : remaining.toFixed(2);
 
             document.getElementById('bigTotalVal').textContent = formatLimitChange(
                 activeKey.quotaLimitChange,
-                activeKey.totalQuota.toFixed(2) + " USD"
+                unlimitedTotal ? "无累计上限" : activeKey.totalQuota.toFixed(2) + " USD"
             );
             document.getElementById('bigPercentVal').textContent = percentStr + " 可用";
             document.getElementById('microPercentVal').textContent = percentStr;
@@ -211,8 +213,8 @@
             const bigProgress = document.getElementById('bigProgressBar');
             const microProgress = document.getElementById('microProgressBar');
 
-            renderProgressBar(bigProgress, rawPercent, rawPercent, { unlimited: false });
-            renderProgressBar(microProgress, rawPercent, rawPercent, { unlimited: false });
+            renderProgressBar(bigProgress, rawPercent, rawPercent, { unlimited: unlimitedTotal });
+            renderProgressBar(microProgress, rawPercent, rawPercent, { unlimited: unlimitedTotal });
 
             // 5. 极简模式：三个限制按剩余比例排序，最紧张窗口始终优先。
             renderMicroLimitWindows(activeKey);

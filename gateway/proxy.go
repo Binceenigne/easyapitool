@@ -9,9 +9,7 @@ import (
 	"log"
 	"mime"
 	"mime/multipart"
-	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -20,20 +18,14 @@ import (
 const maxProxyBody = 825 << 20
 
 type gateway struct {
-	cfg    config
-	store  *store
-	client *http.Client
+	cfg           config
+	store         *store
+	client        *http.Client
+	egress        *egressManager
+	onQuotaChange func(string, int64)
 }
 
-func newUpstreamClient(cfg config) *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	if cfg.egressProxy != "" {
-		proxy, _ := url.Parse(cfg.egressProxy)
-		transport.Proxy = http.ProxyURL(proxy)
-	}
-	transport.DialContext = (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext
-	transport.MaxIdleConnsPerHost = 16
+func newUpstreamClient(cfg config, transport http.RoundTripper) *http.Client {
 	return &http.Client{
 		Transport: transport,
 		Timeout:   cfg.upstreamTimeout,
@@ -64,6 +56,7 @@ func (g *gateway) registerProxy(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("GET /v1/models", g.proxy("/models"))
 	mux.HandleFunc("GET /v1/usage", g.proxyUsage)
+	mux.HandleFunc("GET /v1/usage/events", g.quotaEvents)
 }
 
 func bearer(r *http.Request) string {
@@ -90,9 +83,14 @@ func (g *gateway) proxyError(w http.ResponseWriter, err error) {
 		status, code, message = http.StatusServiceUnavailable, "pricing_unavailable", err.Error()
 	case errors.As(err, &limited):
 		status, code, message = http.StatusTooManyRequests, "rate_limit_exceeded", limited.Error()
+		detail := object{"window": limited.window, "unit": "USD", "limit": float64(limited.limit) / 1e6, "used": float64(limited.used) / 1e6,
+			"remaining": float64(max(0, limited.limit-limited.used)) / 1e6, "requiredReserve": float64(limited.reserve) / 1e6, "reset_at": nil}
 		if !limited.resetAt.IsZero() {
+			detail["reset_at"] = limited.resetAt.UTC()
 			w.Header().Set("Retry-After", strconv.Itoa(int(max(1, time.Until(limited.resetAt).Seconds()+1))))
 		}
+		writeJSON(w, status, object{"error": object{"type": code, "code": code, "message": message, "quota": detail}})
+		return
 	default:
 		log.Printf("gateway storage error: %v", err)
 	}

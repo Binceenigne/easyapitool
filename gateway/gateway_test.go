@@ -30,10 +30,16 @@ func testGateway(t *testing.T) *gateway {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.db.Close() })
-	return &gateway{store: store, cfg: config{
+	g := &gateway{store: store, cfg: config{
 		token: secret, pin: "362514", imageModel: "gpt-image-2.6-flare", publicBase: "https://mirra.example/openai/v1",
 		allowedHosts: map[string]bool{"api.openai.com": true, "127.0.0.1": true},
 	}}
+	g.egress, err = loadEgress(t.Context(), store, g.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.client = newUpstreamClient(g.cfg, g.egress)
+	return g
 }
 
 func addUpstream(t *testing.T, g *gateway, id, pool, url string) upstream {
@@ -47,7 +53,8 @@ func addUpstream(t *testing.T, g *gateway, id, pool, url string) upstream {
 
 func issue(t *testing.T, g *gateway, k accessKey) (accessKey, string) {
 	t.Helper()
-	k, secret, err := g.store.issue(t.Context(), k, "")
+	k.Enabled = true
+	k, secret, _, err := g.store.issue(t.Context(), k, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,13 +105,13 @@ func TestReservationAndBudgets(t *testing.T) {
 	g := testGateway(t)
 	u := addUpstream(t, g, "quota", "", openAIBaseURL)
 	now := time.Now()
-	k, _ := issue(t, g, accessKey{Name: "bounded", Upstream: u.ID, Limit5h: 3, Limit7d: 4})
+	k, _ := issue(t, g, accessKey{Name: "bounded", Upstream: u.ID, Policy: keyPolicy{H5: 3000, D1: 4000, D7: 5000}})
 	selected := route{key: k, upstream: u}
 	var started atomic.Int32
 	var group sync.WaitGroup
 	for i := 0; i < 12; i++ {
 		group.Go(func() {
-			_, err := g.store.reserve(t.Context(), selected, now, 0)
+			_, err := g.store.reserve(t.Context(), selected, now, 1000)
 			var quota *quotaError
 			if err == nil {
 				started.Add(1)
@@ -117,11 +124,20 @@ func TestReservationAndBudgets(t *testing.T) {
 	if started.Load() != 3 {
 		t.Fatalf("admitted %d requests", started.Load())
 	}
-	if _, err := g.store.reserve(t.Context(), selected, now.Add(5*time.Hour), 0); err != nil {
+	if _, err := g.store.reserve(t.Context(), selected, now.Add(5*time.Hour), 1000); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.store.reserve(t.Context(), selected, now.Add(5*time.Hour), 0); err == nil {
-		t.Fatal("7-day cap was not enforced after the 5-hour window advanced")
+	if _, err := g.store.reserve(t.Context(), selected, now.Add(5*time.Hour), 1000); err == nil {
+		t.Fatal("24-hour USD cap was not enforced after the 5-hour window advanced")
+	}
+	if _, err := g.store.reserve(t.Context(), selected, now.Add(24*time.Hour), 1000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.store.reserve(t.Context(), selected, now.Add(24*time.Hour), 1000); err == nil {
+		t.Fatal("7-day USD cap was not enforced after the day advanced")
+	}
+	if _, err := g.store.reserve(t.Context(), selected, now.Add(7*24*time.Hour), 1000); err != nil {
+		t.Fatal(err)
 	}
 	policy := keyPolicy{IPs: []string{"198.51.100.10"}, Total: 1500}
 	if err := policy.validate(); err != nil {
@@ -166,6 +182,7 @@ func TestAdminAndTransparentMetering(t *testing.T) {
 	}))
 	defer u.Close()
 	g.client = u.Client()
+	g.cfg.reserveMicroUSD = 1000
 	g.cfg.pricing = map[string]priceCard{"test-image": {TextInput: 5_000_000, Output: 30_000_000}}
 	addUpstream(t, g, "test", "", u.URL+"/v1")
 	admin := newAdmin(g).routes()
@@ -186,7 +203,7 @@ func TestAdminAndTransparentMetering(t *testing.T) {
 	if login.Code != 200 || len(cookies) != 1 || !cookies[0].HttpOnly {
 		t.Fatalf("PIN login failed: %d %s", login.Code, login.Body.String())
 	}
-	key := request(admin, "POST", "/admin/keys", `{"name":"test","upstreamId":"test","limit5h":1,"customKey":"test_custom_secret"}`, cookies[0])
+	key := request(admin, "POST", "/admin/keys", `{"name":"test","upstreamId":"test","policy":{"fiveHourMicroUSD":6500},"customKey":"test_custom_secret"}`, cookies[0])
 	var issued struct{ Secret string }
 	json.Unmarshal(key.Body.Bytes(), &issued)
 	if key.Code != 201 || issued.Secret != "sk-mirra-test_custom_secret" {

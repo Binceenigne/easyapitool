@@ -46,7 +46,11 @@ func run(configFile string) error {
 		return err
 	}
 	defer store.db.Close()
-	client := newUpstreamClient(cfg)
+	egress, err := loadEgress(context.Background(), store, cfg)
+	if err != nil {
+		return err
+	}
+	client := newUpstreamClient(cfg, egress)
 	if cfg.openAIKey != "" {
 		if err := store.saveUpstream(context.Background(), upstream{
 			ID: "openai-env", Name: "OpenAI (.env)", URL: openAIBaseURL, Pool: cfg.openAIPool, Secret: cfg.openAIKey, Enabled: true,
@@ -58,8 +62,9 @@ func run(configFile string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	gateway := &gateway{cfg: cfg, store: store, client: client}
+	gateway := &gateway{cfg: cfg, store: store, client: client, egress: egress}
 	mobile := newMobile(ctx, gateway, instance)
+	gateway.onQuotaChange = mobile.quotaChanged
 	public := http.NewServeMux()
 	gateway.registerProxy(public)
 	mobile.registerRoutes(public)

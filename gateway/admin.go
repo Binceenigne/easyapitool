@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,14 +36,19 @@ func (a *admin) routes() http.Handler {
 		panic(err)
 	}
 	files := http.FileServerFS(web)
-	for _, path := range []string{"/{$}", "/admin.css", "/admin.js"} {
+	for _, path := range []string{"/{$}", "/admin.css", "/admin.js", "/icons.svg", "/mirra.png"} {
 		mux.Handle("GET "+path, files)
 	}
 	mux.HandleFunc("POST /admin/login", a.login)
 	mux.HandleFunc("POST /admin/logout", a.protected(a.logout))
 	mux.HandleFunc("GET /admin/state", a.protected(a.state))
+	mux.HandleFunc("POST /admin/pools", a.protected(a.createPool))
+	mux.HandleFunc("POST /admin/pools/rename", a.protected(a.renamePool))
+	mux.HandleFunc("POST /admin/proxy", a.protected(a.configureProxy))
+	mux.HandleFunc("POST /admin/proxy/test", a.protected(a.testProxy))
 	mux.HandleFunc("POST /admin/upstreams", a.protected(a.saveUpstream))
 	mux.HandleFunc("POST /admin/upstreams/{id}/test", a.protected(a.testUpstream))
+	mux.HandleFunc("POST /admin/keys/{id}/reset", a.protected(a.resetQuota))
 	mux.HandleFunc("POST /admin/keys", a.protected(a.saveKey))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.Host)
@@ -152,7 +158,16 @@ func (a *admin) state(w http.ResponseWriter, r *http.Request) {
 		}
 		usage[k.ID] = item
 	}
-	writeJSON(w, http.StatusOK, object{"upstreams": upstreams, "keys": keys, "usage": usage})
+	hosts := make([]string, 0, len(a.gateway.cfg.allowedHosts))
+	for host := range a.gateway.cfg.allowedHosts {
+		hosts = append(hosts, host)
+	}
+	sort.Strings(hosts)
+	writeJSON(w, http.StatusOK, object{
+		"upstreams": upstreams, "keys": keys, "usage": usage, "proxy": a.gateway.egress.view(),
+		"gateway": object{"publicBaseUrl": a.gateway.cfg.publicBase, "allowedHosts": hosts,
+			"reserveMicroUSD": a.gateway.cfg.reserveMicroUSD, "pricingReady": a.gateway.cfg.reserveMicroUSD > 0 && len(a.gateway.cfg.pricing) > 0},
+	})
 }
 
 func (a *admin) saveUpstream(w http.ResponseWriter, r *http.Request) {
@@ -218,22 +233,24 @@ func (a *admin) testUpstream(w http.ResponseWriter, r *http.Request) {
 func (a *admin) saveKey(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		accessKey
-		Custom string `json:"customKey"`
+		Custom   string `json:"customKey"`
+		Revision *int64 `json:"revision"`
 	}
+	input.Enabled = true
 	if !decodeRequest(w, r, 16<<10, &input) {
 		return
 	}
 	k := input.accessKey
 	k.Name = strings.TrimSpace(k.Name)
-	if len(k.Name) == 0 || len(k.Name) > 120 || len(k.ID) > 40 || k.Limit5h < 0 || k.Limit7d < 0 || k.Limit5h > 1_000_000 || k.Limit7d > 1_000_000 {
-		jsonError(w, http.StatusBadRequest, "请填写名称和 0 至 100 万之间的请求次数")
+	if len(k.Name) == 0 || len(k.Name) > 120 || len(k.ID) > 40 {
+		jsonError(w, http.StatusBadRequest, "请填写有效的密钥名称")
 		return
 	}
 	if err := k.Policy.validate(); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if k.Policy.usdLimited() && (a.gateway.cfg.reserveMicroUSD == 0 || len(a.gateway.cfg.pricing) == 0) {
+	if k.Enabled && k.Policy.usdLimited() && (a.gateway.cfg.reserveMicroUSD == 0 || len(a.gateway.cfg.pricing) == 0) {
 		jsonError(w, http.StatusBadRequest, errPricingUnavailable.Error())
 		return
 	}
@@ -247,19 +264,21 @@ func (a *admin) saveKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if k.ID != "" {
-		if err := s.updateKey(r.Context(), k); err != nil {
-			jsonError(w, http.StatusBadRequest, "无法更新密钥")
+		usage, err := s.changeKey(r.Context(), k.ID, &k, "", input.Revision, time.Now())
+		if err != nil {
+			quotaMutationError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, object{"ok": true})
+		a.gateway.notifyQuota(k.ID, usage)
+		writeJSON(w, http.StatusOK, object{"ok": true, "action": "key_updated", "usage": usage})
 		return
 	}
-	key, secret, err := s.issue(r.Context(), k, input.Custom)
+	key, secret, snapshot, err := s.issue(r.Context(), k, input.Custom)
 	if err != nil {
 		jsonError(w, http.StatusConflict, "签发密钥失败。请确认自定义密钥未被使用")
 		return
 	}
-	writeJSON(w, http.StatusCreated, object{"ok": true, "key": key, "secret": secret})
+	writeJSON(w, http.StatusCreated, object{"ok": true, "key": key, "secret": secret, "action": "key_issued", "usage": snapshot})
 }
 
 func validCustomKey(key string) bool {

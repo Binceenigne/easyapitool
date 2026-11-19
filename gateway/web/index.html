@@ -3,67 +3,180 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Mirra 网关</title>
+  <meta name="theme-color" content="#f7f7ff">
+  <title>Mirra · 分发网关</title>
+  <link rel="icon" href="/mirra.png">
   <link rel="stylesheet" href="/admin.css">
   <script src="/admin.js" defer></script>
 </head>
 <body>
-  <header><h1>Mirra 网关</h1><button id="logout" type="button" hidden>退出</button></header>
-  <main>
-    <form id="login">
-      <label>管理 PIN<input type="password" name="pin" inputmode="numeric" pattern="[0-9]{6,64}" required autofocus></label>
-      <button>登录</button>
-    </form>
-    <p id="message" role="status" hidden></p>
-    <div id="settings" hidden>
-      <section>
-        <h2>上游</h2>
-        <form id="upstream">
-          <input name="id" type="hidden">
-          <label>名称<input name="name" maxlength="120" required></label>
-          <label>API 地址<input name="baseUrl" type="url" placeholder="https://api.openai.com/v1" required></label>
-          <label>负载池<input name="pool" maxlength="64" placeholder="例如 openai"></label>
-          <p class="hint">同一 API 地址和池名的上游组成一组，分发密钥按小时绑定。</p>
-          <label>上游 API Key<input name="apiKey" type="password" autocomplete="off" maxlength="4096"></label>
-          <label class="check"><input name="enabled" type="checkbox" checked>启用</label>
-          <div class="actions"><button>保存上游</button><button type="reset">清空</button></div>
-        </form>
-        <ul id="upstreams"></ul>
-      </section>
-      <section>
-        <h2>分发密钥</h2>
-        <form id="key">
-          <input name="id" type="hidden">
-          <label>名称<input name="name" maxlength="120" required></label>
-          <label>上游<select name="upstreamId" required></select></label>
-          <details><summary>请求次数</summary>
-            <label>5 小时上限（次）<input name="limit5h" type="number" min="0" max="1000000" value="10" required></label>
-            <label>7 天上限（次）<input name="limit7d" type="number" min="0" max="1000000" value="50" required></label>
-          </details>
-          <label class="check"><input name="customOn" type="checkbox" data-reveal="custom-key">自定义密钥</label>
-          <div id="custom-key" hidden><label>密钥后缀<input name="customKey" pattern="[A-Za-z0-9_\-]{16,128}" maxlength="128" autocomplete="off"></label><p class="hint">至少 16 位，网关会加上 sk-mirra- 前缀。</p></div>
-          <label class="check"><input name="ipOn" type="checkbox" data-reveal="ip-list">IP 限制</label>
-          <div id="ip-list" hidden><label>IP 白名单<textarea name="ips" rows="2" placeholder="203.0.113.10&#10;2001:db8::/32"></textarea></label><p class="hint">每行一个地址或 CIDR。</p></div>
-          <label>总额度（USD）<input name="totalUsd" type="number" min="0" max="1000000" step="0.000001" value="0"></label>
-          <label class="check"><input name="rateOn" type="checkbox" data-reveal="usd-windows">分时额度（USD）</label>
-          <div id="usd-windows" class="stack" hidden>
-            <label>5 小时<input name="fiveHourUsd" type="number" min="0" max="1000000" step="0.000001" value="0"></label>
-            <label>24 小时<input name="dayUsd" type="number" min="0" max="1000000" step="0.000001" value="0"></label>
-            <label>7 天<input name="weekUsd" type="number" min="0" max="1000000" step="0.000001" value="0"></label>
-          </div>
-          <label class="check"><input name="expiryOn" type="checkbox" data-reveal="expiry">密钥有效期</label>
-          <div id="expiry" class="stack" hidden>
-            <div class="actions" id="expiry-presets"><button type="button" data-days="7">7 天</button><button type="button" data-days="30">30 天</button><button type="button" data-days="90">90 天</button><button type="button" data-days="0">自定义</button></div>
-            <label>到期时间<input name="expiresAt" type="datetime-local"></label>
-          </div>
-          <label class="check"><input name="enabled" type="checkbox" checked>启用</label>
-          <p class="hint">填 0 即不设上限。</p>
-          <div class="actions"><button id="save-key">签发密钥</button><button type="reset">清空</button></div>
-        </form>
-        <div id="issued" hidden><label>新密钥仅显示一次<input id="secret" readonly></label><button id="copy" type="button">复制</button></div>
-        <ul id="keys"></ul>
-      </section>
+  <main id="auth" class="auth">
+    <div class="auth-panel">
+      <div class="brand"><img src="/mirra.png" alt=""><span>Mirra</span></div>
+      <h1>登录分发网关</h1>
+      <form id="login">
+        <label>管理 PIN<input name="pin" type="password" inputmode="numeric" required minlength="6" maxlength="64" pattern="[0-9]{6,64}" autocomplete="current-password" autofocus></label>
+        <p class="error" role="alert" hidden></p>
+        <button class="primary" type="submit"><i data-icon="LockKeyhole"></i>进入工作区</button>
+      </form>
     </div>
   </main>
+
+  <div id="app" class="shell" hidden>
+    <aside class="rail">
+      <a class="brand" href="#/overview" aria-label="Mirra 工作区总览"><img src="/mirra.png" alt=""><span>Mirra<small>分发网关</small></span></a>
+      <nav aria-label="工作区导航">
+        <span class="nav-section">工作区</span>
+        <a href="#/overview" data-page="overview"><i data-icon="LayoutDashboard"></i>总览</a>
+        <a href="#/pools" data-page="pools"><i data-icon="Layers3"></i>上游号池</a>
+        <a href="#/keys" data-page="keys"><i data-icon="KeyRound"></i>分发密钥</a>
+        <a href="#/usage" data-page="usage"><i data-icon="ChartNoAxesColumnIncreasing"></i>用量明细</a>
+        <span class="nav-section">网关设置</span>
+        <a href="#/proxy" data-page="proxy"><i data-icon="Network"></i>代理配置</a>
+      </nav>
+      <div class="rail-bottom">
+        <button type="button" id="theme"><i data-icon="Moon"></i><span>切换主题</span></button>
+        <button type="button" id="logout"><i data-icon="LogOut"></i><span>退出登录</span></button>
+      </div>
+    </aside>
+    <div class="main-column">
+      <header class="bar">
+        <div class="crumb"><i data-icon="PanelsTopLeft"></i><span>管理工作区</span><b>/</b><strong id="crumb-page">总览</strong></div>
+        <div class="bar-actions"><small id="last-sync"></small><button id="refresh" type="button" class="plain"><i data-icon="RefreshCw"></i><span>刷新</span></button></div>
+      </header>
+      <main class="content" id="content">
+        <p id="notice" class="notice" role="status" hidden></p>
+        <section id="page-overview" data-view="overview" aria-labelledby="overview-title">
+          <div class="page-head"><h1 id="overview-title">工作区总览</h1><button id="overview-action" type="button" class="primary"><i data-icon="Plus"></i><span>创建号池</span></button></div>
+          <div class="metrics" id="overview-metrics"></div>
+          <div class="overview-grid">
+            <section class="panel"><div class="panel-head"><h2><i data-icon="Layers3"></i>号池状态</h2><a href="#/pools">管理号池<i data-icon="ChevronRight"></i></a></div><div id="overview-pools"></div></section>
+            <section class="panel"><div class="panel-head"><h2><i data-icon="Cable"></i>网关接入</h2></div>
+              <div class="panel-body"><label for="endpoint" class="caption">客户端 API 地址</label><div class="copy-field"><input readonly id="endpoint" class="mono"><button id="copy-endpoint" type="button" aria-label="复制客户端 API 地址" title="复制地址"><i data-icon="Copy"></i></button></div>
+                <dl class="info"><div><dt>代理模式</dt><dd id="overview-proxy"></dd></div><div><dt>分配策略</dt><dd>整点动态均衡</dd></div><div><dt>USD 计价</dt><dd id="overview-pricing"></dd></div></dl>
+                <a href="#/proxy" class="text-link">打开代理配置<i data-icon="ChevronRight"></i></a>
+              </div>
+            </section>
+          </div>
+          <section class="panel overview-usage"><div class="panel-head"><h2><i data-icon="Activity"></i>窗口费用（USD）</h2><a href="#/usage">查看明细<i data-icon="ChevronRight"></i></a></div><div id="overview-usage" class="metric-row"></div></section>
+        </section>
+
+        <section id="page-pools" data-view="pools" aria-labelledby="pools-title" hidden>
+          <div class="page-head"><h1 id="pools-title">上游号池</h1><button type="button" id="new-pool" class="primary"><i data-icon="Plus"></i>创建号池</button></div>
+          <div class="toolbar"><label class="search"><i data-icon="Search"></i><input type="search" id="pool-search" placeholder="搜索号池、成员或 API 地址" aria-label="搜索号池"></label><span id="pool-count" class="count"></span></div>
+          <div id="pool-list" class="pool-list"></div>
+        </section>
+
+        <section id="page-keys" data-view="keys" aria-labelledby="keys-title" hidden>
+          <div class="page-head"><h1 id="keys-title">分发密钥</h1><button type="button" id="new-key" class="primary"><i data-icon="Plus"></i>签发密钥</button></div>
+          <div class="toolbar"><label class="search"><i data-icon="Search"></i><input type="search" id="key-search" placeholder="搜索名称或密钥前缀" aria-label="搜索分发密钥"></label>
+            <select id="key-filter" aria-label="密钥状态"><option value="">全部状态</option><option value="active">已启用</option><option value="disabled">已停用</option><option value="expired">已到期</option></select><span id="key-count" class="count"></span>
+          </div><div id="key-list"></div>
+        </section>
+
+        <section id="page-usage" data-view="usage" aria-labelledby="usage-title" hidden>
+          <div class="page-head"><h1 id="usage-title">用量明细</h1><select id="usage-filter" aria-label="按密钥筛选用量"></select></div>
+          <div class="metrics three" id="usage-metrics"></div>
+          <section class="panel" id="usage-detail" hidden><div class="panel-head"><h2>当前额度</h2><span class="caption">北京时间</span></div><div id="window-detail"></div></section>
+          <section class="panel"><div class="panel-head"><h2>按密钥统计</h2><span class="caption">窗口费用含待结算预留</span></div><div id="usage-list"></div></section>
+          <section class="panel overview-usage"><div class="panel-head"><h2>额度变动记录</h2></div><div id="quota-history"></div></section>
+        </section>
+
+        <section id="page-proxy" data-view="proxy" aria-labelledby="proxy-title" hidden>
+          <div class="page-head"><h1 id="proxy-title">代理配置</h1></div>
+          <div class="proxy-grid">
+            <form id="proxy-form" class="panel">
+              <div class="panel-head"><h2><i data-icon="SlidersHorizontal"></i>出站连接</h2></div>
+              <div class="panel-body form-body">
+                <fieldset><legend>连接模式</legend><div class="mode-options">
+                  <label><input name="mode" type="radio" value="environment" checked><span>跟随 .env</span></label>
+                  <label><input name="mode" type="radio" value="direct"><span>直接连接</span></label>
+                  <label><input name="mode" type="radio" value="custom"><span>自定义代理</span></label>
+                </div></fieldset>
+                <p class="hint" id="proxy-mode-hint"></p>
+                <div id="proxy-fields" class="form-body" hidden>
+                  <label>代理地址<input name="url" type="password" autocomplete="new-password" maxlength="4096" spellcheck="false" placeholder="socks5://host:1080"></label>
+                  <p class="hint">支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。需要认证时，在地址中填写用户名和密码。</p>
+                  <label>应用范围<select name="scope"><option value="all">全部上游</option><option value="openai">仅 OpenAI 官方接口</option></select></label>
+                </div>
+                <p class="error" role="alert" hidden></p>
+                <p id="probe-result" class="notice" role="status" hidden></p>
+              </div>
+              <div class="panel-foot"><button type="button" id="reset-proxy">还原表单</button><button type="button" id="probe-proxy"><i data-icon="FlaskConical"></i>测试连接</button><button type="submit" class="primary">保存配置</button></div>
+            </form>
+            <section class="panel"><div class="panel-head"><h2><i data-icon="Network"></i>当前生效配置</h2></div><div class="panel-body">
+              <dl id="active-proxy" class="info first"></dl><h3 class="subheading">允许的上游主机</h3><ul id="allowed-hosts" class="hosts"></ul>
+            </div></section>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="pool-dialog" aria-labelledby="pool-dialog-title">
+    <form id="pool-form" class="editor">
+      <header><h2 id="pool-dialog-title">创建号池</h2><button class="icon-button" type="button" data-close aria-label="关闭"><i data-icon="X"></i></button></header>
+      <div class="editor-body"><label>号池名称<input name="name" placeholder="openai" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}" title="使用字母、数字、点、下划线或连字符" required></label>
+        <label>API 地址<input name="baseUrl" class="mono" type="url" value="https://api.openai.com/v1" maxlength="2048" required></label>
+        <div class="field-head"><h3>号池成员</h3><button id="add-pool-row" type="button" class="compact"><i data-icon="Plus"></i>添加一行</button></div>
+        <div id="pool-member-fields"></div><p class="hint">同池成员共用 API 地址，每把分发密钥在同一小时内优先使用同一成员。</p>
+        <p class="error" role="alert" hidden></p>
+      </div><footer><button type="button" data-close>取消</button><button type="submit" class="primary">创建号池</button></footer>
+    </form>
+  </dialog>
+  <dialog id="rename-dialog" aria-labelledby="rename-title"><form id="rename-form" class="editor">
+    <header><h2 id="rename-title">重命名号池</h2><button type="button" class="icon-button" data-close aria-label="关闭"><i data-icon="X"></i></button></header>
+    <div class="editor-body"><label>号池名称<input name="name" maxlength="64" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}"></label><p class="error" role="alert" hidden></p></div>
+    <footer><button type="button" data-close>取消</button><button type="submit" class="primary">保存名称</button></footer>
+  </form></dialog>
+  <dialog id="member-dialog" aria-labelledby="member-title"><form id="member-form" class="editor">
+    <header><h2 id="member-title">添加成员</h2><button type="button" class="icon-button" data-close aria-label="关闭"><i data-icon="X"></i></button></header>
+    <div class="editor-body">
+      <label>成员名称<input name="name" maxlength="120" required></label>
+      <label>所属号池<input name="pool" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}" list="pool-names" placeholder="留空作为独立上游"><datalist id="pool-names"></datalist></label>
+      <label>API 地址<input type="url" class="mono" name="baseUrl" maxlength="2048" required></label>
+      <label>上游 API Key<input type="password" name="apiKey" maxlength="4096" autocomplete="new-password" spellcheck="false"></label><p id="member-hint" class="hint"></p>
+      <label class="toggle-line"><span>启用成员</span><input type="checkbox" name="enabled" role="switch" checked></label><p class="error" role="alert" hidden></p>
+    </div><footer><button type="button" data-close>取消</button><button type="submit" class="primary">保存成员</button></footer>
+  </form></dialog>
+
+  <dialog id="key-dialog" aria-labelledby="key-title"><form id="key-form" class="editor">
+    <header><h2 id="key-title">签发密钥</h2><button type="button" class="icon-button" data-close aria-label="关闭"><i data-icon="X"></i></button></header>
+    <div class="editor-body">
+      <label>密钥名称<input name="name" maxlength="120" required></label>
+      <label>分发至号池或独立上游<select name="upstreamId" required></select></label>
+      <label class="toggle-line" id="custom-line"><span>自定义密钥后缀</span><input type="checkbox" role="switch" name="customOn" data-reveal="custom-fields"></label>
+      <div id="custom-fields" hidden><label>sk-mirra- 后缀<input name="customKey" type="password" minlength="16" maxlength="128" pattern="[A-Za-z0-9_\-]{16,128}" autocomplete="new-password" placeholder="至少 16 位字母、数字、下划线或连字符"></label></div>
+      <label class="toggle-line"><span>IP 白名单</span><input type="checkbox" role="switch" name="ipOn" data-reveal="ip-fields"></label>
+      <div id="ip-fields" hidden><label>允许的地址或 CIDR<textarea name="ips" rows="3" placeholder="每行一个 IPv4、IPv6 或网段"></textarea></label></div>
+      <label class="toggle-line"><span>费用限额（USD）</span><input type="checkbox" role="switch" name="usdOn" data-reveal="usd-fields"></label>
+      <div id="usd-fields" class="form-body" hidden>
+        <p id="pricing-hint" class="hint"></p><div class="pair">
+          <label>累计额度<input type="number" name="totalUsd" min="0" max="1000000" step=".000001" value="0"></label>
+          <label>5 小时额度<input type="number" name="fiveHourUsd" min="0" max="1000000" step=".000001" value="0"></label>
+          <label>24 小时额度<input type="number" name="dayUsd" min="0" max="1000000" step=".000001" value="0"></label>
+          <label>7 天额度<input type="number" name="weekUsd" min="0" max="1000000" step=".000001" value="0"></label>
+        </div>
+      </div>
+      <label class="toggle-line"><span>有效期</span><input type="checkbox" role="switch" name="expiryOn" data-reveal="expiry-fields"></label>
+      <div id="expiry-fields" class="form-body" hidden><div class="presets" id="expiry-presets"><button type="button" data-days="7">7 天</button><button type="button" data-days="30">30 天</button><button type="button" data-days="90">90 天</button><button type="button" data-days="0">自定义</button></div><label>到期时间<input type="datetime-local" name="expiresAt"></label></div>
+      <label class="toggle-line"><span>启用密钥</span><input type="checkbox" role="switch" name="enabled" checked></label>
+      <p class="error" role="alert" hidden></p>
+    </div><footer><button type="button" data-close>取消</button><button id="save-key" type="submit" class="primary">签发密钥</button></footer>
+  </form></dialog>
+
+  <dialog id="reset-dialog" aria-labelledby="reset-title"><form id="reset-form" class="editor">
+    <header><h2 id="reset-title">重置已用额度</h2><button type="button" class="icon-button" data-close aria-label="关闭"><i data-icon="X"></i></button></header>
+    <div class="editor-body"><p id="reset-key-name"></p><label>重置范围<select name="scope">
+      <option value="windows">全部分时窗口</option><option value="5h">5 小时窗口</option><option value="1d">24 小时窗口</option><option value="7d">7 天窗口</option><option value="total">仅累计额度</option><option value="all">累计及全部分时额度</option>
+    </select></label><dl id="reset-amounts" class="info first"></dl>
+    <p class="hint">确认后，所选范围的已用金额归零。历史请求、费用和 token 记录仍可在用量明细查看。</p><p class="error" role="alert" hidden></p></div>
+    <footer><button type="button" data-close>取消</button><button type="submit" class="primary">确认重置</button></footer>
+  </form></dialog>
+  <dialog id="secret-dialog" aria-labelledby="secret-title"><div class="editor">
+    <header><h2 id="secret-title">密钥已签发</h2><button type="button" class="icon-button" data-close aria-label="关闭"><i data-icon="X"></i></button></header>
+    <div class="editor-body"><label>完整分发密钥<input id="secret" class="mono" readonly spellcheck="false"></label><p class="hint" id="secret-note" role="status">完整值仅显示一次，请复制后妥善保存。</p></div>
+    <footer><button type="button" data-close>完成</button><button id="copy-key" type="button" class="primary"><i data-icon="Copy"></i>复制密钥</button></footer>
+  </div></dialog>
 </body>
 </html>
