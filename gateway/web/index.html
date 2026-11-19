@@ -8,6 +8,7 @@
   <link rel="icon" href="/mirra.png">
   <link rel="stylesheet" href="/admin.css">
   <script src="/admin.js" defer></script>
+  <script src="/admin-models.js" defer></script>
 </head>
 <body>
   <main id="auth" class="auth">
@@ -32,6 +33,7 @@
         <a href="#/keys" data-page="keys"><i data-icon="KeyRound"></i>分发密钥</a>
         <a href="#/usage" data-page="usage"><i data-icon="ChartNoAxesColumnIncreasing"></i>用量明细</a>
         <span class="nav-section">网关设置</span>
+        <a href="#/models" data-page="models"><i data-icon="SlidersHorizontal"></i>模型配置</a>
         <a href="#/proxy" data-page="proxy"><i data-icon="Network"></i>代理配置</a>
       </nav>
       <div class="rail-bottom">
@@ -82,6 +84,66 @@
           <section class="panel overview-usage"><div class="panel-head"><h2>额度变动记录</h2></div><div id="quota-history"></div></section>
         </section>
 
+        <section id="page-models" data-view="models" aria-labelledby="models-title" hidden>
+          <div class="page-head"><h1 id="models-title">模型配置</h1></div>
+          <section class="panel model-source" aria-labelledby="models-source-title">
+            <div class="panel-head"><h2 id="models-source-title"><i data-icon="Server"></i>上游模型目录</h2><a href="#/pools">管理上游<i data-icon="ChevronRight"></i></a></div>
+            <div class="panel-body">
+              <div class="model-source-controls">
+                <label>来源账户<select id="model-upstream"></select></label>
+                <button id="fetch-models" type="button"><i data-icon="RefreshCw"></i>拉取模型</button>
+              </div>
+              <p id="model-source-status" class="hint" role="status"></p>
+            </div>
+          </section>
+          <form id="model-form" class="panel model-settings">
+            <datalist id="model-catalog"></datalist>
+            <div class="model-settings-grid">
+              <section aria-labelledby="image-models-title">
+                <div class="panel-head"><h2 id="image-models-title"><i data-icon="PanelsTopLeft"></i>生图模型</h2><span id="selected-images" class="caption"></span></div>
+                <div class="panel-body form-body">
+                  <label>搜索可选模型<input id="model-search" type="search" placeholder="输入模型 ID，例如 gpt-image"></label>
+                  <div id="model-image-list" class="model-list" aria-label="客户端可选生图模型"></div>
+                  <label>客户端默认模型<select name="defaultImage" required></select></label>
+                </div>
+              </section>
+              <section aria-labelledby="reasoning-models-title">
+                <div class="panel-head"><h2 id="reasoning-models-title"><i data-icon="SlidersHorizontal"></i>三档思维模型</h2></div>
+                <div class="panel-body form-body">
+                  <fieldset class="model-slot"><legend>Luna <small>Flash / Medium</small></legend><div class="model-slot-fields">
+                    <label>模型<input name="lunaModel" list="model-catalog" spellcheck="false" required></label>
+                    <label>思考深度<select name="lunaEffort" data-effort required></select></label>
+                  </div></fieldset>
+                  <fieldset class="model-slot"><legend>Terra <small>High / Extra</small></legend><div class="model-slot-fields">
+                    <label>模型<input name="terraModel" list="model-catalog" spellcheck="false" required></label>
+                    <label>思考深度<select name="terraEffort" data-effort required></select></label>
+                  </div></fieldset>
+                  <fieldset class="model-slot"><legend>Sol <small>Max</small></legend><div class="model-slot-fields">
+                    <label>模型<input name="solModel" list="model-catalog" spellcheck="false" required></label>
+                    <label>思考深度<select name="solEffort" data-effort required></select></label>
+                  </div></fieldset>
+                </div>
+              </section>
+            </div>
+            <section class="model-svg" aria-labelledby="svg-model-title">
+              <div class="panel-head"><h2 id="svg-model-title">SVG 输出</h2><label class="model-switch"><input type="checkbox" name="svgEnabled" role="switch">启用 SVG</label></div>
+              <div class="panel-body form-body" id="model-svg-fields" hidden>
+                <div class="model-slot-fields">
+                  <label>矢量化模型<input name="svgModel" list="model-catalog" spellcheck="false" placeholder="上游默认"></label>
+                  <label>思考深度<select name="svgEffort" data-effort></select></label>
+                </div>
+                <p class="hint">SVG 适用于单张无参考图生成。</p>
+              </div>
+            </section>
+            <p class="error model-error" role="alert" hidden></p>
+            <div class="panel-foot"><button id="reset-models" type="button">还原表单</button><button type="submit" class="primary">保存模型配置</button></div>
+          </form>
+          <section class="panel model-preview" aria-labelledby="models-preview-title">
+            <div class="panel-head"><h2 id="models-preview-title"><i data-icon="PanelsTopLeft"></i>Android App 预览</h2><span class="caption" id="preview-state">已保存配置</span></div>
+            <div class="panel-body"><iframe id="app-preview" title="Mirra Android 客户端预览" sandbox="allow-scripts" referrerpolicy="no-referrer" loading="lazy"></iframe></div>
+          </section>
+        </section>
+
         <section id="page-proxy" data-view="proxy" aria-labelledby="proxy-title" hidden>
           <div class="page-head"><h1 id="proxy-title">代理配置</h1></div>
           <div class="proxy-grid">
@@ -95,8 +157,8 @@
                 </div></fieldset>
                 <p class="hint" id="proxy-mode-hint"></p>
                 <div id="proxy-fields" class="form-body" hidden>
-                  <label>代理地址<input name="url" type="password" autocomplete="new-password" maxlength="4096" spellcheck="false" placeholder="socks5://host:1080"></label>
-                  <p class="hint">支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。需要认证时，在地址中填写用户名和密码。</p>
+                  <label>代理地址<input name="url" type="password" autocomplete="new-password" maxlength="4096" spellcheck="false" placeholder="socks5://host:1080" aria-describedby="proxy-url-hint"></label>
+                  <p class="hint" id="proxy-url-hint">支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。带认证的 SOCKS5 可以填写 <code>socks5://user:pass@host:1080</code> 或 <code>socks5://host:1080:user:pass</code>。</p>
                   <label>应用范围<select name="scope"><option value="all">全部上游</option><option value="openai">仅 OpenAI 官方接口</option></select></label>
                 </div>
                 <p class="error" role="alert" hidden></p>

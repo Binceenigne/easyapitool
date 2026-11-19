@@ -257,3 +257,60 @@ dialog[open] { display: flex; }
   nav a[aria-current=page], .toggle-line input:checked, .mode-options input:checked + span { outline: 2px solid Highlight; }
   .toggle-line input { appearance: auto; }
 }
+.model-source-controls, .model-slot-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(7.5rem, 1fr);
+  gap: .7rem;
+  align-items: end;
+}
+.model-source-controls {
+  max-width: 42rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+#model-source-status { margin-top: .65rem; }
+.model-settings, .model-preview { margin-top: 1.2rem; }
+.model-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.model-settings-grid > section + section { border-left: 1px solid var(--line); }
+.model-slot + .model-slot { border-top: 1px solid var(--line); padding-top: .65rem; }
+.model-slot legend { font-weight: 650; }
+.model-slot legend small { color: var(--muted); margin-left: .35rem; font-weight: 400; }
+.model-list { border: 1px solid var(--edge); max-height: 13.2rem; min-height: 4rem; overflow-y: auto; }
+.model-list > .hint { padding: .65rem; }
+.model-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: .65rem;
+  padding: .56rem .7rem;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.model-choice input { flex: none; }
+.model-choice:hover { background: var(--surface); }
+.model-choice + .model-choice { border-top: 1px solid var(--line); }
+.model-svg { border-top: 1px solid var(--line); }
+.model-svg .model-slot-fields { max-width: 42rem; }
+.model-switch { display: inline-flex; align-items: center; gap: .4rem; cursor: pointer; }
+.model-error { margin: .9rem 1.2rem; }
+.model-preview > .panel-body {
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+}
+#app-preview {
+  display: block;
+  width: min(100%, 25rem);
+  height: 45rem;
+  border: 1px solid var(--edge);
+  background: var(--card);
+}
+@media (max-width: 900px) {
+  .model-settings-grid { grid-template-columns: minmax(0, 1fr); }
+  .model-settings-grid > section + section { border-left: 0; border-top: 1px solid var(--line); }
+}
+@media (max-width: 430px) {
+  .model-slot-fields { grid-template-columns: minmax(0, 1fr); }
+  #app-preview { height: min(43rem, 95dvh); }
+}

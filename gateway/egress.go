@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 type proxySettings struct {
@@ -30,14 +31,23 @@ type egressManager struct {
 	transport *http.Transport
 }
 
-var errProxyURL = errors.New("请填写有效的 HTTP、HTTPS、SOCKS5 或 SOCKS5H 代理地址，可包含认证信息")
+var errProxyURL = errors.New("代理地址格式无效。带认证的 SOCKS5 地址可用 socks5://用户名:密码@主机:端口 或 socks5://主机:端口:用户名:密码")
 var errProxyChanged = errors.New("代理配置已被修改，请刷新后重试")
 
 func parseProxyURL(value string) (*url.URL, error) {
+	if len(value) > 4096 || strings.IndexFunc(value, unicode.IsControl) != -1 {
+		return nil, errProxyURL
+	}
+	if exported := normalizeSOCKSAddress(value); exported != "" {
+		value = exported
+	}
 	u, err := url.Parse(value)
 	if err != nil || len(value) > 4096 || !oneOf(u.Scheme, "http", "https", "socks5", "socks5h") ||
 		u.Hostname() == "" || strings.HasSuffix(u.Host, ":") || !oneOf(u.Path, "", "/") ||
 		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return nil, errProxyURL
+	}
+	if strings.Contains(u.Hostname(), ":") && !strings.HasPrefix(u.Host, "[") {
 		return nil, errProxyURL
 	}
 	if port := u.Port(); port != "" {
@@ -49,7 +59,38 @@ func parseProxyURL(value string) (*url.URL, error) {
 	return u, nil
 }
 
-func (m *egressManager) prepare(s proxySettings) (*http.Transport, error) {
+// Some SOCKS services export host:port:username:password. Put those raw
+// credentials into standard URL userinfo before parsing or storing the address.
+func normalizeSOCKSAddress(value string) string {
+	scheme, address, _ := strings.Cut(value, "://")
+	scheme = strings.ToLower(scheme)
+	if !oneOf(scheme, "socks5", "socks5h") || strings.Contains(address, "@") {
+		return ""
+	}
+	hostEnd := strings.IndexByte(address, ':')
+	if strings.HasPrefix(address, "[") {
+		bracket := strings.Index(address, "]:")
+		if bracket == -1 {
+			return ""
+		}
+		hostEnd = bracket + 1
+	}
+	if hostEnd <= 0 {
+		return ""
+	}
+	host := address[:hostEnd]
+	fields := strings.SplitN(address[hostEnd+1:], ":", 3)
+	if len(fields) != 3 || fields[0] == "" || fields[1] == "" || fields[2] == "" {
+		return ""
+	}
+	if strings.IndexFunc(fields[0], func(r rune) bool { return r < '0' || r > '9' }) != -1 {
+		return ""
+	}
+	user := url.UserPassword(fields[1], fields[2])
+	return scheme + "://" + user.String() + "@" + host + ":" + fields[0]
+}
+
+func (m *egressManager) prepare(s proxySettings) (*http.Transport, *url.URL, error) {
 	raw := ""
 	switch s.Mode {
 	case "environment":
@@ -58,17 +99,17 @@ func (m *egressManager) prepare(s proxySettings) (*http.Transport, error) {
 	case "custom":
 		raw = s.URL
 		if raw == "" || !oneOf(s.Scope, "all", "openai") {
-			return nil, errProxyURL
+			return nil, nil, errProxyURL
 		}
 	default:
-		return nil, errors.New("请选择代理模式")
+		return nil, nil, errors.New("请选择代理模式")
 	}
 	var proxy *url.URL
 	var err error
 	if raw != "" {
 		proxy, err = parseProxyURL(raw)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -83,7 +124,7 @@ func (m *egressManager) prepare(s proxySettings) (*http.Transport, error) {
 	}
 	transport.DialContext = (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.MaxIdleConnsPerHost = 16
-	return transport, nil
+	return transport, proxy, nil
 }
 
 const egressPurpose = "settings\x00egress"
@@ -100,7 +141,7 @@ func loadEgress(ctx context.Context, store *store, cfg config) (*egressManager, 
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	m.transport, err = m.prepare(m.settings)
+	m.transport, _, err = m.prepare(m.settings)
 	return m, err
 }
 
@@ -144,7 +185,10 @@ func (m *egressManager) candidate(input proxySettings) (proxySettings, *http.Tra
 	} else {
 		input.URL, input.Scope = "", "all"
 	}
-	transport, err := m.prepare(input)
+	transport, proxy, err := m.prepare(input)
+	if err == nil && input.Mode == "custom" {
+		input.URL = proxy.String()
+	}
 	return input, transport, err
 }
 

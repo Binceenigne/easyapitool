@@ -185,7 +185,7 @@ func TestAdminAndTransparentMetering(t *testing.T) {
 	g.cfg.reserveMicroUSD = 1000
 	g.cfg.pricing = map[string]priceCard{"test-image": {TextInput: 5_000_000, Output: 30_000_000}}
 	addUpstream(t, g, "test", "", u.URL+"/v1")
-	admin := newAdmin(g).routes()
+	admin := newAdmin(g).routes(nil)
 	request := func(handler http.Handler, method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "http://127.0.0.1"+path, strings.NewReader(body))
 		if cookie != nil {

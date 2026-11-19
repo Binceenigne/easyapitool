@@ -34,13 +34,18 @@ func (m *mobile) polish(w http.ResponseWriter, r *http.Request, owner string) {
 		return
 	}
 	model := m.g.cfg.polishModel
+	effort := m.g.cfg.reasoningEffort
+	if model == "" && m.g.managedKey(key) {
+		configured := m.g.appModels().Reasoning["terra"]
+		model, effort = configured.Model, configured.Effort
+	}
 	if model == "" {
 		model = m.g.cfg.reasoningModel
 	}
 	if model == "" && selected.upstream.URL == m.g.cfg.legacyBase {
 		model = "gpt-6.1-terra"
 	}
-	prompt, _, _, err := m.g.rewrite(r.Context(), selected, model, m.g.cfg.reasoningEffort, input.Prompt, false)
+	prompt, _, _, err := m.g.rewrite(r.Context(), selected, model, effort, input.Prompt, false)
 	if err != nil {
 		writeJSON(w, http.StatusOK, object{"ok": false, "error": err.Error()})
 		return
@@ -48,7 +53,7 @@ func (m *mobile) polish(w http.ResponseWriter, r *http.Request, owner string) {
 	writeJSON(w, http.StatusOK, object{"ok": true, "prompt": prompt})
 }
 
-func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInput, ip netip.Addr, input generationInput) (string, object, error) {
+func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInput, ip netip.Addr, input generationInput, settings *modelSettings) (string, object, error) {
 	selected, err := m.resolveKey(ctx, key, ip, true)
 	if err != nil {
 		return "", nil, err
@@ -71,18 +76,27 @@ func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInpu
 	default:
 		return "", nil, errors.New("思维模式无效")
 	}
-	if m.g.cfg.reasoningEffort != "" && mode != "advanced" {
-		effort = m.g.cfg.reasoningEffort
-	}
-	model := m.g.cfg.reasoningPresets[preset]
-	if model == "" {
-		model = m.g.cfg.reasoningModel
-	}
-	if model == "" && selected.upstream.URL == m.g.cfg.legacyBase {
-		model = map[string]string{"luna": "gpt-6-luna", "terra": "gpt-6.1-terra", "sol": "gpt-6.1-sol"}[preset]
-	}
-	if effort == "max" && selected.upstream.URL == openAIBaseURL {
-		effort = "xhigh"
+	model := ""
+	if settings != nil {
+		configured := settings.Reasoning[preset]
+		model = configured.Model
+		if configured.Effort != "" && mode != "advanced" {
+			effort = configured.Effort
+		}
+	} else {
+		if m.g.cfg.reasoningEffort != "" && mode != "advanced" {
+			effort = m.g.cfg.reasoningEffort
+		}
+		model = m.g.cfg.reasoningPresets[preset]
+		if model == "" {
+			model = m.g.cfg.reasoningModel
+		}
+		if model == "" && selected.upstream.URL == m.g.cfg.legacyBase {
+			model = builtinReasoningModels[preset]
+		}
+		if effort == "max" && selected.upstream.URL == openAIBaseURL {
+			effort = "xhigh"
+		}
 	}
 	web := input.Options["webSearchEnabled"] == true
 	start := time.Now()
@@ -99,7 +113,7 @@ func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInpu
 
 func (g *gateway) rewrite(ctx context.Context, selected route, model, effort, prompt string, web bool) (string, object, bool, error) {
 	if !modelPattern.MatchString(model) {
-		return "", nil, false, errors.New("请在网关 .env 中配置可用的提示词或思维模型")
+		return "", nil, false, errors.New("请在网关模型配置中选择可用的思维模型")
 	}
 	fields := object{"model": model, "input": prompt, "store": false, "max_output_tokens": 8192,
 		"instructions": "优化用户的生图提示词，保留原意、语言和引用对象。只输出可直接用于生成或编辑的提示词。"}

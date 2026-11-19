@@ -1,7 +1,7 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
-const pages = { overview: '总览', pools: '上游号池', keys: '分发密钥', usage: '用量明细', proxy: '代理配置' };
+const pages = { overview: '总览', pools: '上游号池', keys: '分发密钥', usage: '用量明细', models: '模型配置', proxy: '代理配置' };
 const modeNames = { environment: '跟随 .env', direct: '直接连接', custom: '自定义代理' };
 const usd = amount => new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:6}).format(amount);
 const number = value => Number(value).toLocaleString('zh-CN');
@@ -82,6 +82,7 @@ function showLogin() {
   loadID++;
   state = null;
   proxyDirty = false;
+  window.resetModelSettings?.();
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
   document.querySelectorAll('form').forEach(f => f.reset());
   $('secret').value = '';
@@ -101,6 +102,7 @@ function navigate() {
   });
   $('crumb-page').textContent = pages[page];
   document.title = pages[page] + ' · Mirra 分发网关';
+  if (page === 'models') window.showModelPreview?.();
 }
 window.addEventListener('hashchange', () => {
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
@@ -443,7 +445,7 @@ async function refresh() {
   const fresh=await api('state');
   if(id!==loadID)return;
   state=fresh;$('auth').hidden=true;$('app').hidden=false;
-  renderOverview();renderPools();renderKeys();renderUsage();renderProxy();navigate();
+  renderOverview();renderPools();renderKeys();renderUsage();renderProxy();window.renderModelSettings?.();navigate();
   $('last-sync').textContent='更新于 '+new Date().toLocaleTimeString('zh-CN',{hour12:false});
 }
 async function afterSave(message) {

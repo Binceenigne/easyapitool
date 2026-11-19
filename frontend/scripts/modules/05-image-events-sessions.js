@@ -985,6 +985,9 @@
                 document.getElementById('imagePromptModalTextarea').value = '';
                 resizeImagePrompt();
             }
+            if (isAndroidPlatform() && window.matchMedia('(max-width: 600px)').matches) {
+                setWorkspaceMode('image-edit', true);
+            }
             let finalStatus = '';
             try {
                 const result = await window.pywebview.api.generate_image(

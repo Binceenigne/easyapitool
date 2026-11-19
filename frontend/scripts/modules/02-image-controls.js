@@ -8,6 +8,7 @@
                 aspectRatio: state.aspectRatio,
                 transparency: state.transparency,
                 imageModel: state.imageModel,
+                imageModelPreference: state.preferredImageModel || '',
                 imageCount: state.imageCount,
                 reasoningMode: state.reasoningMode,
                 reasoningAdvanced: state.reasoningAdvanced,
@@ -26,6 +27,7 @@
                 console.warn('图片生成配置读取失败:', error);
             }
             if (!saved || typeof saved !== 'object') saved = {};
+            window.imageEditState.preferredImageModel = saved.imageModelPreference ?? (saved.imageModel === 'gpt-image-2' ? '' : saved.imageModel || '');
             setImageModel(saved.imageModel || 'gpt-image-2', false);
             setImageQuality(saved.quality || 'auto', false);
             setImageComplexity(saved.complexity || 'auto', false);
@@ -39,7 +41,7 @@
             restoreImageReasoningPreferences(saved, false);
         }
 
-        function setWorkspaceMode(mode) {
+        function setWorkspaceMode(mode, showResults = false) {
             const imageMode = mode === 'image-edit';
             window.imageEditState.mode = imageMode ? 'image-edit' : 'monitor';
             document.getElementById('widget-root').classList.toggle('image-edit-mode', imageMode);
@@ -50,6 +52,10 @@
             button.title = imageMode ? '切换到额度监控' : '切换到图片生成';
             button.setAttribute('aria-label', button.title);
             setLucideIcon(button.querySelector('[data-lucide], svg'), imageMode ? 'image' : 'activity');
+            if (isAndroidPlatform()) {
+                document.getElementById('widget-root').dataset.mobilePage = imageMode ? (showResults ? 'results' : 'image') : 'usage';
+                syncMobileNavigation();
+            }
             closeKeySwitcher();
             handleResponsiveLayout();
         }
@@ -381,10 +387,31 @@
             'gpt-image-2.6-sunburst': '2.6 Sunburst'
         };
 
+        function activeImageProfile() {
+            return getActiveKey()?.appModels || null;
+        }
+
+        function syncManagedImageControls() {
+            const state = window.imageEditState;
+            const profile = activeImageProfile();
+            const models = profile?.imageModels?.length ? profile.imageModels : Object.keys(IMAGE_MODEL_LABELS);
+            const fallback = profile?.defaultImage || 'gpt-image-2';
+            const signature = JSON.stringify([fallback, models]);
+            const picker = document.getElementById('imageModelPicker');
+            if (state.modelSignature !== signature) {
+                const selected = state.preferredImageModel;
+                picker.replaceChildren(...models.map(model => new Option(IMAGE_MODEL_LABELS[model] || model, model)));
+                state.modelSignature = signature;
+                setImageModel(models.includes(selected) ? selected : fallback, false);
+            }
+            setImageOutputFormat(state.outputFormat, false);
+            if (typeof syncImageReasoningLabels === 'function') syncImageReasoningLabels();
+        }
+
         function setImageQuality(quality, persist = true) {
             const state = window.imageEditState;
             const control = document.getElementById('imageEditQuality');
-            const extended = state.imageModel !== 'gpt-image-2';
+            const extended = /^gpt-image-2\.[56](?:-|$)/.test(state.imageModel);
             for (const value of ['xhigh', 'max']) {
                 control.querySelector('option[value="' + value + '"]').disabled = !extended;
             }
@@ -407,7 +434,8 @@
         function setImageOutputFormat(format, persist = true) {
             const state = window.imageEditState;
             const control = document.getElementById('imageEditOutputFormat');
-            const svg = window.appState.features?.svg === true;
+            const profile = activeImageProfile();
+            const svg = profile ? profile.svg?.enabled === true : window.appState.features?.svg === true;
             const svgChoice = control.querySelector('option[value="svg"]');
             svgChoice.hidden = svgChoice.disabled = !svg;
             const jpeg = control.querySelector('option[value="jpeg"]');
@@ -415,6 +443,10 @@
             const supported = ['png', 'jpeg', 'webp'].includes(format) || (svg && format === 'svg');
             state.outputFormat = supported && !(format === 'jpeg' && jpeg.disabled) ? format : 'png';
             control.value = state.outputFormat;
+            const svgProfile = document.getElementById('imageSVGProfile');
+            const vector = activeImageProfile()?.svg;
+            svgProfile.hidden = state.outputFormat !== 'svg' || !vector;
+            svgProfile.textContent = vector ? [vector.model || '上游默认模型', vector.effort || '上游默认深度'].join(' · ') : '';
             document.getElementById('imageEditCompressionLabel').hidden = !['jpeg', 'webp'].includes(state.outputFormat);
             if (persist) persistImageGenerationPreferences();
         }
@@ -462,11 +494,15 @@
         }
 
         function setImageModel(model, persist = true) {
-            if (!Object.hasOwn(IMAGE_MODEL_LABELS, model)) model = 'gpt-image-2';
+            const picker = document.getElementById('imageModelPicker');
+            const fallback = activeImageProfile()?.defaultImage || 'gpt-image-2';
+            if (![...picker.options].some(option => option.value === model)) model = fallback;
             window.imageEditState.imageModel = model;
-            document.getElementById('imageModelPicker').value = model;
+            if (persist) window.imageEditState.preferredImageModel = model;
+            picker.value = model;
             if (!window.imageEditState.editSession) {
-                document.getElementById('imageEditHeading').textContent = 'GPT Image ' + IMAGE_MODEL_LABELS[model] + ' 生图';
+                const label = IMAGE_MODEL_LABELS[model];
+                document.getElementById('imageEditHeading').textContent = label ? 'GPT Image ' + label + ' 生图' : model + ' 生图';
             }
             setImageQuality(window.imageEditState.quality, false);
             setImageComplexity(window.imageEditState.complexity, false);
@@ -493,7 +529,7 @@
             qualitySummary.textContent = qualityLabels[window.imageEditState.quality];
             qualitySummary.dataset.quality = window.imageEditState.quality;
             document.getElementById('imageGenerationRatioSummary').textContent = ratio === 'auto' ? '智能' : ratio;
-            document.getElementById('imageGenerationModelSummary').textContent = IMAGE_MODEL_LABELS[window.imageEditState.imageModel];
+            document.getElementById('imageGenerationModelSummary').textContent = IMAGE_MODEL_LABELS[window.imageEditState.imageModel] || window.imageEditState.imageModel;
             document.getElementById('imageGenerationCountSummary').textContent = `${window.imageEditState.imageCount} 张`;
             const buttonLabel = document.querySelector('#generateEditedImageButton span');
             if (buttonLabel && !window.imageEditState.busy) {

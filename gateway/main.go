@@ -63,12 +63,16 @@ func run(configFile string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	gateway := &gateway{cfg: cfg, store: store, client: client, egress: egress}
+	if err := gateway.loadModels(context.Background()); err != nil {
+		return err
+	}
 	mobile := newMobile(ctx, gateway, instance)
 	gateway.onQuotaChange = mobile.quotaChanged
+	gateway.onModelsChange = mobile.modelsChanged
 	public := http.NewServeMux()
 	gateway.registerProxy(public)
 	mobile.registerRoutes(public)
-	admin := newAdmin(gateway).routes()
+	admin := newAdmin(gateway).routes(mobile)
 	servers := []*http.Server{
 		{Addr: cfg.listen, Handler: public, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second},
 		{Addr: cfg.adminListen, Handler: admin, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},

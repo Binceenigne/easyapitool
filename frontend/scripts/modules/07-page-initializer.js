@@ -2,6 +2,7 @@
             if (window.__pageInitialized) return;
             window.__pageInitialized = true;
 
+            initializeMobileNavigation();
             restorePageZoom();
             runAuthAndInitialize();
             void loadImageGenerationHistory();

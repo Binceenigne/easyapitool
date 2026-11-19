@@ -10,6 +10,7 @@
 @use "modules/modals-motion";
 @use "modules/chrome-typography";
 @use "modules/responsive";
+@use "modules/mobile-nav";
 
 @property --adv-h {
 	syntax: "<number>";

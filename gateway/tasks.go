@@ -51,14 +51,18 @@ func (m *mobile) createGeneration(w http.ResponseWriter, r *http.Request, owner 
 	if id == "" {
 		id = randomID(18)
 	}
-	options, err := m.g.cfg.imageOptions(req.Options, len(req.ReferenceIDs) > 0)
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, err.Error())
-		return
-	}
 	key, err := m.getKey(owner, req.KeyID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	var settings *modelSettings
+	if m.g.managedKey(key) {
+		settings = m.g.appModels()
+	}
+	options, err := m.g.imageOptions(req.Options, len(req.ReferenceIDs) > 0, settings)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	ip := m.g.clientIP(r)
@@ -116,7 +120,7 @@ func (m *mobile) createGeneration(w http.ResponseWriter, r *http.Request, owner 
 	m.publishLocked(jobID, object{"type": "task_created"}, false)
 	m.workers.Add(1)
 	m.mu.Unlock()
-	go m.runGeneration(ctx, cancel, jobID, key, ip, req, options, refs)
+	go m.runGeneration(ctx, cancel, jobID, key, ip, req, options, refs, settings)
 	writeJSON(w, http.StatusOK, object{"ok": true, "requestId": id, "status": "queued"})
 }
 
@@ -235,7 +239,7 @@ func (m *mobile) streamEvents(w http.ResponseWriter, r *http.Request, owner stri
 	}
 }
 
-func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, id credentialID, key keyInput, ip netip.Addr, req generationInput, opts imageOptions, refs []asset) {
+func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, id credentialID, key keyInput, ip netip.Addr, req generationInput, opts imageOptions, refs []asset, settings *modelSettings) {
 	defer m.workers.Done()
 	defer cancel()
 	defer func() {
@@ -279,7 +283,7 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 	if mode := objectString(req.Options, "reasoningMode"); mode != "" && mode != "instant" {
 		var usage object
 		var err error
-		prompt, usage, err = m.preparePrompt(ctx, id, key, ip, req)
+		prompt, usage, err = m.preparePrompt(ctx, id, key, ip, req, settings)
 		if err != nil {
 			result["error"] = err.Error()
 			result["items"] = failedItems(opts.n, err.Error())

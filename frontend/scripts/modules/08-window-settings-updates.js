@@ -294,6 +294,7 @@
         function toggleSettingsPanel() {
             const panel = document.getElementById('settingsPanel');
             panel.classList.toggle('is-open');
+            syncMobileNavigation();
             devtoolsSequenceBuffer = '';
         }
 

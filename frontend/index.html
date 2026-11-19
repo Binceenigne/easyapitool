@@ -205,6 +205,7 @@
                                                 <option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option>
                                                 <option value="svg" hidden disabled>SVG</option>
                                             </select>
+                                            <small id="imageSVGProfile" hidden></small>
                                         </label>
                                         <label class="image-control-section" id="imageEditCompressionLabel" hidden>
                                             <span>压缩质量</span>
@@ -913,6 +914,12 @@
         </footer>
         </div>
             </div>
+        <nav id="mobileNav" aria-label="Mirra 主导航" hidden>
+            <button type="button" data-mobile-tab="image" aria-current="page"><i data-lucide="wand-sparkles" aria-hidden="true"></i><span>生图</span></button>
+            <button type="button" data-mobile-tab="results"><i data-lucide="images" aria-hidden="true"></i><span>作品</span></button>
+            <button type="button" data-mobile-tab="usage"><i data-lucide="activity" aria-hidden="true"></i><span>用量</span></button>
+            <button type="button" data-mobile-tab="settings"><i data-lucide="settings" aria-hidden="true"></i><span>设置</span></button>
+        </nav>
         <!-- 自定义轻量吐司通知保持在缩放层外，避免 fixed 定位参与页面缩放。 -->
         <div id="toast">
             <i id="toastIcon" data-lucide="circle-check" class="icon-14 color-good" aria-hidden="true"></i>
@@ -934,6 +941,7 @@
     <script src="scripts/modules/09-modals-input-refresh.js?v=1"></script>
     <script src="scripts/modules/10-dashboard-rendering.js?v=1"></script>
     <script src="scripts/modules/11-theme-bootstrap.js?v=2"></script>
+    <script src="scripts/mobile-nav.js?v=1"></script>
     <script src="scripts/modules/12-bootstrap.js?v=1"></script>
 
 

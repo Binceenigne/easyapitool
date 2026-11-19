@@ -6215,6 +6215,78 @@ html[data-platform=android][data-keyboard-visible=true] .image-edit-prompt texta
   background: var(--bg);
 }
 
+html[data-platform=android] #widget-root {
+  --mobile-nav-height: calc(54px + env(safe-area-inset-bottom, 0px));
+}
+
+html[data-platform=android] #pageZoomViewport {
+  bottom: var(--mobile-nav-height);
+}
+
+html[data-platform=android] #appFooter,
+html[data-platform=android] #keyToolbar :is(#workspaceModeButton, #settingsButton) {
+  display: none;
+}
+
+#mobileNav {
+  position: absolute;
+  right: 4px;
+  bottom: 0;
+  left: 4px;
+  z-index: 50;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  height: var(--mobile-nav-height);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border: 1px solid var(--border);
+  border-top: 0;
+  background: var(--surface);
+}
+
+#mobileNav button {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 2px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+#mobileNav button svg {
+  width: 17px;
+  height: 17px;
+}
+
+#mobileNav button[aria-current=page] {
+  background: var(--image-purple-soft);
+  color: var(--image-purple);
+  box-shadow: inset 0 2px var(--image-purple);
+}
+
+html[data-platform=android] #toast {
+  bottom: calc(var(--mobile-nav-height) + 8px);
+}
+
+@media (max-width: 600px) {
+  html[data-platform=android] #imageEditWorkspace {
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+  }
+  html[data-platform=android] #imageEditForm {
+    overflow: auto;
+    border-right: 0;
+  }
+  html[data-platform=android] #widget-root[data-mobile-page=image] #imageEditResult,
+  html[data-platform=android] #widget-root[data-mobile-page=results] #imageEditForm {
+    display: none;
+  }
+  html[data-platform=android][data-keyboard-visible=true] #imageEditForm {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+}
 @property --adv-h {
   syntax: "<number>";
   inherits: true;

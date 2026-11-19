@@ -33,7 +33,7 @@ var imageMIME = map[string]string{
 	"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif", "svg": "image/svg+xml",
 }
 
-func (m *mobile) saveAsset(owner string, reader io.Reader, output bool) (asset, error) {
+func (m *mobile) saveAsset(owner string, reader io.Reader, output, allowSVG bool) (asset, error) {
 	if !m.reserveAssetBytes(maxImageBytes) {
 		return asset{}, errors.New("临时图片空间已满，请稍后重试")
 	}
@@ -55,7 +55,7 @@ func (m *mobile) saveAsset(owner string, reader io.Reader, output bool) (asset, 
 	}
 	file.Seek(0, io.SeekStart)
 	dimensions, format, err := image.DecodeConfig(file)
-	if err != nil && output && m.g.cfg.svgEnabled && isSVG(file) {
+	if err != nil && output && allowSVG && isSVG(file) {
 		format, err = "svg", nil
 	}
 	if err != nil || imageMIME[format] == "" || (!output && !oneOf(format, "png", "jpeg", "webp")) {
@@ -144,7 +144,7 @@ func (m *mobile) preview(original asset) asset {
 	reader, writer := io.Pipe()
 	defer reader.Close()
 	go func() { writer.CloseWithError(png.Encode(writer, thumbnail)) }()
-	preview, err := m.saveAsset(original.owner, reader, true)
+	preview, err := m.saveAsset(original.owner, reader, true, false)
 	if err != nil {
 		return original
 	}
@@ -175,7 +175,7 @@ func (m *mobile) uploadReference(w http.ResponseWriter, r *http.Request, owner s
 			part.Close()
 			continue
 		}
-		a, err := m.saveAsset(owner, part, false)
+		a, err := m.saveAsset(owner, part, false, false)
 		if err != nil {
 			jsonError(w, http.StatusBadRequest, err.Error())
 			return

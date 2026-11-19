@@ -205,7 +205,7 @@ func TestBundledModelRates(t *testing.T) {
 
 func TestAdminPoolAndResetActions(t *testing.T) {
 	g := testGateway(t)
-	admin := newAdmin(g).routes()
+	admin := newAdmin(g).routes(nil)
 	post := func(path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", "http://127.0.0.1"+path, strings.NewReader(body))
 		if cookie != nil {

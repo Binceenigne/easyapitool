@@ -509,7 +509,7 @@
 
     async function handleServerEvent(event) {
         if (!event || typeof event !== 'object') return;
-        if (event.type === 'quota_changed') {
+        if (event.type === 'quota_changed' || event.type === 'models_changed') {
             window.applyBackendState?.(await getState());
             return;
         }

@@ -15,6 +15,7 @@ import (
 	"net/textproto"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -23,6 +24,7 @@ const maxImageEnvelope = (maxImageBytes*4/3 + 1<<20)
 
 type imageOptions struct {
 	model, size, ratio, quality, complexity, format, background string
+	svg                                                         modelPreset
 	compression                                                 *int
 	partial, n                                                  int
 	stream                                                      bool
@@ -35,12 +37,19 @@ var imageSizes = map[string]string{
 	"21:9": "1680x720", "2:3": "1024x1536", "3:2": "1536x1024",
 }
 
-func (c config) imageOptions(options object, edit bool) (imageOptions, error) {
+func (g *gateway) imageOptions(options object, edit bool, settings *modelSettings) (imageOptions, error) {
+	defaultModel := g.cfg.imageModel
+	svg := svgSettings{Enabled: g.cfg.svgEnabled, modelPreset: modelPreset{Model: g.cfg.svgAuthor, Effort: g.cfg.svgEffort}}
+	if settings != nil {
+		defaultModel, svg = settings.DefaultImage, settings.SVG
+	}
 	o := imageOptions{model: objectString(options, "imageModel"), size: objectString(options, "size"), ratio: objectString(options, "aspectRatio"),
 		quality: objectString(options, "quality"), complexity: objectString(options, "complexity"), format: objectString(options, "output_format"),
 		background: objectString(options, "background"), stream: true, partial: 3, n: 1}
 	if o.model == "" {
-		o.model = c.imageModel
+		o.model = defaultModel
+	} else if settings != nil && settings.Revision > 0 && !slices.Contains(settings.ImageModels, o.model) {
+		return o, errors.New("网关未开放此生图模型，请刷新客户端后重新选择")
 	}
 	if o.ratio == "" {
 		o.ratio = "auto"
@@ -75,7 +84,7 @@ func (c config) imageOptions(options object, edit bool) (imageOptions, error) {
 	if o.background == "transparent" && !oneOf(o.format, "png", "webp", "svg") {
 		return o, errors.New("透明背景需要 PNG、WebP 或 SVG")
 	}
-	if o.format == "svg" && (!c.svgEnabled || edit) {
+	if o.format == "svg" && (!svg.Enabled || edit) {
 		return o, errors.New("SVG 需要网关启用，且仅支持无参考图的生成")
 	}
 	if options["imageCount"] != nil {
@@ -91,6 +100,7 @@ func (c config) imageOptions(options object, edit bool) (imageOptions, error) {
 	if o.format == "svg" || o.format == "gif" {
 		o.stream = false
 	}
+	o.svg = svg.modelPreset
 	if options["partial_images"] != nil {
 		n, ok := tokenCount(options["partial_images"])
 		if !ok || n > 3 {
@@ -147,11 +157,11 @@ func (m *mobile) renderImage(ctx context.Context, id credentialID, key keyInput,
 	}
 	if o.format == "svg" {
 		svg := object{}
-		if m.g.cfg.svgAuthor != "" {
-			svg["model"] = m.g.cfg.svgAuthor
+		if o.svg.Model != "" {
+			svg["model"] = o.svg.Model
 		}
-		if m.g.cfg.svgEffort != "" {
-			svg["reasoning"] = object{"effort": m.g.cfg.svgEffort}
+		if o.svg.Effort != "" {
+			svg["reasoning"] = object{"effort": o.svg.Effort}
 		}
 		if len(svg) != 0 {
 			fields["svg"] = svg
@@ -201,7 +211,7 @@ func (m *mobile) renderImage(ctx context.Context, id credentialID, key keyInput,
 	if err := upstreamStatus(response); err != nil {
 		return nil, err
 	}
-	original, metered, err := m.readImageResponse(response, id, index, o.partial)
+	original, metered, err := m.readImageResponse(response, id, index, o.partial, o.format == "svg")
 	count = metered
 	if err != nil {
 		return nil, err
@@ -293,14 +303,14 @@ func (e imageEnvelope) encoded() string {
 	return ""
 }
 
-func (m *mobile) readImageResponse(response *http.Response, job credentialID, itemIndex, partialTotal int) (asset, *meter, error) {
+func (m *mobile) readImageResponse(response *http.Response, job credentialID, itemIndex, partialTotal int, allowSVG bool) (asset, *meter, error) {
 	if !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
 		var e imageEnvelope
 		if err := json.NewDecoder(io.LimitReader(response.Body, maxImageEnvelope)).Decode(&e); err != nil {
 			return asset{}, nil, errors.New("上游图片响应无效或过大")
 		}
 		count := usageMeter(e.Usage, e.SVGUsage)
-		a, err := m.decodeImage(job.owner, e.encoded())
+		a, err := m.decodeImage(job.owner, e.encoded(), allowSVG)
 		return a, count, err
 	}
 	scanner := bufio.NewScanner(response.Body)
@@ -329,7 +339,7 @@ func (m *mobile) readImageResponse(response *http.Response, job credentialID, it
 			if data == "" {
 				data = e.Partial
 			}
-			a, err := m.decodeImage(job.owner, data)
+			a, err := m.decodeImage(job.owner, data, false)
 			if err == nil {
 				last = a
 				partialIndex++
@@ -342,7 +352,7 @@ func (m *mobile) readImageResponse(response *http.Response, job credentialID, it
 			completed = true
 			count = usageMeter(e.Usage, e.SVGUsage)
 			if encoded := e.encoded(); encoded != "" {
-				a, err := m.decodeImage(job.owner, encoded)
+				a, err := m.decodeImage(job.owner, encoded, allowSVG)
 				return a, count, err
 			}
 		}
@@ -354,9 +364,9 @@ func (m *mobile) readImageResponse(response *http.Response, job credentialID, it
 	return asset{}, count, errors.New("上游图片流未返回完成的图片")
 }
 
-func (m *mobile) decodeImage(owner, encoded string) (asset, error) {
+func (m *mobile) decodeImage(owner, encoded string, allowSVG bool) (asset, error) {
 	if encoded == "" {
 		return asset{}, errors.New("上游未返回图片内容")
 	}
-	return m.saveAsset(owner, base64.NewDecoder(base64.StdEncoding, strings.NewReader(encoded)), true)
+	return m.saveAsset(owner, base64.NewDecoder(base64.StdEncoding, strings.NewReader(encoded)), true, allowSVG)
 }

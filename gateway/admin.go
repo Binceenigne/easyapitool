@@ -29,15 +29,18 @@ func newAdmin(g *gateway) *admin {
 	return &admin{gateway: g, sessions: make(map[string]time.Time)}
 }
 
-func (a *admin) routes() http.Handler {
+func (a *admin) routes(m *mobile) http.Handler {
 	mux := http.NewServeMux()
 	web, err := fs.Sub(adminFiles, "web")
 	if err != nil {
 		panic(err)
 	}
 	files := http.FileServerFS(web)
-	for _, path := range []string{"/{$}", "/admin.css", "/admin.js", "/icons.svg", "/mirra.png"} {
+	for _, path := range []string{"/{$}", "/admin.css", "/admin.js", "/admin-models.js", "/icons.svg", "/mirra.png"} {
 		mux.Handle("GET "+path, files)
+	}
+	if m != nil {
+		mux.HandleFunc("GET /app-preview/{asset...}", m.appPreview)
 	}
 	mux.HandleFunc("POST /admin/login", a.login)
 	mux.HandleFunc("POST /admin/logout", a.protected(a.logout))
@@ -48,6 +51,8 @@ func (a *admin) routes() http.Handler {
 	mux.HandleFunc("POST /admin/proxy/test", a.protected(a.testProxy))
 	mux.HandleFunc("POST /admin/upstreams", a.protected(a.saveUpstream))
 	mux.HandleFunc("POST /admin/upstreams/{id}/test", a.protected(a.testUpstream))
+	mux.HandleFunc("GET /admin/upstreams/{id}/models", a.protected(a.discoverModels))
+	mux.HandleFunc("POST /admin/models", a.protected(a.configureModels))
 	mux.HandleFunc("POST /admin/keys/{id}/reset", a.protected(a.resetQuota))
 	mux.HandleFunc("POST /admin/keys", a.protected(a.saveKey))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +170,7 @@ func (a *admin) state(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(hosts)
 	writeJSON(w, http.StatusOK, object{
 		"upstreams": upstreams, "keys": keys, "usage": usage, "proxy": a.gateway.egress.view(),
+		"appModels": a.gateway.appModels(),
 		"gateway": object{"publicBaseUrl": a.gateway.cfg.publicBase, "allowedHosts": hosts,
 			"reserveMicroUSD": a.gateway.cfg.reserveMicroUSD, "pricingReady": a.gateway.cfg.reserveMicroUSD > 0 && len(a.gateway.cfg.pricing) > 0},
 	})

@@ -40,7 +40,7 @@ type route struct {
 }
 
 func (m *mobile) resolveKey(ctx context.Context, key keyInput, clientIP netip.Addr, dispatch bool) (route, error) {
-	if strings.HasPrefix(key.Value, "sk-mirra-") || key.BaseURL == m.g.cfg.publicBase {
+	if m.g.managedKey(key) {
 		return m.g.resolveRoute(ctx, key.Value, clientIP, dispatch)
 	}
 	return route{upstream: upstream{URL: key.BaseURL, Secret: key.Value, ID: "legacy"}, clientIP: clientIP}, nil
@@ -59,7 +59,7 @@ func (m *mobile) parseKey(w http.ResponseWriter, r *http.Request, input *keyInpu
 		jsonError(w, http.StatusBadRequest, "API Key 信息不完整或无效")
 		return false
 	}
-	if strings.HasPrefix(input.Value, "sk-mirra-") || input.BaseURL == m.g.cfg.publicBase {
+	if m.g.managedKey(*input) {
 		input.BaseURL = m.g.cfg.publicBase
 		return true
 	}
@@ -101,12 +101,12 @@ func (m *mobile) fetchKey(ctx context.Context, input keyInput, ip netip.Addr) (*
 	case input.BaseURL == openAIBaseURL:
 		key.usage = object{"isValid": true, "mode": "official", "status": "active"}
 	default:
-		key.usage, err = m.getUpstreamJSON(ctx, selected.upstream, "/usage", "days=30")
+		key.usage, err = m.g.getUpstreamJSON(ctx, selected.upstream, "/usage", "days=30")
 		if err != nil {
 			return nil, err
 		}
 	}
-	models, err := m.getUpstreamJSON(ctx, selected.upstream, "/models", "")
+	models, err := m.g.getUpstreamJSON(ctx, selected.upstream, "/models", "")
 	if err != nil && input.BaseURL == openAIBaseURL {
 		return nil, err
 	}
@@ -123,12 +123,12 @@ func (m *mobile) fetchKey(ctx context.Context, input keyInput, ip netip.Addr) (*
 	return key, nil
 }
 
-func (m *mobile) getUpstreamJSON(ctx context.Context, u upstream, path, query string) (object, error) {
-	req, err := m.g.upstreamRequest(ctx, u, http.MethodGet, path, query, nil)
+func (g *gateway) getUpstreamJSON(ctx context.Context, u upstream, path, query string) (object, error) {
+	req, err := g.upstreamRequest(ctx, u, http.MethodGet, path, query, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := m.g.client.Do(req)
+	resp, err := g.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("无法连接上游服务")
 	}
@@ -248,7 +248,11 @@ func (m *mobile) state(ctx context.Context, owner string, ip netip.Addr) object 
 				copy.usage, copy.lastErr = nil, err.Error()
 			}
 		}
-		items = append(items, copy.state())
+		view := copy.state()
+		if m.g.managedKey(key.keyInput) && copy.usage != nil {
+			view["appModels"] = m.g.appModels()
+		}
+		items = append(items, view)
 	}
 	return object{"appName": appName, "keys": items, "activeTasks": active, "storageMode": "android-filesystem-sqlite-index", "serverPersistence": false,
 		"usagePersistence": "server-sqlite", "features": object{"serverQuota": true, "nativeImageOptions": true, "svg": m.g.cfg.svgEnabled}}
@@ -407,6 +411,18 @@ func (m *mobile) quotaChanged(id string, revision int64) {
 	for device, key := range m.keys {
 		if key.BaseURL == m.g.cfg.publicBase && keyDigest(key.Value) == digest {
 			m.emitLocked(device.owner, object{"type": "quota_changed", "keyId": key.KeyID, "revision": revision})
+		}
+	}
+}
+
+func (m *mobile) modelsChanged(revision int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owners := make(map[string]bool)
+	for device, key := range m.keys {
+		if m.g.managedKey(key.keyInput) && !owners[device.owner] {
+			owners[device.owner] = true
+			m.emitLocked(device.owner, object{"type": "models_changed", "revision": revision})
 		}
 	}
 }

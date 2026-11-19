@@ -12,17 +12,22 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const maxProxyBody = 825 << 20
 
 type gateway struct {
-	cfg           config
-	store         *store
-	client        *http.Client
-	egress        *egressManager
-	onQuotaChange func(string, int64)
+	cfg            config
+	store          *store
+	client         *http.Client
+	egress         *egressManager
+	onQuotaChange  func(string, int64)
+	modelMu        sync.Mutex
+	modelProfile   atomic.Pointer[modelSettings]
+	onModelsChange func(int64)
 }
 
 func newUpstreamClient(cfg config, transport http.RoundTripper) *http.Client {
@@ -112,6 +117,7 @@ func (g *gateway) proxyUsage(w http.ResponseWriter, r *http.Request) {
 		g.proxyError(w, err)
 		return
 	}
+	payload["appModels"] = g.appModels()
 	writeJSON(w, http.StatusOK, payload)
 }
 
