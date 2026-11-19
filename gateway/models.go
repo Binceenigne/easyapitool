@@ -22,12 +22,19 @@ type svgSettings struct {
 	modelPreset
 }
 
+type imageFeatures struct {
+	Complexity bool `json:"complexity"`
+	Animation  bool `json:"animation"`
+}
+
 type modelSettings struct {
-	Revision     int64                  `json:"revision"`
-	DefaultImage string                 `json:"defaultImage"`
-	ImageModels  []string               `json:"imageModels"`
-	SVG          svgSettings            `json:"svg"`
-	Reasoning    map[string]modelPreset `json:"reasoning"`
+	Revision       int64                    `json:"revision"`
+	DefaultImage   string                   `json:"defaultImage"`
+	ImageModels    []string                 `json:"imageModels"`
+	ImageFeatures  map[string]imageFeatures `json:"imageFeatures"`
+	SVG            svgSettings              `json:"svg"`
+	Reasoning      map[string]modelPreset   `json:"reasoning"`
+	ReasoningModes map[string]modelPreset   `json:"reasoningModes"`
 }
 
 var builtinReasoningModels = map[string]string{
@@ -36,16 +43,30 @@ var builtinReasoningModels = map[string]string{
 
 var builtinReasoningDepth = map[string]string{"luna": "medium", "terra": "xhigh", "sol": "xhigh"}
 
+var normalReasoningSlots = map[string]string{
+	"instant": "", "flash": "luna", "medium": "luna", "high": "terra", "extra": "terra", "max": "sol",
+}
+
+func defaultReasoningModes(slots map[string]modelPreset) map[string]modelPreset {
+	modes := make(map[string]modelPreset, len(normalReasoningSlots))
+	for mode, slot := range normalReasoningSlots {
+		modes[mode] = slots[slot]
+	}
+	modes["instant"] = modelPreset{Effort: "none"}
+	return modes
+}
+
 func modelDefaults(cfg config) modelSettings {
 	images := []string{"gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst"}
 	if !slices.Contains(images, cfg.imageModel) {
 		images = append([]string{cfg.imageModel}, images...)
 	}
 	settings := modelSettings{
-		DefaultImage: cfg.imageModel,
-		ImageModels:  images,
-		SVG:          svgSettings{Enabled: cfg.svgEnabled, modelPreset: modelPreset{Model: cfg.svgAuthor, Effort: cfg.svgEffort}},
-		Reasoning:    make(map[string]modelPreset, len(builtinReasoningModels)),
+		DefaultImage:  cfg.imageModel,
+		ImageModels:   images,
+		ImageFeatures: map[string]imageFeatures{},
+		SVG:           svgSettings{Enabled: cfg.svgEnabled, modelPreset: modelPreset{Model: cfg.svgAuthor, Effort: cfg.svgEffort}},
+		Reasoning:     make(map[string]modelPreset, len(builtinReasoningModels)),
 	}
 	for slot, fallback := range builtinReasoningModels {
 		model := cfg.reasoningPresets[slot]
@@ -61,6 +82,7 @@ func modelDefaults(cfg config) modelSettings {
 		}
 		settings.Reasoning[slot] = modelPreset{Model: model, Effort: effort}
 	}
+	settings.ReasoningModes = defaultReasoningModes(settings.Reasoning)
 	return settings
 }
 
@@ -86,6 +108,20 @@ func (s modelSettings) validate() error {
 			return errors.New("请选择有效的思维模型和思考深度")
 		}
 	}
+	for model := range s.ImageFeatures {
+		if !seen[model] {
+			return errors.New("只能配置已开放生图模型的功能")
+		}
+	}
+	if len(s.ReasoningModes) != len(normalReasoningSlots) {
+		return errors.New("请配置 Instant、Flash、Medium、High、Extra 和 Max 六档预设")
+	}
+	for mode := range normalReasoningSlots {
+		preset := s.ReasoningModes[mode]
+		if preset.Effort == "" || !validModelPreset(preset, mode == "instant") {
+			return errors.New("请为 " + mode + " 选择有效的模型和思考深度")
+		}
+	}
 	return nil
 }
 
@@ -100,7 +136,16 @@ func (g *gateway) loadModels(ctx context.Context) error {
 	var settings modelSettings
 	switch {
 	case err == nil:
-		if json.Unmarshal(data, &settings) != nil || settings.validate() != nil {
+		if json.Unmarshal(data, &settings) != nil {
+			return errors.New("已保存的模型配置无效")
+		}
+		if settings.ReasoningModes == nil {
+			settings.ReasoningModes = defaultReasoningModes(settings.Reasoning)
+		}
+		if settings.ImageFeatures == nil {
+			settings.ImageFeatures = map[string]imageFeatures{}
+		}
+		if settings.validate() != nil {
 			return errors.New("已保存的模型配置无效")
 		}
 	case errors.Is(err, sql.ErrNoRows):
@@ -121,13 +166,25 @@ func (g *gateway) appModels() *modelSettings {
 }
 
 func (g *gateway) saveModels(ctx context.Context, proposed modelSettings) (*modelSettings, error) {
-	if err := proposed.validate(); err != nil {
-		return nil, err
-	}
 	g.modelMu.Lock()
 	defer g.modelMu.Unlock()
-	if proposed.Revision != g.appModels().Revision {
+	current := g.appModels()
+	if proposed.Revision != current.Revision {
 		return nil, errModelsChanged
+	}
+	if proposed.ReasoningModes == nil {
+		proposed.ReasoningModes = current.ReasoningModes
+	}
+	if proposed.ImageFeatures == nil {
+		proposed.ImageFeatures = make(map[string]imageFeatures)
+		for _, model := range proposed.ImageModels {
+			if features, ok := current.ImageFeatures[model]; ok {
+				proposed.ImageFeatures[model] = features
+			}
+		}
+	}
+	if err := proposed.validate(); err != nil {
+		return nil, err
 	}
 	proposed.Revision++
 	data, err := json.Marshal(proposed)
@@ -151,7 +208,7 @@ var errModelsStorage = errors.New("模型配置暂时无法保存")
 
 func (a *admin) configureModels(w http.ResponseWriter, r *http.Request) {
 	var input modelSettings
-	if !decodeRequest(w, r, 32<<10, &input) {
+	if !decodeRequest(w, r, 64<<10, &input) {
 		return
 	}
 	saved, err := a.gateway.saveModels(r.Context(), input)

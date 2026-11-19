@@ -54,45 +54,44 @@ func (m *mobile) polish(w http.ResponseWriter, r *http.Request, owner string) {
 }
 
 func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInput, ip netip.Addr, input generationInput, settings *modelSettings) (string, object, error) {
+	mode := objectString(input.Options, "reasoningMode")
+	slot, ok := normalReasoningSlots[mode]
+	model, effort := "", ""
+	if mode == "advanced" {
+		slot, effort = objectString(input.Options, "reasoningModel"), objectString(input.Options, "reasoningEffort")
+		if !oneOf(slot, "luna", "terra", "sol") || !oneOf(effort, "low", "medium", "high", "xhigh", "max") {
+			return "", nil, errors.New("思维模型或深度无效")
+		}
+	} else if !ok {
+		return "", nil, errors.New("思维模式无效")
+	}
 	selected, err := m.resolveKey(ctx, key, ip, true)
 	if err != nil {
 		return "", nil, err
 	}
-	mode := objectString(input.Options, "reasoningMode")
-	preset, effort := "luna", "medium"
-	switch mode {
-	case "flash":
-	case "medium":
-		effort = "high"
-	case "high", "extra":
-		preset, effort = "terra", "xhigh"
-	case "max":
-		preset, effort = "sol", "xhigh"
-	case "advanced":
-		preset, effort = objectString(input.Options, "reasoningModel"), objectString(input.Options, "reasoningEffort")
-		if !oneOf(preset, "luna", "terra", "sol") || !oneOf(effort, "low", "medium", "high", "xhigh", "max") {
-			return "", nil, errors.New("思维模型或深度无效")
-		}
-	default:
-		return "", nil, errors.New("思维模式无效")
-	}
-	model := ""
 	if settings != nil {
-		configured := settings.Reasoning[preset]
-		model = configured.Model
-		if configured.Effort != "" && mode != "advanced" {
-			effort = configured.Effort
+		if mode == "advanced" {
+			model = settings.Reasoning[slot].Model
+		} else {
+			preset := settings.ReasoningModes[mode]
+			model, effort = preset.Model, preset.Effort
 		}
 	} else {
-		if m.g.cfg.reasoningEffort != "" && mode != "advanced" {
+		if mode != "advanced" {
 			effort = m.g.cfg.reasoningEffort
+			if effort == "" {
+				effort = builtinReasoningDepth[slot]
+				if mode == "medium" {
+					effort = "high"
+				}
+			}
 		}
-		model = m.g.cfg.reasoningPresets[preset]
+		model = m.g.cfg.reasoningPresets[slot]
 		if model == "" {
 			model = m.g.cfg.reasoningModel
 		}
 		if model == "" && selected.upstream.URL == m.g.cfg.legacyBase {
-			model = builtinReasoningModels[preset]
+			model = builtinReasoningModels[slot]
 		}
 		if effort == "max" && selected.upstream.URL == openAIBaseURL {
 			effort = "xhigh"

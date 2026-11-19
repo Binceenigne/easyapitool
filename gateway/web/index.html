@@ -105,26 +105,30 @@
                   <label>搜索可选模型<input id="model-search" type="search" placeholder="输入模型 ID，例如 gpt-image"></label>
                   <div id="model-image-list" class="model-list" aria-label="客户端可选生图模型"></div>
                   <label>客户端默认模型<select name="defaultImage" required></select></label>
+                    <fieldset class="model-slot">
+                      <legend>模型功能</legend>
+                      <label>选择模型<select id="model-feature-target"></select></label>
+                      <div class="model-feature-switches">
+                        <label class="model-switch"><input type="checkbox" id="model-feature-complexity">复杂度</label>
+                        <label class="model-switch"><input type="checkbox" id="model-feature-animation">GIF 动画</label>
+                      </div>
+                    </fieldset>
                 </div>
               </section>
               <section aria-labelledby="reasoning-models-title">
-                <div class="panel-head"><h2 id="reasoning-models-title"><i data-icon="SlidersHorizontal"></i>三档思维模型</h2></div>
+                  <div class="panel-head"><h2 id="reasoning-models-title"><i data-icon="SlidersHorizontal"></i>高级模式 · 三个模型</h2></div>
                 <div class="panel-body form-body">
-                  <fieldset class="model-slot"><legend>Luna <small>Flash / Medium</small></legend><div class="model-slot-fields">
-                    <label>模型<input name="lunaModel" list="model-catalog" spellcheck="false" required></label>
-                    <label>思考深度<select name="lunaEffort" data-effort required></select></label>
-                  </div></fieldset>
-                  <fieldset class="model-slot"><legend>Terra <small>High / Extra</small></legend><div class="model-slot-fields">
-                    <label>模型<input name="terraModel" list="model-catalog" spellcheck="false" required></label>
-                    <label>思考深度<select name="terraEffort" data-effort required></select></label>
-                  </div></fieldset>
-                  <fieldset class="model-slot"><legend>Sol <small>Max</small></legend><div class="model-slot-fields">
-                    <label>模型<input name="solModel" list="model-catalog" spellcheck="false" required></label>
-                    <label>思考深度<select name="solEffort" data-effort required></select></label>
-                  </div></fieldset>
+                    <label>Sol<input name="solModel" list="model-catalog" spellcheck="false" required></label>
+                    <label>Terra<input name="terraModel" list="model-catalog" spellcheck="false" required></label>
+                    <label>Luna<input name="lunaModel" list="model-catalog" spellcheck="false" required></label>
+                    <p class="hint">对应客户端高级面板的纵轴，思考深度由用户在横轴选择。</p>
                 </div>
               </section>
             </div>
+              <section class="model-presets" aria-labelledby="reasoning-presets-title">
+                <div class="panel-head"><h2 id="reasoning-presets-title">思维深度 · 六档预设</h2></div>
+                <div id="model-reasoning-presets" class="panel-body"></div>
+              </section>
             <section class="model-svg" aria-labelledby="svg-model-title">
               <div class="panel-head"><h2 id="svg-model-title">SVG 输出</h2><label class="model-switch"><input type="checkbox" name="svgEnabled" role="switch">启用 SVG</label></div>
               <div class="panel-body form-body" id="model-svg-fields" hidden>

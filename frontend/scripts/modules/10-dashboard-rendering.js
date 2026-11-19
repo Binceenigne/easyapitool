@@ -718,100 +718,158 @@
             return barElement.id === 'bigProgressBar' ? 4 : 3;
         }
 
-        function renderProgressBar(barElement, fillPercentage, remainingPercentage, options = {}) {
-            if (!barElement) return;
-            const fill = Math.max(0, Math.min(100, Number(fillPercentage) || 0));
-            const remaining = Math.max(0, Math.min(100, Number(remainingPercentage) || 0));
-            const track = barElement.parentElement;
-            const matrix = progressMatrixSize(barElement);
+        const progressMotion = new WeakMap();
+        const movingProgressBars = new Set();
+        const reduceProgressMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+        const progressResponse = 16;
+        let progressFrame = 0;
+
+        function paintProgress(bar, motion) {
+            if (!motion.dots.length) {
+                bar.style.setProperty('--linear-progress', String(motion.value / 100));
+                return;
+            }
+            const position = motion.value * motion.dots.length / 100;
+            const previous = motion.dotPosition;
+            if (position === previous) return;
+            const first = Math.floor(Math.min(previous, position));
+            const last = Math.min(motion.dots.length - 1, Math.floor(Math.max(previous, position)));
+            for (let index = first; index <= last; index++) {
+                const opacity = Math.max(0, Math.min(1, position - index));
+                motion.dots[index].style.setProperty('--dot-fill', String(opacity));
+            }
+            motion.dotPosition = position;
+        }
+
+        function animateProgress(frameTime) {
+            progressFrame = 0;
+            for (const bar of movingProgressBars) {
+                const motion = progressMotion.get(bar);
+                const dt = Math.max(0, frameTime - motion.frameTime) / 1000;
+                motion.frameTime = frameTime;
+                // A critically damped spring keeps velocity continuous when the target changes.
+                const offset = motion.value - motion.target;
+                const drift = motion.velocity + progressResponse * offset;
+                const decay = Math.exp(-progressResponse * dt);
+                const value = motion.target + (offset + drift * dt) * decay;
+                motion.value = Math.max(0, Math.min(100, value));
+                motion.velocity = value === motion.value ? (motion.velocity - progressResponse * drift * dt) * decay : 0;
+                if (reduceProgressMotion.matches
+                    || (Math.abs(motion.value - motion.target) < .015 && Math.abs(motion.velocity) < .2)) {
+                    motion.value = motion.target;
+                    motion.velocity = 0;
+                    movingProgressBars.delete(bar);
+                }
+                paintProgress(bar, motion);
+            }
+            if (movingProgressBars.size) progressFrame = requestAnimationFrame(animateProgress);
+        }
+
+        function layoutProgressBar(bar, motion) {
+            const track = bar.parentElement;
+            const matrix = progressMatrixSize(bar);
             const trackStyle = track ? getComputedStyle(track) : null;
-            const trackContentWidth = track
-                ? track.clientWidth
-                    - parseFloat(trackStyle?.borderLeftWidth || '0')
-                    - parseFloat(trackStyle?.borderRightWidth || '0')
-                    - parseFloat(trackStyle?.paddingLeft || '0')
-                    - parseFloat(trackStyle?.paddingRight || '0')
-                : 0;
-            const barHorizontalPadding = 4;
-            const edgeSafety = 2;
-            const availableWidth = Math.max(
-                0,
-                Math.floor(trackContentWidth - barHorizontalPadding - edgeSafety)
-            );
-            const dotSize = matrix === 4 ? 3 : matrix === 3 ? 3 : 2;
+            const innerWidth = track ? track.clientWidth
+                - parseFloat(trackStyle.paddingLeft) - parseFloat(trackStyle.paddingRight) : 0;
+            const padding = 4;
+            const availableWidth = Math.max(0, Math.floor(innerWidth - padding - 2));
+            const dotSize = matrix === 2 ? 2 : 3;
             const dotGap = 1;
             const blockGap = matrix === 2 ? 2 : 3;
             const blockSize = matrix * dotSize + (matrix - 1) * dotGap;
-            const blockCount = Math.max(0, Math.floor((availableWidth + blockGap) / (blockSize + blockGap)));
+            const blockCount = Math.floor((availableWidth + blockGap) / (blockSize + blockGap));
             const minBlocks = matrix === 4 ? 8 : matrix === 3 ? 7 : 10;
-            const useMatrix = availableWidth > 0 && blockCount >= minBlocks;
-
-            barElement.dataset.fill = String(fill);
-            barElement.dataset.remaining = String(remaining);
-            barElement.dataset.unlimited = options.unlimited ? 'true' : 'false';
-            barElement.dataset.update = options.update ? 'true' : 'false';
-            barElement.dataset.active = options.active ? 'true' : 'false';
-            barElement.className = useMatrix ? 'matrix-progress' : 'linear-progress';
-            barElement.classList.toggle('bar-unlimited', options.unlimited === true);
-            barElement.classList.toggle('update-progress', options.update === true);
-            barElement.classList.toggle('is-active', options.active === true);
-            if (!options.unlimited) setFlexibleBarColor(barElement, remaining);
-
+            const useMatrix = blockCount >= minBlocks;
+            const layout = useMatrix ? `${matrix}:${blockCount}` : 'linear';
+            if (motion.layout === layout) return;
+            motion.layout = layout;
+            motion.dots = [];
+            motion.dotPosition = 0;
+            bar.classList.toggle('matrix-progress', useMatrix);
+            bar.classList.toggle('linear-progress', !useMatrix);
+            bar.style.maxWidth = '100%';
             if (!useMatrix) {
-                if (barElement.childElementCount) barElement.replaceChildren();
-                barElement.style.width = '100%';
-                barElement.style.maxWidth = '100%';
-                barElement.style.setProperty('--linear-progress', String(fill / 100));
-                barElement.dataset.renderSignature = `linear:${fill}`;
+                bar.replaceChildren();
+                bar.style.width = '100%';
                 return;
             }
 
-            const matrixContentWidth = blockCount * blockSize + Math.max(0, blockCount - 1) * blockGap;
-            barElement.style.width = `${matrixContentWidth + barHorizontalPadding}px`;
-            barElement.style.maxWidth = '100%';
-            barElement.style.setProperty('--matrix-size', matrix);
-            barElement.style.setProperty('--matrix-dot-size', `${dotSize}px`);
-            barElement.style.setProperty('--matrix-dot-gap', `${dotGap}px`);
-            barElement.style.setProperty('--matrix-block-gap', `${blockGap}px`);
-            barElement.style.setProperty('--matrix-block-count', blockCount);
-            const dotsPerBlock = matrix * matrix;
-            const totalDots = blockCount * dotsPerBlock;
-            const filledDots = Math.round(totalDots * fill / 100);
-            const renderSignature = `matrix:${matrix}:${blockCount}:${filledDots}`;
-            if (barElement.dataset.renderSignature === renderSignature) return;
-            barElement.dataset.renderSignature = renderSignature;
+            bar.style.width = `${blockCount * blockSize + (blockCount - 1) * blockGap + padding}px`;
+            bar.style.setProperty('--matrix-size', matrix);
+            bar.style.setProperty('--matrix-dot-size', `${dotSize}px`);
+            bar.style.setProperty('--matrix-dot-gap', `${dotGap}px`);
+            bar.style.setProperty('--matrix-block-gap', `${blockGap}px`);
             const fragment = document.createDocumentFragment();
-            let consumed = 0;
-
+            const dotsPerBlock = matrix * matrix;
             for (let blockIndex = 0; blockIndex < blockCount; blockIndex++) {
                 const block = document.createElement('span');
                 block.className = 'matrix-block';
-                const blockFill = Math.max(0, Math.min(dotsPerBlock, filledDots - consumed));
-                if (blockFill === dotsPerBlock) block.classList.add('is-complete');
-                else if (blockFill > 0) block.classList.add('is-active');
-                const sequence = stableProgressSequence(dotsPerBlock, `${barElement.id}:${matrix}:${blockIndex}`);
-                const filledIndexes = new Set(sequence.slice(0, blockFill));
-                for (let dotIndex = 0; dotIndex < dotsPerBlock; dotIndex++) {
+                const dots = Array.from({ length: dotsPerBlock }, () => {
                     const dot = document.createElement('i');
-                    dot.className = filledIndexes.has(dotIndex) ? 'matrix-dot is-filled' : 'matrix-dot';
-                    block.append(dot);
+                    dot.className = 'matrix-dot';
+                    return dot;
+                });
+                block.append(...dots);
+                for (const index of stableProgressSequence(dotsPerBlock, `${bar.id}:${matrix}:${blockIndex}`)) {
+                    motion.dots.push(dots[index]);
                 }
                 fragment.append(block);
-                consumed += blockFill;
             }
-            barElement.replaceChildren(fragment);
+            bar.replaceChildren(fragment);
+        }
+
+        function renderProgressBar(bar, fillPercentage, remainingPercentage, options = {}) {
+            if (!bar) return;
+            const fill = Math.max(0, Math.min(100, Number(fillPercentage) || 0));
+            const remaining = Math.max(0, Math.min(100, Number(remainingPercentage) || 0));
+            const status = options.updateStatus || '';
+            const busy = status === 'checking' || status === 'downloading';
+            bar.dataset.fill = String(fill);
+            bar.dataset.remaining = String(remaining);
+            bar.dataset.unlimited = String(Boolean(options.unlimited));
+            bar.dataset.updateStatus = status;
+            bar.classList.toggle('bar-unlimited', options.unlimited === true);
+            bar.classList.toggle('update-progress', Boolean(status));
+            bar.classList.toggle('is-active', busy);
+            bar.classList.toggle('is-complete', status === 'ready');
+            if (options.unlimited) bar.classList.remove('bar-good', 'bar-warn', 'bar-danger', 'bar-critical');
+            else if (status) {
+                bar.classList.toggle('bar-good', status !== 'failed');
+                bar.classList.toggle('bar-critical', status === 'failed');
+            } else setFlexibleBarColor(bar, remaining);
+            if (status) {
+                if (status === 'checking') bar.removeAttribute('aria-valuenow');
+                else bar.setAttribute('aria-valuenow', String(Math.round(fill)));
+            }
+
+            let motion = progressMotion.get(bar);
+            if (!motion) {
+                motion = { value: 0, velocity: 0, target: 0, frameTime: 0, dots: [], dotPosition: 0, layout: '' };
+                progressMotion.set(bar, motion);
+            }
+            motion.target = fill;
+            if (reduceProgressMotion.matches) {
+                motion.value = fill;
+                motion.velocity = 0;
+                movingProgressBars.delete(bar);
+            } else if ((motion.value !== fill || motion.velocity !== 0) && !movingProgressBars.has(bar)) {
+                motion.frameTime = performance.now();
+                movingProgressBars.add(bar);
+                if (!progressFrame) progressFrame = requestAnimationFrame(animateProgress);
+            }
+            layoutProgressBar(bar, motion);
+            paintProgress(bar, motion);
+        }
+
+        function refreshProgressLayout(bar) {
+            const motion = progressMotion.get(bar);
+            if (!motion) return;
+            layoutProgressBar(bar, motion);
+            paintProgress(bar, motion);
         }
 
         function rerenderProgressBars() {
-            PROGRESS_BAR_IDS.forEach(id => {
-                const bar = document.getElementById(id);
-                if (!bar || bar.dataset.fill === undefined) return;
-                renderProgressBar(bar, bar.dataset.fill, bar.dataset.remaining, {
-                    unlimited: bar.dataset.unlimited === 'true',
-                    update: bar.dataset.update === 'true',
-                    active: bar.dataset.active === 'true'
-                });
-            });
+            for (const id of PROGRESS_BAR_IDS) refreshProgressLayout(document.getElementById(id));
         }
 
         function initializeProgressResizeObserver() {
@@ -831,14 +889,7 @@
                 if (!pendingBars.size) return;
                 cancelAnimationFrame(window.__progressTrackResizeFrame || 0);
                 window.__progressTrackResizeFrame = requestAnimationFrame(() => {
-                    pendingBars.forEach(bar => {
-                        if (bar.dataset.fill === undefined) return;
-                        renderProgressBar(bar, bar.dataset.fill, bar.dataset.remaining, {
-                            unlimited: bar.dataset.unlimited === 'true',
-                            update: bar.dataset.update === 'true',
-                            active: bar.dataset.active === 'true'
-                        });
-                    });
+                    pendingBars.forEach(refreshProgressLayout);
                     pendingBars.clear();
                 });
             });

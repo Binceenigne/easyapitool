@@ -40,6 +40,7 @@
     let eventStreamGeneration = 0;
     let eventStreamAbortController = null;
     let appUpdateState = { status: 'idle', percent: 0, message: '尚未检查服务器更新' };
+    let updateCheck = null;
     let serviceConfig = {
         baseUrl: String(window.__EASYAPITOOL_SERVICE_URL__ || DEFAULT_ANDROID_SERVICE_URL).trim().replace(/\/$/, ''),
         bearerToken: String(window.__EASYAPITOOL_SERVICE_TOKEN__ || '').trim()
@@ -152,7 +153,8 @@
         });
         const response = await fetch(publicServiceUrl('/app/update', `?${params}`), {
             headers: { Accept: 'application/json' },
-            cache: 'no-store'
+            cache: 'no-store',
+            signal: AbortSignal.timeout?.(12000)
         });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
@@ -174,6 +176,11 @@
                 downloadUrl: publicServiceUrl('/app/update/download?platform=android')
             }
         };
+    }
+
+    function latestAndroidUpdate() {
+        if (!updateCheck) updateCheck = checkAndroidUpdate().finally(() => { updateCheck = null; });
+        return updateCheck;
     }
 
     function requireService() {
@@ -905,7 +912,20 @@
             body: JSON.stringify({ keyId: String(keyId), prompt })
         }),
         append_image_stream_debug: async () => ({ ok: true }),
-        report_startup: async () => ({ ok: true }),
+        report_startup: async stage => {
+            if (stage === 'frontend_interactive' && appUpdateState.status === 'idle') {
+                const before = appUpdateState;
+                void latestAndroidUpdate().then(update => {
+                    if (appUpdateState !== before) return;
+                    appUpdateState = {
+                        ...update,
+                        showPrompt: update.available && update.latestVersion !== localPreferences.get('ignored-app-update', '')
+                    };
+                    window.applyUpdateState?.(appUpdateState);
+                }).catch(() => {});
+            }
+            return { ok: true };
+        },
         refresh_now: async () => {
             await ensureDeviceRegistration();
             await registerAllKeys();
@@ -927,22 +947,35 @@
         open_benchmark: async () => ({ ok: false, error: 'Android 版本不提供基准测试窗口' }),
         restart_app: async () => { window.location.reload(); return { ok: true }; },
         check_for_updates: async () => {
-            const update = await checkAndroidUpdate();
+            const update = await latestAndroidUpdate();
             appUpdateState = update;
             return { ok: true, update };
         },
         download_update: async () => {
-            const update = await checkAndroidUpdate();
+            const update = await latestAndroidUpdate();
             if (!update.available) {
                 appUpdateState = update;
                 return { ok: true, update };
             }
             const release = update.release || {};
-            const result = await pluginCall('downloadAppUpdate', {
-                endpoint: release.downloadUrl,
-                sha256: release.sha256,
-                sizeBytes: Number(release.downloadSize) || 0
+            const sizeBytes = Number(release.downloadSize) || 0;
+            appUpdateState = { ...update, status: 'downloading', percent: 0, message: '正在连接下载源' };
+            const listener = await native.addListener?.('appUpdateProgress', event => {
+                const downloaded = Math.max(0, Number(event.bytes) || 0);
+                const percent = sizeBytes > 0 ? Math.min(99, 100 * downloaded / sizeBytes) : 0;
+                const message = event.verifying ? '正在校验安装包' : `正在下载更新 · ${(downloaded / 1048576).toFixed(1)} MB`;
+                appUpdateState = { ...appUpdateState, percent, message };
+                window.applyUpdateState?.(appUpdateState);
             });
+            let result;
+            try {
+                result = await pluginCall('downloadAppUpdate', { endpoint: release.downloadUrl, sha256: release.sha256, sizeBytes });
+            } catch (error) {
+                appUpdateState = { ...appUpdateState, status: 'failed', percent: 0, message: error.message || String(error) };
+                throw error;
+            } finally {
+                if (listener) await listener.remove().catch(() => {});
+            }
             appUpdateState = {
                 ...update,
                 status: 'ready',
@@ -962,8 +995,15 @@
             return pluginCall('installAppUpdate', { path });
         },
         defer_update_restart: async () => ({ ok: true, update: { status: 'idle' } }),
-        dismiss_update_prompt: async () => ({ update: { status: 'idle' } }),
-        ignore_update_version: async () => ({ ok: true, update: { status: 'idle' } }),
+        dismiss_update_prompt: async () => {
+            appUpdateState = { ...appUpdateState, showPrompt: false };
+            return { update: appUpdateState };
+        },
+        ignore_update_version: async version => {
+            localPreferences.set('ignored-app-update', version);
+            appUpdateState = { ...appUpdateState, showPrompt: false };
+            return { ok: true, update: appUpdateState };
+        },
         resolve_close_action: async () => ({ ok: true })
     };
 

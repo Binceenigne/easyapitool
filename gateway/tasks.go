@@ -280,7 +280,8 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 	}
 	m.publish(id, object{"type": "set_started", "setId": id.id, "requestedCount": opts.n, "prompt": req.Prompt, "imageModel": opts.model}, false)
 	prompt := req.Prompt
-	if mode := objectString(req.Options, "reasoningMode"); mode != "" && mode != "instant" {
+	mode := objectString(req.Options, "reasoningMode")
+	if mode != "" && (mode != "instant" || settings != nil && settings.ReasoningModes[mode].Model != "") {
 		var usage object
 		var err error
 		prompt, usage, err = m.preparePrompt(ctx, id, key, ip, req, settings)

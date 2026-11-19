@@ -25,7 +25,7 @@ const maxImageEnvelope = (maxImageBytes*4/3 + 1<<20)
 type imageOptions struct {
 	model, size, ratio, quality, complexity, format, background string
 	svg                                                         modelPreset
-	compression                                                 *int
+	compression, frameCount, frameDuration                      *int
 	partial, n                                                  int
 	stream                                                      bool
 }
@@ -116,6 +116,28 @@ func (g *gateway) imageOptions(options object, edit bool, settings *modelSetting
 		v := int(n)
 		o.compression = &v
 	}
+	for _, frame := range []struct {
+		field, label string
+		dest         **int
+		min, max     int64
+	}{
+		{"frame_count", "GIF 帧数须为 2 至 16", &o.frameCount, 2, 16},
+		{"frame_duration_ms", "GIF 每帧时长须为 20 至 2000 毫秒", &o.frameDuration, 20, 2000},
+	} {
+		value := options[frame.field]
+		if value == nil {
+			continue
+		}
+		if o.format != "gif" {
+			return o, errors.New("帧数和每帧时长仅适用于 GIF")
+		}
+		n, ok := tokenCount(value)
+		if !ok || n < frame.min || n > frame.max {
+			return o, errors.New(frame.label)
+		}
+		integer := int(n)
+		*frame.dest = &integer
+	}
 	return o, nil
 }
 
@@ -151,6 +173,12 @@ func (m *mobile) renderImage(ctx context.Context, id credentialID, key keyInput,
 	}
 	if o.compression != nil {
 		fields["output_compression"] = *o.compression
+	}
+	if o.frameCount != nil {
+		fields["frame_count"] = *o.frameCount
+	}
+	if o.frameDuration != nil {
+		fields["frame_duration_ms"] = *o.frameDuration
 	}
 	if o.stream {
 		fields["stream"], fields["partial_images"] = true, o.partial

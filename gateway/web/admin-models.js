@@ -6,7 +6,14 @@
   const search = $('model-search');
   const preview = $('app-preview');
   const slots = ['luna', 'terra', 'sol'];
+  const modes = ['Instant', 'Flash', 'Medium', 'High', 'Extra', 'Max'];
+  const featureTarget = $('model-feature-target');
+  const features = {
+    complexity: $('model-feature-complexity'),
+    animation: $('model-feature-animation')
+  };
   const selected = new Set();
+  const imageFeatures = new Map();
   let found = [];
   let dirty = false;
   let revision = 0;
@@ -21,6 +28,27 @@
     ['xhigh', '超高 · xhigh'],
     ['max', '最大 · max']
   ];
+  for (const mode of modes) {
+    const preset = node('fieldset', 'model-slot');
+    const inputs = node('div', 'model-slot-fields');
+    const model = node('input');
+    model.name = mode + 'Model';
+    model.setAttribute('list', 'model-catalog');
+    model.spellcheck = false;
+    model.required = mode !== 'Instant';
+    if (!model.required) model.placeholder = '留空直接生图';
+    const depth = node('select');
+    depth.name = mode + 'Effort';
+    depth.dataset.effort = '';
+    depth.required = true;
+    const modelLabel = node('label', '', '默认模型');
+    const depthLabel = node('label', '', '思考深度');
+    modelLabel.append(model);
+    depthLabel.append(depth);
+    inputs.append(modelLabel, depthLabel);
+    preset.append(node('legend', '', mode), inputs);
+    $('model-reasoning-presets').append(preset);
+  }
   for (const field of form.querySelectorAll('[data-effort]')) {
     const options = field.name === 'svgEffort' ? [['', '上游默认'], ...efforts] : efforts;
     field.replaceChildren(...options.map(([value, label]) => new Option(label, value)));
@@ -28,12 +56,15 @@
 
   function draft() {
     const fields = form.elements;
-    const reasoning = {};
-    for (const slot of slots) {
-      reasoning[slot] = { model: fields[slot + 'Model'].value.trim(), effort: fields[slot + 'Effort'].value };
-    }
+    const reasoning = Object.fromEntries(slots.map(slot => [slot, {
+      ...state.appModels.reasoning[slot], model: fields[slot + 'Model'].value.trim()
+    }]));
+    const reasoningModes = Object.fromEntries(modes.map(mode => [mode.toLowerCase(), {
+      model: fields[mode + 'Model'].value.trim(), effort: fields[mode + 'Effort'].value
+    }]));
     return {
-      revision, defaultImage: fields.defaultImage.value, imageModels: [...selected], reasoning,
+      revision, defaultImage: fields.defaultImage.value, imageModels: [...selected], reasoning, reasoningModes,
+      imageFeatures: Object.fromEntries([...imageFeatures].filter(([model]) => selected.has(model))),
       svg: { enabled: fields.svgEnabled.checked, model: fields.svgModel.value.trim(), effort: fields.svgEffort.value }
     };
   }
@@ -85,12 +116,27 @@
     select.replaceChildren(...[...selected].map(model => new Option(model, model)));
     if (selected.has(preferred)) select.value = preferred;
     select.disabled = selected.size === 0;
+    const active = featureTarget.value;
+    featureTarget.replaceChildren(...[...selected].map(model => new Option(model, model)));
+    featureTarget.value = selected.has(active) ? active : select.value;
+    featureTarget.disabled = select.disabled;
+    syncFeatures();
     $('selected-images').textContent = '已开放 ' + selected.size + ' 个';
+  }
+
+  function syncFeatures() {
+    const model = featureTarget.value;
+    const enabledByDefault = /^gpt-image-2\.6-(?:flare|sunburst)(?:-|$)/.test(model);
+    for (const [feature, field] of Object.entries(features)) {
+      field.disabled = !model;
+      field.checked = imageFeatures.get(model)?.[feature] ?? enabledByDefault;
+    }
   }
 
   function updateCatalog() {
     const current = state.appModels;
-    const extra = [current.svg.model, ...slots.map(slot => current.reasoning[slot].model)];
+    const extra = [current.svg.model, ...Object.values(current.reasoning).map(preset => preset.model),
+      ...Object.values(current.reasoningModes).map(preset => preset.model)];
     $('model-catalog').replaceChildren(...[...new Set([...listModels(), ...extra])].filter(Boolean).sort().map(model => new Option(model, model)));
     renderImageModels();
   }
@@ -104,10 +150,16 @@
     revision = profile.revision;
     selected.clear();
     profile.imageModels.forEach(model => selected.add(model));
+    imageFeatures.clear();
+    for (const [model, options] of Object.entries(profile.imageFeatures)) imageFeatures.set(model, options);
     const fields = form.elements;
     for (const slot of slots) {
       fields[slot + 'Model'].value = profile.reasoning[slot].model;
-      fields[slot + 'Effort'].value = profile.reasoning[slot].effort;
+    }
+    for (const mode of modes) {
+      const preset = profile.reasoningModes[mode.toLowerCase()];
+      fields[mode + 'Model'].value = preset.model;
+      fields[mode + 'Effort'].value = preset.effort;
     }
     fields.svgEnabled.checked = profile.svg.enabled;
     fields.svgModel.value = profile.svg.model;
@@ -172,6 +224,13 @@
     updateCatalog();
   });
   search.addEventListener('input', renderImageModels);
+  featureTarget.addEventListener('change', syncFeatures);
+  for (const field of Object.values(features)) {
+    field.addEventListener('change', () => {
+      imageFeatures.set(featureTarget.value, { complexity: features.complexity.checked, animation: features.animation.checked });
+      markDirty();
+    });
+  }
   form.addEventListener('input', event => {
     if (event.target !== search && event.target.name) markDirty();
   });

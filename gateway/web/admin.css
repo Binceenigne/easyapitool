@@ -274,9 +274,8 @@ dialog[open] { display: flex; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .model-settings-grid > section + section { border-left: 1px solid var(--line); }
-.model-slot + .model-slot { border-top: 1px solid var(--line); padding-top: .65rem; }
 .model-slot legend { font-weight: 650; }
-.model-slot legend small { color: var(--muted); margin-left: .35rem; font-weight: 400; }
+.model-feature-switches { display: flex; flex-wrap: wrap; gap: .65rem 1rem; margin-top: .65rem; }
 .model-list { border: 1px solid var(--edge); max-height: 13.2rem; min-height: 4rem; overflow-y: auto; }
 .model-list > .hint { padding: .65rem; }
 .model-choice {
@@ -290,7 +289,12 @@ dialog[open] { display: flex; }
 .model-choice input { flex: none; }
 .model-choice:hover { background: var(--surface); }
 .model-choice + .model-choice { border-top: 1px solid var(--line); }
-.model-svg { border-top: 1px solid var(--line); }
+.model-svg, .model-presets { border-top: 1px solid var(--line); }
+#model-reasoning-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 1.4rem;
+}
 .model-svg .model-slot-fields { max-width: 42rem; }
 .model-switch { display: inline-flex; align-items: center; gap: .4rem; cursor: pointer; }
 .model-error { margin: .9rem 1.2rem; }
@@ -307,7 +311,7 @@ dialog[open] { display: flex; }
   background: var(--card);
 }
 @media (max-width: 900px) {
-  .model-settings-grid { grid-template-columns: minmax(0, 1fr); }
+  .model-settings-grid, #model-reasoning-presets { grid-template-columns: minmax(0, 1fr); }
   .model-settings-grid > section + section { border-left: 0; border-top: 1px solid var(--line); }
 }
 @media (max-width: 430px) {

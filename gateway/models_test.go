@@ -5,9 +5,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/gif"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -63,7 +68,9 @@ func TestManagedModelConfiguration(t *testing.T) {
 		case "/v1/responses":
 			var body object
 			json.NewDecoder(r.Body).Decode(&body)
-			if body["model"] != "text-fixture" || asObject(body["reasoning"])["effort"] != "high" {
+			want := map[string]string{"text-fixture": "high", "advanced-fixture": "max", "quick-fixture": "minimal"}
+			model := objectString(body, "model")
+			if want[model] == "" || asObject(body["reasoning"])["effort"] != want[model] {
 				t.Error("configured reasoning preset was not sent upstream")
 			}
 			seenReasoning.Store(true)
@@ -110,7 +117,10 @@ func TestManagedModelConfiguration(t *testing.T) {
 	settings := modelDefaults(g.cfg)
 	settings.DefaultImage, settings.ImageModels = "image-fixture", []string{"image-fixture"}
 	settings.SVG = svgSettings{Enabled: true, modelPreset: modelPreset{Model: "svg-fixture", Effort: "low"}}
-	settings.Reasoning["luna"] = modelPreset{Model: "text-fixture", Effort: "high"}
+	settings.Reasoning["luna"] = modelPreset{Model: "advanced-fixture", Effort: "medium"}
+	settings.ReasoningModes["flash"] = modelPreset{Model: "text-fixture", Effort: "high"}
+	settings.ReasoningModes["instant"] = modelPreset{Model: "quick-fixture", Effort: "minimal"}
+	settings.ImageFeatures = map[string]imageFeatures{"image-fixture": {Complexity: true, Animation: true}}
 	payload, _ := json.Marshal(settings)
 	if w := request("POST", "/admin/models", payload, cookie); w.Code != 200 || !strings.Contains(w.Body.String(), `"svg":{"enabled":true,"model":"svg-fixture","effort":"low"}`) {
 		t.Fatalf("saving models failed: %d", w.Code)
@@ -125,7 +135,9 @@ func TestManagedModelConfiguration(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer "+secret)
 	w := httptest.NewRecorder()
 	g.proxyUsage(w, r)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"defaultImage":"image-fixture"`) {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"defaultImage":"image-fixture"`) ||
+		!strings.Contains(w.Body.String(), `"flash":{"model":"text-fixture","effort":"high"}`) ||
+		!strings.Contains(w.Body.String(), `"image-fixture":{"complexity":true,"animation":true}`) {
 		t.Fatal("client usage lacks managed model settings")
 	}
 	if _, err := g.imageOptions(object{"imageModel": "misconfigured"}, false, g.appModels()); err == nil {
@@ -152,5 +164,110 @@ func TestManagedModelConfiguration(t *testing.T) {
 	result, err := m.renderImage(ctx, job, key, ip, prompt, options, nil, 0)
 	if err != nil || !seenImage.Load() || result["mimeType"] != "image/svg+xml" {
 		t.Fatalf("managed SVG generation failed: %v", err)
+	}
+	for _, mode := range []object{
+		{"reasoningMode": "advanced", "reasoningModel": "luna", "reasoningEffort": "max"},
+		{"reasoningMode": "instant"},
+	} {
+		seenReasoning.Store(false)
+		input.Options = mode
+		if _, _, err := m.preparePrompt(ctx, job, key, ip, input, g.appModels()); err != nil || !seenReasoning.Load() {
+			t.Fatalf("managed reasoning %v failed: %v", mode, err)
+		}
+	}
+}
+
+func TestLegacyModelSettingsSeedNormalModes(t *testing.T) {
+	g := testGateway(t)
+	legacy := modelDefaults(g.cfg)
+	legacy.Reasoning["terra"] = modelPreset{Model: "existing-custom-terra", Effort: "high"}
+	legacy.ReasoningModes, legacy.ImageFeatures = nil, nil
+	payload, _ := json.Marshal(legacy)
+	if _, err := g.store.db.ExecContext(t.Context(), "INSERT INTO gateway_settings(name,value) VALUES ('models',?)", payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.loadModels(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	modes := g.appModels().ReasoningModes
+	if len(modes) != 6 || modes["instant"].Model != "" || modes["extra"] != legacy.Reasoning["terra"] {
+		t.Fatalf("legacy presets were not preserved: %+v", modes)
+	}
+}
+
+func TestAnimatedImageGenerateAndEdit(t *testing.T) {
+	g := testGateway(t)
+	palette := color.Palette{color.Black, color.White}
+	first := image.NewPaletted(image.Rect(0, 0, 2, 2), palette)
+	second := image.NewPaletted(first.Bounds(), palette)
+	second.SetColorIndex(0, 0, 1)
+	var animation bytes.Buffer
+	if err := gif.EncodeAll(&animation, &gif.GIF{Image: []*image.Paletted{first, second}, Delay: []int{35, 35}}); err != nil {
+		t.Fatal(err)
+	}
+	up := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		want := map[string]string{"output_format": "gif", "frame_count": "2", "frame_duration_ms": "350", "complexity": "medium"}
+		switch r.URL.Path {
+		case "/v1/images/edits":
+			for field, value := range want {
+				if r.FormValue(field) != value {
+					t.Errorf("wrong edit field %s = %q", field, r.FormValue(field))
+				}
+			}
+			if r.FormValue("stream") != "" || r.FormValue("partial_images") != "" {
+				t.Error("GIF edits cannot be streamed")
+			}
+		case "/v1/images/generations":
+			var body object
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body["output_format"] != "gif" || body["frame_count"] != float64(2) || body["frame_duration_ms"] != float64(350) ||
+				body["complexity"] != "medium" || body["stream"] != nil || body["partial_images"] != nil {
+				t.Errorf("wrong GIF generation fields: %v", body)
+			}
+		default:
+			t.Errorf("unexpected animation route: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(object{"data": []object{{"b64_json": base64.StdEncoding.EncodeToString(animation.Bytes())}}})
+	}))
+	defer up.Close()
+	g.client = up.Client()
+	account := addUpstream(t, g, "animation", "", up.URL+"/v1")
+	k, secret := issue(t, g, accessKey{Name: "animate", Upstream: account.ID})
+	m := newMobile(t.Context(), g, t.TempDir())
+	key := keyInput{KeyID: k.ID, Value: secret, BaseURL: g.cfg.publicBase}
+	ip := netip.MustParseAddr("127.0.0.1")
+	var pngBytes bytes.Buffer
+	if err := png.Encode(&pngBytes, first); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := m.saveAsset("device", &pngBytes, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, refs := range [][]asset{nil, {ref}} {
+		options, err := g.imageOptions(object{"output_format": "gif", "complexity": "medium", "frame_count": float64(2), "frame_duration_ms": float64(350)}, len(refs) != 0, g.appModels())
+		if err != nil {
+			t.Fatal(err)
+		}
+		item, err := m.renderImage(t.Context(), credentialID{"device", "gif"}, key, ip, "test", options, refs, 0)
+		if err != nil || item["mimeType"] != "image/gif" || item["resourceId"] != item["previewResourceId"] {
+			t.Fatalf("GIF original/preview failed: %v", err)
+		}
+		m.mu.Lock()
+		original := m.assets[objectString(item, "resourceId")]
+		m.mu.Unlock()
+		saved, err := os.ReadFile(original.path)
+		if err != nil || !bytes.Equal(saved, animation.Bytes()) {
+			t.Fatal("the generated animation did not survive asset storage")
+		}
+	}
+	if _, err := g.imageOptions(object{"output_format": "gif", "frame_count": float64(17)}, false, nil); err == nil {
+		t.Fatal("accepted an invalid frame count")
+	}
+	if _, err := g.imageOptions(object{"output_format": "png", "frame_duration_ms": float64(200)}, false, nil); err == nil {
+		t.Fatal("allowed an animation parameter for a still image")
 	}
 }

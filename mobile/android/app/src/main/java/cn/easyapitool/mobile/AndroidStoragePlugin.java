@@ -11,6 +11,7 @@ import android.database.sqlite.SQLiteOpenHelper;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.security.keystore.KeyGenParameterSpec;
@@ -44,6 +45,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.LongConsumer;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -185,7 +187,8 @@ public class AndroidStoragePlugin extends Plugin {
         String endpoint = call.getString("endpoint", "").trim();
         String expectedSha256 = call.getString("sha256", "").trim().toLowerCase();
         long expectedSize = call.getLong("sizeBytes", 0L);
-        if (!endpoint.startsWith("https://") || expectedSha256.length() != 64 || expectedSize <= 0) {
+        if (!endpoint.startsWith("https://") || !expectedSha256.matches("[a-f0-9]{64}")
+            || expectedSize <= 0 || expectedSize > MAX_UPDATE_BYTES) {
             call.reject("更新下载参数无效");
             return;
         }
@@ -196,13 +199,16 @@ public class AndroidStoragePlugin extends Plugin {
                     throw new IOException("无法创建更新目录");
                 }
                 HttpURLConnection connection = openConnection(endpoint, null, "GET");
-                int status = connection.getResponseCode();
-                if (status < 200 || status >= 300) {
+                long sizeBytes;
+                try {
+                    int status = connection.getResponseCode();
+                    if (status < 200 || status >= 300) throw new IOException("HTTP " + status);
+                    sizeBytes = copyLimited(connection.getInputStream(), target, expectedSize, downloaded ->
+                        notifyListeners("appUpdateProgress", new JSObject().put("bytes", downloaded)));
+                } finally {
                     connection.disconnect();
-                    throw new IOException("HTTP " + status);
                 }
-                long sizeBytes = copyLimited(connection.getInputStream(), target, MAX_UPDATE_BYTES);
-                connection.disconnect();
+                notifyListeners("appUpdateProgress", new JSObject().put("bytes", sizeBytes).put("verifying", true));
                 if (sizeBytes != expectedSize || !expectedSha256.equals(sha256File(target))) {
                     target.delete();
                     throw new IOException("更新安装包校验失败");
@@ -683,9 +689,13 @@ public class AndroidStoragePlugin extends Plugin {
     }
 
     private long copyLimited(InputStream input, File destination, long maximum) throws IOException {
+        return copyLimited(input, destination, maximum, null);
+    }
+
+    private long copyLimited(InputStream input, File destination, long maximum, LongConsumer progress) throws IOException {
         if (input == null) throw new IOException("无法读取文件");
         try (InputStream source = new BufferedInputStream(input); OutputStream output = new BufferedOutputStream(new FileOutputStream(destination))) {
-            return copy(source, output, maximum);
+            return copy(source, output, maximum, progress);
         } catch (IOException exception) {
             destination.delete();
             throw exception;
@@ -693,13 +703,25 @@ public class AndroidStoragePlugin extends Plugin {
     }
 
     private long copy(InputStream input, OutputStream output, long maximum) throws IOException {
+        return copy(input, output, maximum, null);
+    }
+
+    private long copy(InputStream input, OutputStream output, long maximum, LongConsumer progress) throws IOException {
         byte[] buffer = new byte[BUFFER_BYTES];
         long total = 0;
+        long nextProgress = 0;
         int read;
         while ((read = input.read(buffer)) != -1) {
             total += read;
             if (total > maximum) throw new IOException("文件超过大小限制");
             output.write(buffer, 0, read);
+            if (progress != null) {
+                long now = SystemClock.elapsedRealtime();
+                if (now >= nextProgress) {
+                    progress.accept(total);
+                    nextProgress = now + 120;
+                }
+            }
         }
         output.flush();
         return total;

@@ -185,9 +185,7 @@
 #imagePromptModalTextarea.is-dragging-image { border-color: var(--brand); background: var(--brand-soft); }
 
 .image-edit-prompt { display: grid; flex: 0 1 auto; min-height: 0; gap: 4px; }
-.image-edit-prompt > span,
-.image-generation-control-grid label > span,
-.image-count-control > span { color: var(--muted); font-size: 8px; font-weight: 700; }
+.image-edit-prompt > span { color: var(--muted); font-size: 8px; font-weight: 700; }
 .image-edit-prompt-shell { position: relative; border: 1px solid var(--border); background: var(--bg); }
 .image-edit-prompt textarea {
     display: block;
@@ -251,12 +249,6 @@
     line-height: 1.7;
 }
 .image-generation-footer { display: grid; min-width: 0; margin-top: auto; gap: 6px; }
-.image-transparency-model-controls {
-    display: grid;
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-    align-items: start;
-    gap: 12px;
-}
 #imageEditStatus { min-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .image-generation-command-bar { position: relative; width: 100%; min-width: 0; justify-content: space-between; gap: 6px; }
 .image-generation-controls-wrap { position: relative; flex: 1 1 auto; min-width: 0; }
@@ -305,13 +297,13 @@
     left: var(--image-popover-left, 12px);
     display: grid;
     width: var(--image-popover-width, 100%);
-    padding: 16px;
-    gap: 14px;
+    padding: 12px;
+    gap: 9px;
     max-height: calc(100vh - var(--image-popover-bottom, 58px) - 12px);
     overflow-y: auto;
     overscroll-behavior: contain;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 0;
     background: var(--surface);
     box-shadow: 0 18px 52px rgba(2, 6, 23, 0.2), 0 2px 10px rgba(2, 6, 23, 0.1);
     opacity: 0;
@@ -322,39 +314,69 @@
 }
 #imageGenerationControlPanel[hidden] { display: none !important; }
 #imageGenerationControlPanel.is-open { opacity: 1; pointer-events: auto; transform: translate3d(0, 0, 0) scale(1); }
-.image-control-section { display: grid; gap: 7px; }
-.image-control-section > span,
-.image-quality-controls .image-control-section > span { color: var(--muted); font-size: 9px; font-weight: 700; }
-.image-quality-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.image-control-section { display: grid; min-width: 0; gap: 4px; }
+.image-control-section[hidden] { display: none; }
+.image-control-section > span { color: var(--muted); font-size: 10px; font-weight: 700; }
+.image-generation-control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 #imageGenerationControlPanel select,
-#imageGenerationControlPanel input[type='number'] {
+#imageGenerationControlPanel input[type='number'],
+#imageModelButton {
     box-sizing: border-box;
     width: 100%;
     min-height: 32px;
     min-width: 0;
     border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 4px 6px;
-    background: var(--surface);
+    border-radius: 0;
+    padding: 4px 8px;
+    background: var(--bg);
     color: var(--text);
     font: inherit;
 }
 #imageGenerationControlPanel select:disabled { opacity: .6; }
-#imageEditCompressionLabel[hidden] { display: none; }
+#imageEditCompressionLabel { grid-column: 1 / -1; }
+.image-model-picker { position: relative; min-width: 0; }
+#imageModelButton { display: flex; justify-content: space-between; align-items: center; gap: 6px; text-align: left; }
+#imageModelButton[aria-expanded="true"] { border-color: var(--brand); }
+#imageModelValue { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#imageModelButton svg { width: 13px; height: 13px; flex: none; }
+.image-model-menu {
+    position: absolute;
+    z-index: 2;
+    inset: calc(100% + 2px) 0 auto;
+    max-height: 176px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    box-shadow: 0 4px 12px rgba(2, 6, 23, .15);
+}
+.image-model-menu button {
+    display: block;
+    width: 100%;
+    min-height: 30px;
+    padding: 5px 8px;
+    overflow: hidden;
+    color: var(--text);
+    background: transparent;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.image-model-menu button + button { border-top: 1px solid var(--border); }
+.image-model-menu button:hover, .image-model-menu button:focus-visible { background: var(--surface-strong); outline-offset: -2px; }
+.image-model-menu button[aria-selected='true'] { background: var(--brand-soft); color: var(--brand); font-weight: 700; }
 .image-control-segmented {
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: minmax(0, 1fr);
     padding: 3px;
     gap: 2px;
-    border-radius: 7px;
     background: var(--surface-strong);
 }
 .image-control-segmented button {
     min-width: 0;
-    min-height: 34px;
-    padding: 6px 8px;
-    border-radius: 5px;
+    min-height: 30px;
+    padding: 5px 3px;
     background: transparent;
     color: var(--muted);
     font-size: 10px;
@@ -373,17 +395,15 @@
     grid-template-columns: repeat(9, minmax(0, 1fr));
     padding: 3px;
     gap: 2px;
-    border-radius: 7px;
     background: var(--surface-strong);
 }
 .image-aspect-options button {
     display: grid;
     place-items: center;
     min-width: 0;
-    min-height: 62px;
-    padding: 7px 3px;
-    gap: 5px;
-    border-radius: 5px;
+    min-height: 42px;
+    padding: 4px 2px;
+    gap: 3px;
     background: transparent;
     color: var(--muted);
     transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
@@ -397,7 +417,6 @@
 }
 .image-aspect-options svg { width: 17px; height: 17px; }
 .image-aspect-options span { font-size: 9px; }
-.image-count-control { margin-top: 0; }
 .image-reasoning-control {
     --reasoning-hover-shadow: 0 0 12px rgba(148, 163, 184, 0.3), 0 0 22px rgba(148, 163, 184, 0.16);
     position: relative;
@@ -917,6 +936,7 @@
     font-weight: 600;
     transition: color 300ms ease, text-shadow 300ms ease;
 }
+.advanced-y-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .advanced-y-label.is-active,
 .advanced-x-label.is-active { color: #1d4ed8; font-weight: 700; text-shadow: 0 0 4px rgba(59, 130, 246, 0.35); }
 .advanced-pad {
