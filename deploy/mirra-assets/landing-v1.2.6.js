@@ -17,7 +17,7 @@ if (!reducedMotion.matches && 'IntersectionObserver' in window) {
 }
 
 const apiBase = location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(location.hostname)
-  ? 'https://imggen.djyx.me' : '';
+  ? 'https://imggen.djyx.pw' : '';
 
 document.querySelectorAll('[data-download-platform]').forEach(link => {
   link.href = `${apiBase}/v1/app/update/download?platform=${link.dataset.downloadPlatform}`;

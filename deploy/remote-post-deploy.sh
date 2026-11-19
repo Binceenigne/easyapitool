@@ -13,7 +13,7 @@ printf '\n%s\n' '--- state after cleanup ---'
     | /opt/easyapitool/.venv/bin/python -c 'import json,sys; value=json.load(sys.stdin); print(json.dumps({"keys":len(value.get("keys",[])),"storageMode":value.get("storageMode"),"serverPersistence":value.get("serverPersistence")},ensure_ascii=False))'
 
 printf '%s\n' '--- public domains ---'
-for domain in clife.djyx.me api.djyx.me c.djyx.me; do
+for domain in clife.djyx.pw api.djyx.pw c.djyx.pw; do
     printf '%s: ' "$domain"
     /usr/bin/curl -k -sS -I --max-time 5 "https://$domain/" 2>/dev/null \
         | /usr/bin/head -n 1 || printf '%s\n' 'unreachable'

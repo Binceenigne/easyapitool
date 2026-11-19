@@ -3,7 +3,7 @@ set -euo pipefail
 
 pair_output="$(/usr/local/sbin/easyapitool-pair)"
 pairing_code="${pair_output##*: }"
-base_url="https://clife.djyx.me/easyapitool-api"
+base_url="https://clife.djyx.pw/easyapitool-api"
 
 wrong_status="$(/usr/bin/curl --proto '=https' --tlsv1.2 -sS -o /dev/null -w '%{http_code}' \
     --max-time 10 -X POST "$base_url/api/v1/pair" \

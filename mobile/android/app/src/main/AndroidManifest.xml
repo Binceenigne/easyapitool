@@ -25,7 +25,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="imggen.djyx.me" android:pathPrefix="/v1" />
+                <data android:scheme="https" android:host="imggen.djyx.pw" android:pathPrefix="/v1" />
             </intent-filter>
         </activity>
 

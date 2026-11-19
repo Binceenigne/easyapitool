@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-web_root="/www/wwwroot/clife.djyx.me"
+web_root="/www/wwwroot/clife.djyx.pw"
 challenge_dir="$web_root/.well-known/acme-challenge"
 challenge_file="$challenge_dir/easyapitool-preflight"
 expected="easyapitool-acme-preflight"
@@ -11,9 +11,9 @@ printf '%s\n' "$expected" > "$challenge_file"
 trap 'rm -f "$challenge_file"' EXIT
 
 printf 'local='
-/usr/bin/curl -fsS --max-time 10 -H 'Host: clife.djyx.me' \
+/usr/bin/curl -fsS --max-time 10 -H 'Host: clife.djyx.pw' \
     http://127.0.0.1/.well-known/acme-challenge/easyapitool-preflight
 printf '\npublic='
 /usr/bin/curl -fsS --max-time 10 \
-    http://clife.djyx.me/.well-known/acme-challenge/easyapitool-preflight
+    http://clife.djyx.pw/.well-known/acme-challenge/easyapitool-preflight
 printf '\n'

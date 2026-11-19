@@ -3,7 +3,7 @@ set -euo pipefail
 
 stage=/tmp/imggen-deploy
 app_root=/opt/imggen-api
-web_root=/www/wwwroot/imggen.djyx.me
+web_root=/www/wwwroot/imggen.djyx.pw
 release_root="$app_root/releases/android"
 service_user=imggenapi
 service_group=imggenapi
@@ -61,12 +61,12 @@ cp -a "$stage/mirra-assets/." "$web_root/mirra-assets/"
 chmod -R a+rX "$web_root/mirra-assets"
 install -m 0755 "$stage/imggen-cert-renew-hook.sh" /etc/letsencrypt/renewal-hooks/deploy/imggen-nginx-reload
 
-install -m 0644 "$stage/imggen-http.conf" /www/server/panel/vhost/nginx/imggen.djyx.me.conf
+install -m 0644 "$stage/imggen-http.conf" /www/server/panel/vhost/nginx/imggen.djyx.pw.conf
 /www/server/nginx/sbin/nginx -t -c /www/server/nginx/conf/nginx.conf
 /www/server/nginx/sbin/nginx -s reload
 
-if [[ ! -f /etc/letsencrypt/live/imggen.djyx.me/fullchain.pem ]]; then
-    /usr/bin/certbot certonly --webroot -w "$web_root" -d imggen.djyx.me \
+if [[ ! -f /etc/letsencrypt/live/imggen.djyx.pw/fullchain.pem ]]; then
+    /usr/bin/certbot certonly --webroot -w "$web_root" -d imggen.djyx.pw \
         --non-interactive --agree-tos --register-unsafely-without-email
 fi
 

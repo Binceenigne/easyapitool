@@ -23,4 +23,4 @@ if (-not $devices) {
 & $adbPath install -r $apkPath
 & $adbPath shell am start -W -n cn.easyapitool.mobile/.MainActivity
 & $adbPath shell pm get-app-links cn.easyapitool.mobile
-& $adbPath shell am start -W -a android.intent.action.VIEW -d 'https://imggen.djyx.me/v1/app'
+& $adbPath shell am start -W -a android.intent.action.VIEW -d 'https://imggen.djyx.pw/v1/app'

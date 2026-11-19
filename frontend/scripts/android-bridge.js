@@ -8,8 +8,7 @@
     if (!isAndroid || window.pywebview?.api) return;
 
     document.documentElement.dataset.platform = 'android';
-    const DEFAULT_ANDROID_SERVICE_URL = 'https://imggen.djyx.me/v1';
-    const ANDROID_UPDATE_SERVICE_URL = 'https://imggen.djyx.me/v1';
+    const DEFAULT_ANDROID_SERVICE_URL = 'https://imggen.djyx.pw/v1';
     const EVENT_CURSOR_KEY = 'api-tools-android-event-cursor';
     const EVENT_EPOCH_KEY = 'api-tools-android-event-epoch';
     const IMAGE_SETS_KEY = 'image-sets';
@@ -42,7 +41,7 @@
     let appUpdateState = { status: 'idle', percent: 0, message: '尚未检查服务器更新' };
     let updateCheck = null;
     let serviceConfig = {
-        baseUrl: String(window.__EASYAPITOOL_SERVICE_URL__ || DEFAULT_ANDROID_SERVICE_URL).trim().replace(/\/$/, ''),
+        baseUrl: currentServiceUrl(window.__EASYAPITOOL_SERVICE_URL__ || DEFAULT_ANDROID_SERVICE_URL),
         bearerToken: String(window.__EASYAPITOOL_SERVICE_TOKEN__ || '').trim()
     };
     let serviceConfigLoad = null;
@@ -70,6 +69,11 @@
         return /^device-v1\./.test(String(token || '').trim());
     }
 
+    function currentServiceUrl(value) {
+        const url = String(value || '').trim().replace(/\/+$/, '');
+        return /^https:\/\/imggen\.djyx\.me\/v1$/i.test(url) ? DEFAULT_ANDROID_SERVICE_URL : url;
+    }
+
     async function loadServiceConfig() {
         if (serviceConfig.baseUrl && isDeviceToken(serviceConfig.bearerToken)) {
             serviceConfigError = '';
@@ -78,9 +82,9 @@
         if (serviceConfigLoad) return serviceConfigLoad;
         serviceConfigLoad = pluginCall('readServiceConfig')
             .then(config => {
-                const savedBaseUrl = String(config.serviceUrl || '').trim().replace(/\/$/, '');
+                const savedBaseUrl = currentServiceUrl(config.serviceUrl);
                 const savedBearerToken = String(config.bearerToken || '').trim();
-                if (/^https:\/\/clife\.djyx\.me(?:\/|$)/i.test(savedBaseUrl)) {
+                if (/^https:\/\/clife\.djyx\.(?:me|pw)(?:\/|$)/i.test(savedBaseUrl)) {
                     void pluginCall('clearServiceConfig').catch(() => {});
                     serviceConfig = { baseUrl: DEFAULT_ANDROID_SERVICE_URL, bearerToken: '' };
                     serviceConfigError = '';
@@ -96,6 +100,11 @@
                     baseUrl: savedBaseUrl || DEFAULT_ANDROID_SERVICE_URL,
                     bearerToken: savedBearerToken
                 };
+                if (savedBearerToken && savedBaseUrl && savedBaseUrl !== config.serviceUrl) {
+                    void pluginCall('saveServiceConfig', {
+                        serviceUrl: savedBaseUrl, bearerToken: savedBearerToken
+                    }).catch(() => {});
+                }
                 serviceConfigError = '';
                 return serviceConfig;
             })
@@ -130,14 +139,13 @@
 
     function serviceSettings() {
         return {
-            baseUrl: serviceConfig.baseUrl || String(localPreferences.get('service-url', DEFAULT_ANDROID_SERVICE_URL)).replace(/\/$/, ''),
+            baseUrl: serviceConfig.baseUrl || currentServiceUrl(localPreferences.get('service-url', DEFAULT_ANDROID_SERVICE_URL)),
             bearerToken: serviceConfig.bearerToken
         };
     }
 
     function publicServiceUrl(path, query = '') {
-        const baseUrl = ANDROID_UPDATE_SERVICE_URL.replace(/\/$/, '');
-        return `${baseUrl}/${String(path || '').replace(/^\//, '')}${query}`;
+        return `${DEFAULT_ANDROID_SERVICE_URL}/${String(path || '').replace(/^\//, '')}${query}`;
     }
 
     async function getAppUpdateInfo() {
