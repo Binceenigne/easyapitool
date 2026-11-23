@@ -93,22 +93,34 @@ func isSVG(file *os.File) bool {
 	}
 	parser := xml.NewDecoder(io.LimitReader(file, maxImageBytes))
 	root := false
+	depth := 0
 	for {
 		token, err := parser.Token()
 		if err != nil {
-			return root && err == io.EOF
+			return root && depth == 0 && err == io.EOF
 		}
 		switch item := token.(type) {
 		case xml.Directive:
 			return false
+		case xml.ProcInst:
+			if item.Target != "xml" || root {
+				return false
+			}
+		case xml.CharData:
+			if depth == 0 && strings.TrimSpace(string(item)) != "" {
+				return false
+			}
+		case xml.EndElement:
+			depth--
 		case xml.StartElement:
-			if !root {
-				if item.Name.Local != "svg" || !oneOf(item.Name.Space, "", "http://www.w3.org/2000/svg") {
+			if depth == 0 {
+				if root || item.Name.Local != "svg" || !oneOf(item.Name.Space, "", "http://www.w3.org/2000/svg") {
 					return false
 				}
 				root = true
 			}
-			if oneOf(strings.ToLower(item.Name.Local), "script", "foreignobject") {
+			depth++
+			if oneOf(strings.ToLower(item.Name.Local), "script", "foreignobject", "animate", "animatemotion", "animatetransform", "set") {
 				return false
 			}
 			for _, attr := range item.Attr {

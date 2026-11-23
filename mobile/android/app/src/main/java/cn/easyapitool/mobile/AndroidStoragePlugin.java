@@ -43,6 +43,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.LongConsumer;
@@ -64,6 +65,8 @@ public class AndroidStoragePlugin extends Plugin {
     private static final String KEY_PREFS = "easyapitool.secure.keys";
     private static final String SERVICE_PREFS = "easyapitool.secure.service";
     private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService apiExecutor = Executors.newFixedThreadPool(2);
+    private final ConcurrentHashMap<String, HttpURLConnection> directRequests = new ConcurrentHashMap<>();
     private StorageDatabase database;
 
     @Override
@@ -369,11 +372,109 @@ public class AndroidStoragePlugin extends Plugin {
             return;
         }
         try {
-            database.upsertKey(keyId, name, encrypt(value));
+            String endpoint = DirectImageApi.endpoint(call.getString("baseUrl", ""));
+            if (DirectImageApi.isGateway(endpoint) && !value.startsWith("sk-mirra-")) {
+                throw new IOException("Mirra 网关需要分发密钥");
+            }
+            if (!endpoint.isEmpty() && value.startsWith("sk-proj-") && !DirectImageApi.OPENAI.equals(endpoint)) {
+                throw new IOException("OpenAI 项目密钥请绑定官方 API 地址");
+            }
+            database.upsertKey(keyId, name, encrypt(value), endpoint);
             call.resolve(new JSObject().put("keyId", keyId));
         } catch (Exception exception) {
-            call.reject("无法保存安全密钥", exception);
+            call.reject(exception instanceof IOException ? exception.getMessage() : "无法保存安全密钥");
         }
+    }
+
+    @PluginMethod
+    public void requestDirectApi(PluginCall call) {
+        String keyId = safeId(call.getString("keyId"));
+        String requestId = safeId(call.getString("requestId"));
+        String operation = call.getString("operation", "");
+        JSArray paths = call.getArray("paths", new JSArray());
+        JSObject body = call.getObject("body", new JSObject());
+        if (keyId.isEmpty() || paths.length() > MAX_REFERENCE_COUNT) {
+            call.reject("直连接口参数无效");
+            return;
+        }
+        apiExecutor.execute(() -> {
+            HttpURLConnection connection = null;
+            String secret = "";
+            try {
+                JSObject key = database.key(keyId);
+                if (key == null) throw new IOException("安全密钥不存在");
+                String base = DirectImageApi.endpoint(key.getString("baseUrl", ""));
+                if (base.isEmpty() || DirectImageApi.isGateway(base)) throw new IOException("此密钥使用 Mirra 网关");
+                secret = decrypt(key.getString("encrypted", ""));
+                List<File> references = new ArrayList<>();
+                for (int i = 0; i < paths.length(); i++) {
+                    File file = managedFile(paths.getString(i));
+                    if (file == null || !file.isFile() || file.length() > MAX_ASSET_BYTES) {
+                        throw new IOException("参考图无效或过大");
+                    }
+                    references.add(file);
+                }
+                String route = switch (operation) {
+                    case "models" -> "/models";
+                    case "respond" -> "/responses";
+                    case "generate" -> references.isEmpty() ? "/images/generations" : "/images/edits";
+                    default -> throw new IOException("不支持的直连接口");
+                };
+                boolean models = "models".equals(operation);
+                connection = openConnection(base + route, secret, models ? "GET" : "POST");
+                connection.setInstanceFollowRedirects(false);
+                if (models) connection.setReadTimeout(20_000);
+                if (!requestId.isEmpty() && directRequests.putIfAbsent(requestId, connection) != null) {
+                    throw new IOException("同一任务正在生成");
+                }
+                if (!models) {
+                    if (references.isEmpty()) DirectImageApi.writeJson(connection, body);
+                    else DirectImageApi.writeEdit(connection, body, references);
+                }
+                if (!"generate".equals(operation)) {
+                    call.resolve(new JSObject(readResponse(connection)));
+                    return;
+                }
+                int status = connection.getResponseCode();
+                if (status < 200 || status >= 300) {
+                    readResponse(connection);
+                    throw new IOException("HTTP " + status);
+                }
+                byte[] bytes = DirectImageApi.readImage(connection.getInputStream(), MAX_ASSET_BYTES);
+                DirectImageApi.Image image = DirectImageApi.validateImage(bytes, body.getString("output_format", "png"));
+                call.resolve(saveDirectImage(image, safeId(call.getString("sessionId")), safeId(call.getString("setId"))));
+            } catch (Exception exception) {
+                String message = exception.getMessage();
+                if (message == null || message.isEmpty()) message = "请检查接口地址和设备网络";
+                if (!secret.isEmpty()) message = message.replace(secret, "[API Key]");
+                call.reject("API 直连失败：" + message.substring(0, Math.min(message.length(), 400)));
+            } finally {
+                if (connection != null) {
+                    if (!requestId.isEmpty()) directRequests.remove(requestId, connection);
+                    connection.disconnect();
+                }
+            }
+        });
+    }
+
+    @PluginMethod
+    public void cancelDirectApi(PluginCall call) {
+        HttpURLConnection connection = directRequests.get(safeId(call.getString("requestId")));
+        if (connection != null) connection.disconnect();
+        call.resolve(new JSObject().put("ok", true));
+    }
+
+    private JSObject saveDirectImage(DirectImageApi.Image image, String sessionId, String setId) throws IOException {
+        String resourceId = UUID.randomUUID().toString();
+        File directory = new File(getContext().getFilesDir(), "easyapitool/assets");
+        if (!directory.isDirectory() && !directory.mkdirs() && !directory.isDirectory()) {
+            throw new IOException("无法创建图片目录");
+        }
+        File target = new File(directory, resourceId + suffixForMime(image.mime()));
+        long size = copyLimited(new ByteArrayInputStream(image.bytes()), target, MAX_ASSET_BYTES);
+        database.upsert(resourceId, assetValues(resourceId, target, false, sessionId, setId, image.mime(), size));
+        return new JSObject().put("resourceId", resourceId).put("path", target.getAbsolutePath())
+            .put("mimeType", image.mime()).put("sizeBytes", size).put("width", image.width()).put("height", image.height());
     }
 
     @PluginMethod
@@ -832,7 +933,7 @@ public class AndroidStoragePlugin extends Plugin {
     private class StorageDatabase extends SQLiteOpenHelper {
 
         StorageDatabase() {
-            super(getContext(), "easyapitool-index.db", null, 2);
+            super(getContext(), "easyapitool-index.db", null, 3);
         }
 
         @Override
@@ -855,6 +956,7 @@ public class AndroidStoragePlugin extends Plugin {
         @Override
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
             if (oldVersion < 2) createKeyTable(db);
+            else if (oldVersion < 3) db.execSQL("ALTER TABLE api_keys ADD COLUMN base_url TEXT NOT NULL DEFAULT ''");
         }
 
         private void createKeyTable(SQLiteDatabase db) {
@@ -863,15 +965,17 @@ public class AndroidStoragePlugin extends Plugin {
                 "key_id TEXT PRIMARY KEY," +
                 "name TEXT NOT NULL," +
                 "secret_encrypted TEXT NOT NULL," +
+                "base_url TEXT NOT NULL DEFAULT ''," +
                 "created_at INTEGER NOT NULL)"
             );
         }
 
-        void upsertKey(String keyId, String name, String encrypted) {
+        void upsertKey(String keyId, String name, String encrypted, String endpoint) {
             ContentValues values = new ContentValues();
             values.put("key_id", keyId);
             values.put("name", name);
             values.put("secret_encrypted", encrypted);
+            values.put("base_url", endpoint);
             values.put("created_at", System.currentTimeMillis());
             getWritableDatabase().insertWithOnConflict(
                 "api_keys", null, values, SQLiteDatabase.CONFLICT_REPLACE
@@ -881,7 +985,7 @@ public class AndroidStoragePlugin extends Plugin {
         JSObject key(String keyId) {
             try (Cursor cursor = getReadableDatabase().query(
                 "api_keys",
-                new String[] { "name", "secret_encrypted" },
+                new String[] { "name", "secret_encrypted", "base_url" },
                 "key_id=?",
                 new String[] { keyId },
                 null,
@@ -892,7 +996,8 @@ public class AndroidStoragePlugin extends Plugin {
                 if (!cursor.moveToFirst()) return null;
                 return new JSObject()
                     .put("name", cursor.getString(0))
-                    .put("encrypted", cursor.getString(1));
+                    .put("encrypted", cursor.getString(1))
+                    .put("baseUrl", cursor.getString(2));
             }
         }
 
@@ -900,7 +1005,7 @@ public class AndroidStoragePlugin extends Plugin {
             JSArray keys = new JSArray();
             try (Cursor cursor = getReadableDatabase().query(
                 "api_keys",
-                new String[] { "key_id", "name" },
+                new String[] { "key_id", "name", "base_url" },
                 null,
                 null,
                 null,
@@ -910,7 +1015,8 @@ public class AndroidStoragePlugin extends Plugin {
                 while (cursor.moveToNext()) {
                     keys.put(new JSObject()
                         .put("id", cursor.getString(0))
-                        .put("name", cursor.getString(1)));
+                        .put("name", cursor.getString(1))
+                        .put("baseUrl", cursor.getString(2)));
                 }
             }
             return keys;

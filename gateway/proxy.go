@@ -245,6 +245,10 @@ func transfer(w http.ResponseWriter, reader io.Reader, stream bool) {
 func (g *gateway) connectionError(u upstream, err error) error {
 	trace := randomID(9)
 	log.Printf("upstream connection error trace=%s upstream=%s kind=%T", trace, u.ID, errors.Unwrap(err))
+	var rejection *proxyConnectError
+	if errors.As(err, &rejection) {
+		return fmt.Errorf("%s（诊断 ID %s）", rejection.Error(), trace)
+	}
 	return fmt.Errorf("无法连接上游服务（诊断 ID %s）", trace)
 }
 

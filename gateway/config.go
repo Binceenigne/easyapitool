@@ -57,7 +57,7 @@ func loadConfig(path string) (config, error) {
 		androidReleases: get("API_TOOLS_ANDROID_RELEASE_DIR", ""),
 		windowsReleases: get("API_TOOLS_WINDOWS_RELEASE_DIR", ""),
 		egressProxy:     get("MIRRA_EGRESS_PROXY", ""),
-		publicBase:      strings.TrimRight(get("MIRRA_PUBLIC_OPENAI_BASE_URL", "https://imggen.djyx.pw/openai/v1"), "/"),
+		publicBase:      strings.TrimRight(get("MIRRA_PUBLIC_OPENAI_BASE_URL", "https://39.105.74.222/openai/v1"), "/"),
 		openAIPool:      get("MIRRA_OPENAI_POOL", "openai"),
 		imageModel:      get("MIRRA_IMAGE_MODEL", "gpt-image-2.6-flare"),
 		svgAuthor:       get("MIRRA_SVG_AUTHOR_MODEL", ""),

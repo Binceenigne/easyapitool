@@ -1,0 +1,10 @@
+[Unit]
+Description=Check the short-lived Mirra certificate twice daily
+
+[Timer]
+OnCalendar=*-*-* 03,15:08:00
+RandomizedDelaySec=50min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

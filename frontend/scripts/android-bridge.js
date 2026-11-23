@@ -8,7 +8,8 @@
     if (!isAndroid || window.pywebview?.api) return;
 
     document.documentElement.dataset.platform = 'android';
-    const DEFAULT_ANDROID_SERVICE_URL = 'https://imggen.djyx.pw/v1';
+    const DEFAULT_ANDROID_SERVICE_URL = 'https://39.105.74.222/v1';
+    const GATEWAY_API_URL = 'https://39.105.74.222/openai/v1';
     const EVENT_CURSOR_KEY = 'api-tools-android-event-cursor';
     const EVENT_EPOCH_KEY = 'api-tools-android-event-epoch';
     const IMAGE_SETS_KEY = 'image-sets';
@@ -34,6 +35,8 @@
     };
     const eventQueue = [];
     const pendingTasks = new Map();
+    const directTasks = new Map();
+    const directKeyStates = new Map();
     const downloadCache = new Map();
     let eventStreamPromise = null;
     let eventStreamGeneration = 0;
@@ -71,7 +74,7 @@
 
     function currentServiceUrl(value) {
         const url = String(value || '').trim().replace(/\/+$/, '');
-        return /^https:\/\/imggen\.djyx\.me\/v1$/i.test(url) ? DEFAULT_ANDROID_SERVICE_URL : url;
+        return /^https:\/\/imggen\.djyx\.(?:me|pw)\/v1$/i.test(url) ? DEFAULT_ANDROID_SERVICE_URL : url;
     }
 
     async function loadServiceConfig() {
@@ -221,15 +224,16 @@
         if (parsed.pathname.replace(/\/$/, '').endsWith('/v1') && cleanPath.startsWith('/api/v1/')) {
             cleanPath = cleanPath.slice('/api/v1'.length);
         }
-        return /^https?:\/\//i.test(String(path || ''))
-            ? String(path)
-            : `${baseUrl}${cleanPath}`;
+        const resolved = new URL(/^https?:\/\//i.test(String(path || '')) ? path : `${baseUrl}${cleanPath}`);
+        if (resolved.origin !== parsed.origin) throw new Error('资源地址与设备网关不一致');
+        return resolved.href;
     }
 
     async function requestJson(path, options = {}, retryAuthentication = true) {
         const settings = requireService();
         const response = await fetch(resolveUrl(path), {
             ...options,
+            redirect: 'error',
             headers: {
                 Accept: 'application/json',
                 Authorization: `Bearer ${settings.bearerToken}`,
@@ -263,12 +267,33 @@
         return pluginCall('readSecureKey', { keyId: String(keyId) });
     }
 
+    function usesDirectApi(key) {
+        const base = String(key?.baseUrl || '').toLowerCase();
+        return base !== '' && base !== GATEWAY_API_URL;
+    }
+
+    async function directKeyState(key, force = false) {
+        const previous = directKeyStates.get(key.id);
+        if (!force && previous && Date.now() - previous.cachedAt < 60_000) return previous;
+        let state;
+        try {
+            const result = await pluginCall('requestDirectApi', { keyId: key.id, operation: 'models' });
+            const models = [...new Set((result.data || []).map(item => typeof item === 'string' ? item : item?.id).filter(Boolean))];
+            state = { status: 'active', models, modelsCount: models.length };
+        } catch (error) {
+            state = { status: 'unknown', models: previous?.models || [], lastError: error.message };
+        }
+        state = { ...state, directApi: true, mode: 'official', serverQuota: false, hasPricedUsage: false, cachedAt: Date.now() };
+        directKeyStates.set(key.id, state);
+        return state;
+    }
+
     async function ensureDeviceRegistration(preferredKeyId = '') {
         await loadServiceConfig();
         if (serviceConfig.bearerToken) return serviceConfig;
         if (deviceRegistrationPromise) return deviceRegistrationPromise;
         deviceRegistrationPromise = (async () => {
-            const metadata = await secureKeyMetadata();
+            const metadata = (await secureKeyMetadata()).filter(key => !usesDirectApi(key));
             const selected = metadata.find(key => String(key.id) === String(preferredKeyId)) || metadata[0];
             if (!selected) throw new Error('请先添加有效的 API Key');
             const [secret, device] = await Promise.all([
@@ -333,7 +358,7 @@
     }
 
     async function registerAllKeys() {
-        const metadata = await secureKeyMetadata();
+        const metadata = (await secureKeyMetadata()).filter(key => !usesDirectApi(key));
         const errors = [];
         for (const key of metadata) {
             try {
@@ -349,19 +374,22 @@
         return '已安全保存';
     }
 
-    async function getState() {
+    async function getState(forceDirectRefresh = false) {
         await loadServiceConfig();
         const metadata = await secureKeyMetadata();
-        if (!serviceConfig.bearerToken && metadata.length) {
-            await ensureDeviceRegistration(metadata[0].id).catch(() => {});
-        }
+        const managed = metadata.filter(key => !usesDirectApi(key));
+        const direct = metadata.filter(usesDirectApi);
+        const directStates = new Map(await Promise.all(direct.map(async key => [key.id, await directKeyState(key, forceDirectRefresh)])));
         let remote = {};
         let registrationErrors = [];
-        try {
-            ({ errors: registrationErrors } = await registerAllKeys());
-            remote = await requestJson('/api/v1/state');
-        } catch (error) {
-            registrationErrors = [error];
+        if (managed.length) {
+            try {
+                await ensureDeviceRegistration(managed[0].id);
+                ({ errors: registrationErrors } = await registerAllKeys());
+                remote = await requestJson('/api/v1/state');
+            } catch (error) {
+                registrationErrors = [error];
+            }
         }
         const remoteKeys = new Map((remote.keys || []).map(key => [String(key.id), key]));
         return {
@@ -371,9 +399,9 @@
                 id: String(key.id),
                 name: key.name || 'API Key',
                 value: maskedKeyValue(),
-                baseUrl: '',
-                status: remoteKeys.get(String(key.id))?.status || (registrationErrors.length ? 'unknown' : 'active'),
-                lastError: registrationErrors.length ? registrationErrors[0].message : remoteKeys.get(String(key.id))?.lastError || null
+                status: remoteKeys.get(String(key.id))?.status || 'unknown',
+                lastError: remoteKeys.get(String(key.id))?.lastError || registrationErrors[0]?.message || null,
+                ...directStates.get(key.id),
             })),
             appName: 'Mirra(觅然)',
             appVersion: (await getAppUpdateInfo().catch(() => ({ versionName: 'android' }))).versionName || 'android',
@@ -790,8 +818,10 @@
 
     async function generateImage(keyId, prompt, paths, options = {}) {
         const requestId = normalizeRequestId(options.requestId || newRequestId());
-        if (pendingTasks.has(requestId)) throw new Error('同一任务正在生成');
+        if (pendingTasks.has(requestId) || directTasks.has(requestId)) throw new Error('同一任务正在生成');
         options = { ...options, requestId };
+        const key = (await secureKeyMetadata()).find(item => String(item.id) === String(keyId));
+        if (usesDirectApi(key)) return generateDirectImage(key, prompt, paths, options);
         let pending = null;
         try {
             await ensureDeviceRegistration(keyId);
@@ -838,6 +868,86 @@
             }
             throw error;
         }
+    }
+
+    function directReasoning(options) {
+        const slots = { luna: 'gpt-6-luna', terra: 'gpt-6.1-terra', sol: 'gpt-6.1-sol' };
+        const preset = {
+            flash: ['luna', 'medium'], medium: ['luna', 'medium'], high: ['terra', 'high'],
+            extra: ['terra', 'xhigh'], max: ['sol', 'xhigh']
+        }[options.reasoningMode];
+        const [slot, effort] = preset || [options.reasoningModel || 'luna', options.reasoningEffort || 'medium'];
+        return { model: slots[slot] || slots.luna, effort };
+    }
+
+    async function prepareDirectPrompt(keyId, prompt, options = {}) {
+        const { model, effort } = directReasoning(options);
+        const result = await pluginCall('requestDirectApi', {
+            keyId, operation: 'respond', requestId: options.requestId || '',
+            body: {
+                model, reasoning: { effort }, input: prompt, store: false,
+                instructions: '将用户的图像需求整理为一段可直接用于生成或编辑图片的提示词。保留用户的明确要求，仅返回改写后的提示词。',
+                ...(options.webSearchEnabled ? { tools: [{ type: 'web_search' }] } : {})
+            }
+        });
+        const text = String(result.output_text || (result.output || []).flatMap(item => item.content || [])
+            .filter(item => item.type === 'output_text').map(item => item.text || '').join('')).trim();
+        if (!text) throw new Error('思维模型没有返回提示词');
+        return text;
+    }
+
+    async function generateDirectImage(key, prompt, paths, options) {
+        const { requestId } = options;
+        const progress = { cancelled: false };
+        directTasks.set(requestId, progress);
+        const imageCount = Math.max(1, Math.min(9, Number(options.imageCount) || 1));
+        const result = {
+            ...options, ok: false, requestId, setId: requestId, sessionId: options.sessionId || requestId,
+            imageModel: options.imageModel, createdAt: new Date().toISOString(),
+            prompt, originalPrompt: prompt, transparency: options.background || 'auto', requestedCount: imageCount, items: []
+        };
+        const output = options.output_format || 'png';
+        try {
+            if (options.reasoningMode && options.reasoningMode !== 'instant') {
+                result.prompt = await prepareDirectPrompt(key.id, prompt, options);
+            }
+            const body = { model: options.imageModel, prompt: result.prompt, size: options.size || 'auto',
+                quality: options.quality || 'auto', background: result.transparency, output_format: output, n: 1 };
+            for (const field of ['complexity', 'output_compression', 'frame_count', 'frame_duration_ms']) {
+                if (options[field] != null) body[field] = options[field];
+            }
+            let error = '';
+            for (let itemIndex = 0; itemIndex < imageCount && !progress.cancelled; itemIndex += 1) {
+                try {
+                    const asset = await pluginCall('requestDirectApi', {
+                        keyId: key.id, operation: 'generate', requestId, body, paths: paths || [],
+                        setId: requestId, sessionId: result.sessionId
+                    });
+                    const uri = localImageUrl(asset.path);
+                    result.items.push({ ...asset, ok: true, status: 'completed', itemIndex, uri, previewUri: uri,
+                        format: asset.mimeType === 'image/svg+xml' ? 'svg' : asset.mimeType.split('/')[1] });
+                } catch (failure) {
+                    if (progress.cancelled) break;
+                    error = failure.message || String(failure);
+                    result.items.push({ ok: false, status: 'failed', itemIndex, error });
+                    // A provider-level validation or connection failure applies to the remaining identical requests.
+                    break;
+                }
+            }
+            result.error = progress.cancelled ? '生成已停止' : error;
+        } catch (error) {
+            result.error = progress.cancelled ? '生成已停止' : error.message || String(error);
+        } finally {
+            directTasks.delete(requestId);
+        }
+        result.ok = result.items.some(item => item.ok);
+        result.cancelled = progress.cancelled;
+        while (result.items.length < imageCount) {
+            result.items.push({ ok: false, status: result.cancelled ? 'cancelled' : 'failed',
+                itemIndex: result.items.length, error: result.error });
+        }
+        persistLocalSet(result);
+        return result;
     }
 
     async function deleteImageSet(sessionId, setId) {
@@ -887,26 +997,45 @@
 
     const api = {
         get_state: getState,
-        add_key: async (name, value) => {
+        add_key: async (name, value, baseUrl = GATEWAY_API_URL) => {
             const keyId = newRequestId('android-key');
-            await pluginCall('saveSecureKey', { keyId, name, value, baseUrl: '' });
+            const key = { id: keyId, name, baseUrl };
+            await pluginCall('saveSecureKey', { keyId, name, value, baseUrl });
             try {
-                await ensureDeviceRegistration(keyId);
-                await registerKey({ id: keyId, name });
+                if (usesDirectApi(key)) {
+                    const state = await directKeyState(key, true);
+                    if (state.lastError) throw new Error(state.lastError);
+                } else {
+                    await ensureDeviceRegistration(keyId);
+                    await registerKey(key);
+                }
             } catch (error) {
-                throw new Error(`密钥已安全保存，但服务注册失败：${error.message}`);
+                await pluginCall('deleteSecureKey', { keyId });
+                directKeyStates.delete(keyId);
+                throw error;
             }
             return { ok: true, activeKeyId: keyId, state: await getState() };
         },
         delete_key: async id => {
-            try { await requestJson(`/api/v1/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
+            const key = (await secureKeyMetadata()).find(item => String(item.id) === String(id));
+            if (!usesDirectApi(key)) {
+                try { await requestJson(`/api/v1/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
+            }
+            directKeyStates.delete(id);
             await pluginCall('deleteSecureKey', { keyId: id });
             return { state: await getState() };
         },
         choose_edit_images: chooseEditImages,
         import_reference_image: importReferenceImage,
         generate_image: generateImage,
-        cancel_image_generation: requestId => requestJson(`/api/v1/image-generations/${encodeURIComponent(requestId)}/cancel`, { method: 'POST' }),
+        cancel_image_generation: requestId => {
+            const direct = directTasks.get(requestId);
+            if (direct) {
+                direct.cancelled = true;
+                return pluginCall('cancelDirectApi', { requestId });
+            }
+            return requestJson(`/api/v1/image-generations/${encodeURIComponent(requestId)}/cancel`, { method: 'POST' });
+        },
         load_generated_image: async path => ({ ok: true, path, dataUrl: localImageUrl(path) }),
         save_edited_image: saveEditedImage,
         copy_generated_image: copyGeneratedImage,
@@ -914,11 +1043,14 @@
         delete_image_set: deleteImageSet,
         open_generated_pictures: async () => ({ ok: true }),
         export_image_sets: exportImageSets,
-        polish_prompt: async (keyId, prompt) => requestJson('/api/v1/prompts/polish', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ keyId: String(keyId), prompt })
-        }),
+        polish_prompt: async (keyId, prompt) => {
+            const key = (await secureKeyMetadata()).find(item => String(item.id) === String(keyId));
+            if (usesDirectApi(key)) return { ok: true, prompt: await prepareDirectPrompt(key.id, prompt) };
+            return requestJson('/api/v1/prompts/polish', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ keyId: String(keyId), prompt })
+            });
+        },
         append_image_stream_debug: async () => ({ ok: true }),
         report_startup: async stage => {
             if (stage === 'frontend_interactive' && appUpdateState.status === 'idle') {
@@ -935,9 +1067,10 @@
             return { ok: true };
         },
         refresh_now: async () => {
-            await ensureDeviceRegistration();
-            await registerAllKeys();
-            return requestJson('/api/v1/refresh', { method: 'POST' });
+            const { metadata } = await registerAllKeys();
+            if (metadata.length) await requestJson('/api/v1/refresh', { method: 'POST' });
+            const state = await getState(true);
+            return { ok: true, valid: state.keys.some(key => key.status === 'active'), state };
         },
         update_thresholds: async thresholds => { localPreferences.set('thresholds', thresholds); return { ok: true, thresholds }; },
         update_rate_limit_progress_mode: async mode => { localPreferences.set('rate-mode', mode); return { rateLimitProgressMode: mode }; },

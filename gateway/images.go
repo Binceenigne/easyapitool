@@ -239,7 +239,7 @@ func (m *mobile) renderImage(ctx context.Context, id credentialID, key keyInput,
 	if err := upstreamStatus(response); err != nil {
 		return nil, err
 	}
-	original, metered, err := m.readImageResponse(response, id, index, o.partial, o.format == "svg")
+	original, metered, err := m.readImageResponse(response, id, index, o.partial, o.format)
 	count = metered
 	if err != nil {
 		return nil, err
@@ -331,14 +331,17 @@ func (e imageEnvelope) encoded() string {
 	return ""
 }
 
-func (m *mobile) readImageResponse(response *http.Response, job credentialID, itemIndex, partialTotal int, allowSVG bool) (asset, *meter, error) {
+func (m *mobile) readImageResponse(response *http.Response, job credentialID, itemIndex, partialTotal int, format string) (asset, *meter, error) {
+	decode := func(encoded string) (asset, error) {
+		return m.decodeImage(job.owner, encoded, format)
+	}
 	if !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
 		var e imageEnvelope
 		if err := json.NewDecoder(io.LimitReader(response.Body, maxImageEnvelope)).Decode(&e); err != nil {
 			return asset{}, nil, errors.New("上游图片响应无效或过大")
 		}
 		count := usageMeter(e.Usage, e.SVGUsage)
-		a, err := m.decodeImage(job.owner, e.encoded(), allowSVG)
+		a, err := decode(e.encoded())
 		return a, count, err
 	}
 	scanner := bufio.NewScanner(response.Body)
@@ -367,7 +370,7 @@ func (m *mobile) readImageResponse(response *http.Response, job credentialID, it
 			if data == "" {
 				data = e.Partial
 			}
-			a, err := m.decodeImage(job.owner, data, false)
+			a, err := m.decodeImage(job.owner, data, "")
 			if err == nil {
 				last = a
 				partialIndex++
@@ -380,7 +383,7 @@ func (m *mobile) readImageResponse(response *http.Response, job credentialID, it
 			completed = true
 			count = usageMeter(e.Usage, e.SVGUsage)
 			if encoded := e.encoded(); encoded != "" {
-				a, err := m.decodeImage(job.owner, encoded, allowSVG)
+				a, err := decode(encoded)
 				return a, count, err
 			}
 		}
@@ -392,9 +395,19 @@ func (m *mobile) readImageResponse(response *http.Response, job credentialID, it
 	return asset{}, count, errors.New("上游图片流未返回完成的图片")
 }
 
-func (m *mobile) decodeImage(owner, encoded string, allowSVG bool) (asset, error) {
+func (m *mobile) decodeImage(owner, encoded, format string) (asset, error) {
 	if encoded == "" {
 		return asset{}, errors.New("上游未返回图片内容")
 	}
-	return m.saveAsset(owner, base64.NewDecoder(base64.StdEncoding, strings.NewReader(encoded)), true, allowSVG)
+	reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(encoded))
+	a, err := m.saveAsset(owner, reader, true, format == "svg")
+	if err == nil && oneOf(format, "gif", "svg") && a.format != format {
+		m.mu.Lock()
+		delete(m.assets, a.id)
+		m.assetBytes -= a.size
+		m.mu.Unlock()
+		os.Remove(a.path)
+		return asset{}, fmt.Errorf("上游未返回 %s 格式", strings.ToUpper(format))
+	}
+	return a, err
 }

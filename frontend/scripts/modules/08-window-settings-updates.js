@@ -242,6 +242,51 @@
         }
 
         const DEVTOOLS_SEQUENCE = 'ddjjyyxx';
+        const MIRRA_DEFAULT_API = 'https://39.105.74.222/openai/v1';
+        const OPENAI_OFFICIAL_API = 'https://api.openai.com/v1';
+        let apiEndpointUnlocked = false;
+
+        function showApiEndpointUnlock() {
+            const form = document.getElementById('apiEndpointUnlockForm');
+            form.hidden = false;
+            document.getElementById('apiEndpointUnlock').focus();
+        }
+
+        function unlockApiEndpoints() {
+            apiEndpointUnlocked = true;
+            document.getElementById('apiEndpointUnlockForm').reset();
+            document.getElementById('apiEndpointUnlockForm').hidden = true;
+            document.getElementById('revealApiEndpointUnlock').hidden = true;
+            document.getElementById('apiEndpointUnlockedHint').hidden = false;
+            document.getElementById('openMirraDevTools')?.removeAttribute('hidden');
+            document.getElementById('keyEndpointGroup').hidden = false;
+            document.getElementById('keyEndpointUrl').disabled = false;
+            showToast('已解锁自定义 API 地址', 'info');
+        }
+
+        function submitApiEndpointUnlock(event) {
+            event.preventDefault();
+            const value = document.getElementById('apiEndpointUnlock').value;
+            if (value.toLowerCase() === DEVTOOLS_SEQUENCE) unlockApiEndpoints();
+            else showToast('开发者口令不正确', 'error');
+        }
+
+        function setKeyEndpoint(preset) {
+            if (!apiEndpointUnlocked) return;
+            const input = document.getElementById('keyEndpointUrl');
+            input.value = preset === 'openai' ? OPENAI_OFFICIAL_API : MIRRA_DEFAULT_API;
+        }
+
+        function keyEndpointFromForm() {
+            const value = apiEndpointUnlocked ? document.getElementById('keyEndpointUrl').value.trim() : '';
+            if (!value) return MIRRA_DEFAULT_API;
+            const url = new URL(value);
+            if (url.protocol !== 'https:' || !url.hostname || url.username || url.password
+                    || url.search || url.hash || /[?#\\\s]/.test(value)) {
+                throw new Error('请输入 HTTPS API 根地址，地址中不要带密钥或查询参数');
+            }
+            return url.pathname === '/' ? url.origin + '/v1' : url.href.replace(/\/+$/, '');
+        }
         let devtoolsSequenceBuffer = '';
 
         function isSettingsPanelOpen() {
@@ -286,7 +331,7 @@
                 .slice(-DEVTOOLS_SEQUENCE.length);
             if (devtoolsSequenceBuffer === DEVTOOLS_SEQUENCE) {
                 devtoolsSequenceBuffer = '';
-                requestDevTools();
+                unlockApiEndpoints();
             }
         }
 

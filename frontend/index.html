@@ -13,7 +13,7 @@
             document.documentElement.dataset.themeMode = ['light', 'dark', 'system'].includes(theme) ? theme : 'system';
         })();
     </script>
-    <link rel="stylesheet" href="styles/app.css?v=43">
+    <link rel="stylesheet" href="styles/app.css?v=44">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -115,6 +115,15 @@
                     </div>
                 </div>
 
+                <div id="keyEndpointGroup" hidden>
+                    <label for="keyEndpointUrl">API 地址</label>
+                    <input id="keyEndpointUrl" type="url" autocomplete="off" spellcheck="false"
+                           placeholder="https://39.105.74.222/openai/v1" disabled>
+                    <div class="key-endpoint-presets">
+                        <button type="button" onclick="setKeyEndpoint('gateway')">Mirra 网关</button>
+                        <button type="button" onclick="setKeyEndpoint('openai')">OpenAI 官方</button>
+                    </div>
+                </div>
                 <button type="submit">
                     确认并保存密钥
                 </button>
@@ -185,9 +194,10 @@
                                     <i data-lucide="chevron-up" aria-hidden="true"></i>
                                 </button>
                                 <div id="imageGenerationControlPanel" class="image-generation-popover" hidden>
-                                    <div class="image-generation-control-grid">
+                                    <div class="image-generation-control-grid image-generation-model-row">
                                         <div class="image-control-section">
                                             <span id="imageModelLabel">模型</span>
+                                            <div id="imageModelChoices" class="image-choice" aria-labelledby="imageModelLabel" hidden></div>
                                             <div id="imageModelPicker" class="image-model-picker">
                                                 <button id="imageModelButton" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="imageModelMenu" aria-labelledby="imageModelLabel imageModelValue">
                                                     <span id="imageModelValue">2.0</span>
@@ -196,38 +206,14 @@
                                                 <div id="imageModelMenu" class="image-model-menu" role="listbox" aria-labelledby="imageModelLabel" hidden></div>
                                             </div>
                                         </div>
-                                        <label class="image-control-section">
-                                            <span>质量</span>
-                                            <select id="imageEditQuality" onchange="setImageQuality(this.value)">
-                                                <option value="auto">自动</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option>
-                                                <option value="xhigh">超高</option><option value="max">最高</option>
-                                            </select>
-                                        </label>
-                                        <label class="image-control-section">
-                                            <span>复杂度</span>
-                                            <select id="imageEditComplexity" onchange="setImageComplexity(this.value)">
-                                                <option value="auto">模型默认</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option>
-                                            </select>
-                                        </label>
-                                        <label class="image-control-section">
-                                            <span>输出格式</span>
-                                            <select id="imageEditOutputFormat" onchange="setImageOutputFormat(this.value)">
-                                                <option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option>
-                                                <option value="svg" hidden disabled>SVG</option><option value="gif" hidden disabled>GIF 动图</option>
-                                            </select>
-                                        </label>
-                                        <label class="image-control-section" id="imageEditCompressionLabel" hidden>
-                                            <span>压缩质量</span>
-                                            <input id="imageEditCompression" type="number" min="0" max="100" step="1" placeholder="自动（0–100）" onchange="setImageOutputCompression(this.value)">
-                                        </label>
-                                        <label class="image-control-section image-animation-field" hidden>
-                                            <span>帧数</span>
-                                            <input id="imageEditFrameCount" type="number" min="2" max="16" step="1" value="9" onchange="setImageAnimationOptions()">
-                                        </label>
-                                        <label class="image-control-section image-animation-field" hidden>
-                                            <span>每帧时长（毫秒）</span>
-                                            <input id="imageEditFrameDuration" type="number" min="20" max="2000" step="1" value="200" onchange="setImageAnimationOptions()">
-                                        </label>
+                                        <div class="image-control-section">
+                                            <span id="imageComplexityLabel" tabindex="0" data-image-tip="模型的内部思考深度，影响构图和指令遵循">复杂度</span>
+                                            <div id="imageComplexityChoices" class="image-choice" aria-labelledby="imageComplexityLabel"></div>
+                                        </div>
+                                        <div class="image-control-section">
+                                            <span id="imageResolutionLabel" tabindex="0">分辨率</span>
+                                            <div id="imageResolutionChoices" class="image-choice" aria-labelledby="imageResolutionLabel"></div>
+                                        </div>
                                     </div>
                                     <section class="image-control-section">
                                         <span>比例</span>
@@ -243,28 +229,42 @@
                                             <button type="button" data-ratio="21:9" aria-pressed="false" onclick="setImageAspectRatio('21:9')"><i data-lucide="rectangle-horizontal" aria-hidden="true"></i><span>21:9</span></button>
                                         </div>
                                     </section>
-                                    <section class="image-control-section">
+                                    <div class="image-generation-control-grid">
+                                        <div class="image-control-section">
+                                            <span id="imageOutputLabel">输出格式</span>
+                                            <div class="image-output-row">
+                                                <div id="imageOutputChoices" class="image-choice" aria-labelledby="imageOutputLabel"></div>
+                                                <div id="imageGifFrames" class="image-gif-frames" inert>
+                                                    <div id="imageFrameChoices" class="image-choice" aria-label="GIF 帧数"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <section class="image-control-section">
                                         <span>背景</span>
-                                        <div id="imageTransparencyButtons" class="image-control-segmented" role="radiogroup" aria-label="图片透明度">
+                                        <div id="imageTransparencyButtons" class="image-control-segmented" role="group" aria-label="图片透明度">
                                             <button type="button" class="is-active" data-transparency="auto" aria-pressed="true" onclick="setImageTransparency('auto')">自动</button>
                                             <button type="button" data-transparency="opaque" aria-pressed="false" onclick="setImageTransparency('opaque')">不透明</button>
                                             <button type="button" data-transparency="transparent" aria-pressed="false" onclick="setImageTransparency('transparent')">透明</button>
                                         </div>
                                     </section>
-                                    <section class="image-control-section">
-                                        <span>生成数量</span>
-                                        <div id="imageGenerationCountButtons" class="image-control-segmented" role="radiogroup" aria-label="图片数量">
-                                            <button type="button" class="is-active" data-count="1" aria-pressed="true" onclick="setImageGenerationCount(1)">1</button>
-                                            <button type="button" data-count="2" aria-pressed="false" onclick="setImageGenerationCount(2)">2</button>
-                                            <button type="button" data-count="3" aria-pressed="false" onclick="setImageGenerationCount(3)">3</button>
-                                            <button type="button" data-count="4" aria-pressed="false" onclick="setImageGenerationCount(4)">4</button>
-                                            <button type="button" data-count="5" aria-pressed="false" onclick="setImageGenerationCount(5)">5</button>
-                                            <button type="button" data-count="6" aria-pressed="false" onclick="setImageGenerationCount(6)">6</button>
-                                            <button type="button" data-count="7" aria-pressed="false" onclick="setImageGenerationCount(7)">7</button>
-                                            <button type="button" data-count="8" aria-pressed="false" onclick="setImageGenerationCount(8)">8</button>
-                                            <button type="button" data-count="9" aria-pressed="false" onclick="setImageGenerationCount(9)">9</button>
+                                    </div>
+                                    <div class="image-generation-control-grid">
+                                        <div class="image-control-section">
+                                            <div class="image-quality-heading">
+                                                <span id="imageQualityLabel" tabindex="0" data-image-tip="影响图片的画质，低质量可能出现伪影和不合常理的图片">质量</span>
+                                                <button id="imageQualityAuto" type="button" aria-pressed="true" onclick="setImageQuality('auto')">自动</button>
+                                            </div>
+                                            <div id="imageQualityChoices" class="image-choice" aria-labelledby="imageQualityLabel"></div>
                                         </div>
-                                    </section>
+                                        <div class="image-control-section">
+                                            <span id="imageCountLabel">生成数量</span>
+                                            <div id="imageCountChoices" class="image-choice" aria-labelledby="imageCountLabel"></div>
+                                        </div>
+                                    </div>
+                                    <label class="image-control-section" id="imageEditCompressionLabel" hidden>
+                                        <span>压缩质量</span>
+                                        <input id="imageEditCompression" type="number" min="0" max="100" step="1" value="75" onchange="setImageOutputCompression(this.value)">
+                                    </label>
                                     <input id="imageEditSize" type="hidden" value="auto">
                                 </div>
                             </div>
@@ -645,6 +645,15 @@
 
             <!-- 设置核心选项 -->
             <div id="settingsContent">
+                <div class="settings-group settings-api-endpoint">
+                    <label for="apiEndpointUnlock">API 接口</label>
+                    <button type="button" id="revealApiEndpointUnlock" onclick="showApiEndpointUnlock()">解锁自定义地址</button>
+                    <form id="apiEndpointUnlockForm" onsubmit="submitApiEndpointUnlock(event)" hidden>
+                        <input id="apiEndpointUnlock" type="password" autocomplete="off" aria-label="开发者口令" required>
+                        <button type="submit">解锁</button>
+                    </form>
+                    <span id="apiEndpointUnlockedHint" class="settings-help" hidden>添加新密钥时可为它指定 HTTPS API 地址。</span>
+                </div>
                 <div class="settings-group settings-android-service">
                     <label>服务连接 (SERVICE CONNECTION)</label>
                     <span id="androidServiceStatus" class="settings-help">添加 API Key 后将自动配置设备连接</span>
@@ -933,17 +942,17 @@
 
     <script src="vendor/lucide/lucide.min.js?v=0.468.0"></script>
     <script src="scripts/modules/00-core-ui.js?v=2"></script>
-    <script src="scripts/android-bridge.js?v=7"></script>
-    <script src="scripts/modules/01-app-state.js?v=2"></script>
-    <script src="scripts/modules/02-image-controls.js?v=4"></script>
+    <script src="scripts/android-bridge.js?v=8"></script>
+    <script src="scripts/modules/01-app-state.js?v=3"></script>
+    <script src="scripts/modules/02-image-controls.js?v=5"></script>
     <script src="scripts/modules/03-image-reasoning.js?v=2"></script>
     <script src="scripts/modules/04-image-stream-rendering.js?v=1"></script>
-    <script src="scripts/modules/05-image-events-sessions.js?v=5"></script>
-    <script src="scripts/modules/06-backend-bridge.js?v=2"></script>
+    <script src="scripts/modules/05-image-events-sessions.js?v=6"></script>
+    <script src="scripts/modules/06-backend-bridge.js?v=3"></script>
     <script src="scripts/modules/07-page-initializer.js?v=7"></script>
-    <script src="scripts/modules/08-window-settings-updates.js?v=3"></script>
+    <script src="scripts/modules/08-window-settings-updates.js?v=4"></script>
     <script src="scripts/modules/09-modals-input-refresh.js?v=1"></script>
-    <script src="scripts/modules/10-dashboard-rendering.js?v=2"></script>
+    <script src="scripts/modules/10-dashboard-rendering.js?v=3"></script>
     <script src="scripts/modules/11-theme-bootstrap.js?v=2"></script>
     <script src="scripts/mobile-nav.js?v=1"></script>
     <script src="scripts/modules/12-bootstrap.js?v=1"></script>

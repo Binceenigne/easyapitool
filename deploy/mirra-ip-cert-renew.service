@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew the Mirra IP address certificate
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/mirra-ip-certbot/bin/certbot renew --quiet --config-dir /etc/mirra-ip-certs --work-dir /var/lib/mirra-ip-certs --logs-dir /var/log/mirra-ip-certs --deploy-hook "/www/server/nginx/sbin/nginx -s reload"

@@ -31,7 +31,6 @@
         window.applyBackendState = function(state) {
             const previousActiveId = window.appState.activeKeyId;
             window.appState.features = state.features || {};
-            setImageOutputFormat(window.imageEditState.outputFormat, false);
             const finiteNumber = (value, fallback = 0) => {
                 const numeric = Number(value);
                 return Number.isFinite(numeric) ? numeric : fallback;
@@ -161,7 +160,7 @@
 
         window.dbSaveKey = async function(keyObject) {
             try {
-                const result = await window.pywebview.api.add_key(keyObject.name, keyObject.value);
+                const result = await window.pywebview.api.add_key(keyObject.name, keyObject.value, keyObject.baseUrl);
                 if (!result.ok) throw new Error(result.error || "密钥验证失败");
                 window.appState.activeKeyId = result.activeKeyId;
                 window.applyBackendState(result.state);

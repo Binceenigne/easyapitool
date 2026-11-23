@@ -34,6 +34,12 @@ type egressManager struct {
 var errProxyURL = errors.New("代理地址格式无效。带认证的 SOCKS5 地址可用 socks5://用户名:密码@主机:端口 或 socks5://主机:端口:用户名:密码")
 var errProxyChanged = errors.New("代理配置已被修改，请刷新后重试")
 
+type proxyConnectError struct{ status int }
+
+func (e *proxyConnectError) Error() string {
+	return fmt.Sprintf("HTTP 代理未建立 HTTPS 隧道（CONNECT %d）", e.status)
+}
+
 func parseProxyURL(value string) (*url.URL, error) {
 	if len(value) > 4096 || strings.IndexFunc(value, unicode.IsControl) != -1 {
 		return nil, errProxyURL
@@ -120,6 +126,12 @@ func (m *egressManager) prepare(s proxySettings) (*http.Transport, *url.URL, err
 				return nil, nil
 			}
 			return proxy, nil
+		}
+		transport.OnProxyConnectResponse = func(_ context.Context, _ *url.URL, _ *http.Request, response *http.Response) error {
+			if response.StatusCode != http.StatusOK {
+				return &proxyConnectError{status: response.StatusCode}
+			}
+			return nil
 		}
 	}
 	transport.DialContext = (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext
@@ -258,7 +270,10 @@ func (a *admin) testProxy(w http.ResponseWriter, r *http.Request) {
 	result := object{"ok": false, "elapsedMs": time.Since(start).Milliseconds()}
 	if err != nil {
 		result["message"] = "连接失败，请检查代理地址、认证和服务器网络"
-		if errors.Is(err, context.DeadlineExceeded) {
+		var rejection *proxyConnectError
+		if errors.As(err, &rejection) {
+			result["message"], result["proxyStatus"] = rejection.Error(), rejection.status
+		} else if errors.Is(err, context.DeadlineExceeded) {
 			result["message"] = "连接超时，请检查服务器到 OpenAI 的出口"
 		}
 	} else {

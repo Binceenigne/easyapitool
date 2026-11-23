@@ -996,10 +996,16 @@
 
             const nickname = document.getElementById('keyNickname').value.trim();
             const value = document.getElementById('keyValue').value.trim();
-            const newKey = {
-                name: nickname,
-                value: value
-            };
+            let baseUrl;
+            try {
+                baseUrl = keyEndpointFromForm();
+            } catch {
+                return showToast('请输入有效的 HTTPS API 根地址', 'error');
+            }
+            if (baseUrl === MIRRA_DEFAULT_API && !value.startsWith('sk-mirra-')) {
+                return showToast('Mirra 网关需要分发密钥。使用其他密钥时，请先解锁并填写对应的 API 地址。', 'error');
+            }
+            const newKey = { name: nickname, value, baseUrl };
 
             if (window.dbSaveKey) {
                 try {
@@ -1007,7 +1013,7 @@
                     toggleFormPanel();
                     document.getElementById('keyForm').reset();
                 } catch (error) {
-                    console.error('保存密钥失败:', error);
+                    showToast(error.message || '保存密钥失败', 'error');
                 }
             }
         }
