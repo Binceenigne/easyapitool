@@ -13,7 +13,7 @@
             document.documentElement.dataset.themeMode = ['light', 'dark', 'system'].includes(theme) ? theme : 'system';
         })();
     </script>
-    <link rel="stylesheet" href="styles/app.css?v=48">
+    <link rel="stylesheet" href="styles/app.css?v=49">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -179,11 +179,6 @@
                     <div class="image-generation-footer">
                         <span id="imageEditStatus" role="status">填写提示词即可生成，参考图可选</span>
                         <div class="image-generation-command-bar">
-                            <div id="imageModelControl" class="image-model-control">
-                                <span id="imageModelLabel" hidden data-image-tip="选择负责生成或编辑图片的模型。模型决定可用的画质、构图复杂度和输出格式。">图片模型</span>
-                                <i data-lucide="image" aria-hidden="true"></i>
-                                <div id="imageModelChoices" class="image-choice" aria-labelledby="imageModelLabel"></div>
-                            </div>
                             <div class="image-generation-controls-wrap">
                                 <button type="button" id="imageGenerationControlsButton" aria-expanded="false" onclick="toggleImageGenerationControls()">
                                     <i data-lucide="settings-2" aria-hidden="true"></i>
@@ -197,6 +192,10 @@
                                     <i data-lucide="chevron-up" aria-hidden="true"></i>
                                 </button>
                                 <div id="imageGenerationControlPanel" class="image-generation-popover" hidden>
+                                    <section id="imageModelSection" class="image-control-section">
+                                        <span id="imageModelLabel" tabindex="0" data-image-tip="选择负责生成或编辑图片的模型。模型决定可用的画质、构图复杂度和输出格式。">模型</span>
+                                        <div id="imageModelChoices" class="image-choice" aria-labelledby="imageModelLabel"></div>
+                                    </section>
                                     <div class="image-generation-control-grid image-generation-model-row">
                                         <div id="imageComplexitySection" class="image-control-section" hidden>
                                             <span id="imageComplexityLabel" tabindex="0" data-image-tip="控制模型在渲染前用于规划画面的思考量，影响构图、文字排版和指令遵循。较高档位通常需要更久。">复杂度</span>
@@ -931,7 +930,7 @@
     <script src="scripts/modules/00-core-ui.js?v=2"></script>
     <script src="scripts/android-bridge.js?v=8"></script>
     <script src="scripts/modules/01-app-state.js?v=4"></script>
-    <script src="scripts/modules/02-image-controls.js?v=9"></script>
+    <script src="scripts/modules/02-image-controls.js?v=10"></script>
     <script src="scripts/modules/03-image-reasoning.js?v=4"></script>
     <script src="scripts/modules/04-image-stream-rendering.js?v=1"></script>
     <script src="scripts/modules/05-image-events-sessions.js?v=7"></script>

@@ -253,39 +253,18 @@
 .image-generation-footer { display: grid; min-width: 0; margin-top: auto; gap: 6px; }
 #imageEditStatus { min-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .image-generation-command-bar {
+    --image-command-height: 40px;
     position: relative;
     display: grid;
-    grid-template-columns: clamp(82px, 23%, 108px) minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: stretch;
     width: 100%;
     min-width: 0;
     gap: 6px;
 }
-.image-model-control { position: relative; min-width: 0; }
-.image-model-control > svg, .image-model-control > i {
-    position: absolute;
-    z-index: 1;
-    top: 50%;
-    left: 9px;
-    width: 13px;
-    height: 13px;
-    color: var(--image-purple);
-    transform: translateY(-50%);
-    pointer-events: none;
-}
-#imageModelChoices { --image-choice-height: 40px; --image-choice-shadow: 0 1px 3px rgba(15, 23, 42, .08); }
-#imageModelChoices > .image-choice-trigger {
-    min-height: 34px;
-    padding: 5px 8px 5px 28px;
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    background: linear-gradient(180deg, var(--bg), var(--surface));
-    color: var(--text-soft);
-    font-size: 10px;
-}
-#imageModelChoices .image-choice-menu { z-index: 56; min-width: min(210px, 100vw - 32px); }
+#imageModelChoices > .is-active,
 #imageModelChoices .image-choice-menu [aria-selected="true"] { color: var(--image-purple); }
-html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, #imageModelControl, .image-generation-controls-wrap) {
+html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generation-controls-wrap) {
     --bg: #334155;
     --surface: #1e293b;
     --surface-strong: #263449;
@@ -300,7 +279,8 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, #imageModelCont
     display: flex;
     align-items: center;
     width: 100%;
-    min-height: 34px;
+    height: var(--image-command-height);
+    min-height: var(--image-command-height);
     padding: 5px 8px;
     gap: 6px;
     border: 1px solid var(--border);
@@ -622,9 +602,10 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, #imageModelCont
     position: relative;
     display: inline-flex;
     flex: 0 0 auto;
-    align-items: center;
+    align-items: stretch;
     justify-content: center;
-    min-height: 34px;
+    height: var(--image-command-height);
+    min-height: var(--image-command-height);
     overflow: visible;
     border-radius: 8px;
     isolation: isolate;
@@ -698,7 +679,8 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, #imageModelCont
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 34px;
+    height: 100%;
+    min-height: 0;
     gap: 5px;
     background: transparent;
     color: #fff;

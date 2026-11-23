@@ -196,8 +196,6 @@
 .width-micro #imageGenerationControlSummary > span { display: none; }
 .width-micro #imageGenerationControlsButton { gap: 4px; padding-inline: 6px; }
 .width-micro #imageGenerationControlSummary { font-size: 9px; }
-.width-micro #imageModelChoices > .image-choice-trigger { padding-left: 24px; gap: 3px; font-size: 9px; }
-.width-micro .image-model-control > svg { left: 7px; width: 11px; height: 11px; }
 .width-micro #imageGenerationCountButtons { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .width-micro #generateEditedImageButton { min-width: 78px; }
 

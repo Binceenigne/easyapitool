@@ -1700,7 +1700,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="imageCountChoices"', page)
         self.assertIn('id="imageGenerationQualitySummary" data-quality="auto"', page)
         self.assertNotIn('id="imageGenerationOutputSummary"', page)
-        self.assertIn('id="imageModelControl"', page)
+        self.assertIn('id="imageModelSection"', page)
         self.assertIn('id="imageGenerationResolutionSummary"', page)
         self.assertIn('#imageGenerationQualitySummary[data-quality="auto"]', scss_source)
         self.assertIn('#imageGenerationQualitySummary[data-quality="high"]', scss_source)
