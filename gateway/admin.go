@@ -39,6 +39,9 @@ func (a *admin) routes(m *mobile) http.Handler {
 	for _, path := range []string{"/{$}", "/admin.css", "/admin.js", "/admin-models.js", "/admin-tiers.js", "/icons.svg", "/mirra.png"} {
 		mux.Handle("GET "+path, files)
 	}
+	// Existing public deployments forward /admin/ while allowing only the older
+	// root asset names. Serve the new workspace asset through that namespace.
+	mux.Handle("GET /admin/assets/admin-tiers.js", http.StripPrefix("/admin/assets", files))
 	if m != nil {
 		mux.HandleFunc("GET /app-preview/{asset...}", m.appPreview)
 	}
