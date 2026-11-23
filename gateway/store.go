@@ -49,10 +49,11 @@ type accessKey struct {
 }
 
 type meter struct {
-	Input  int64
-	Output int64
-	Total  int64
-	Detail object
+	Input   int64
+	Output  int64
+	Total   int64
+	Detail  object
+	notSent bool
 }
 
 type store struct {

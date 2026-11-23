@@ -1,0 +1,14 @@
+[Unit]
+Description=Use BBR for the dedicated Mirra tunnel destination
+After=network-online.target
+Wants=network-online.target
+Before=mirra-seoul-egress-tunnel.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/modprobe tcp_bbr
+ExecStart=/usr/sbin/ip route replace 39.105.74.222/32 via 172.29.0.1 dev eth0 congctl bbr
+
+[Install]
+WantedBy=multi-user.target

@@ -241,6 +241,7 @@ func (m *mobile) renderImage(ctx context.Context, id credentialID, key keyInput,
 	defer func() { m.g.recordPriced(reservation, status, count, model, o.format == "svg") }()
 	response, err := m.g.client.Do(request)
 	if err != nil {
+		count = unsentImageUsage(err)
 		status = http.StatusBadGateway
 		return nil, m.g.connectionError(selected.upstream, err)
 	}

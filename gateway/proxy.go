@@ -183,6 +183,7 @@ func (g *gateway) proxy(path string) http.HandlerFunc {
 		response, err := g.client.Do(req)
 		if err != nil {
 			status = http.StatusBadGateway
+			count = unsentImageUsage(err)
 			var limit *http.MaxBytesError
 			if errors.As(err, &limit) {
 				status = http.StatusRequestEntityTooLarge
@@ -294,6 +295,10 @@ func (g *gateway) recordPriced(id int64, status int, count *meter, model string,
 		return
 	}
 	cost := g.cfg.price(model, svg, count)
+	if count != nil && count.notSent {
+		zero := int64(0)
+		cost = &zero
+	}
 	switch status {
 	case 400, 401, 403, 404, 413, 415, 422, 429:
 		if count == nil {

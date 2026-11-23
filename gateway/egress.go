@@ -2,16 +2,21 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 )
@@ -40,9 +45,82 @@ func (t *egressTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if t.images != nil && req.Method == http.MethodPost &&
 		strings.EqualFold(req.URL.Hostname(), "api.openai.com") &&
 		strings.HasPrefix(req.URL.Path, "/v1/images/") {
-		return t.images.RoundTrip(req)
+		return t.imageRoundTrip(req)
 	}
 	return t.shared.RoundTrip(req)
+}
+
+// Transport closes request bodies even when CONNECT or TLS fails. Keep the
+// caller's streaming body intact until a connection has actually been obtained.
+type pendingImageBody struct {
+	body io.ReadCloser
+	read *atomic.Bool
+}
+
+func (b pendingImageBody) Read(p []byte) (int, error) {
+	b.read.Store(true)
+	return b.body.Read(p)
+}
+
+func (pendingImageBody) Close() error { return nil }
+
+type upstreamNotSentError struct{ error }
+
+func (e *upstreamNotSentError) Unwrap() error { return e.error }
+
+func unsentImageUsage(err error) *meter {
+	var unsent *upstreamNotSentError
+	if errors.As(err, &unsent) {
+		return &meter{notSent: true}
+	}
+	return nil
+}
+
+func (t *egressTransport) imageRoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		defer req.Body.Close()
+	}
+	for attempt := 0; ; attempt++ {
+		var connected, bodyRead atomic.Bool
+		trace := &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connected.Store(true) }}
+		current := req.Clone(httptrace.WithClientTrace(req.Context(), trace))
+		if req.Body != nil && req.Body != http.NoBody {
+			current.Body = pendingImageBody{req.Body, &bodyRead}
+		}
+		response, err := t.images.RoundTrip(current)
+		if err == nil || connected.Load() || bodyRead.Load() {
+			// Once TLS succeeds, a POST may have reached OpenAI even without a
+			// response. Replaying it could start another paid generation.
+			return response, err
+		}
+		unsent := &upstreamNotSentError{err}
+		if attempt != 0 || req.Context().Err() != nil || !retryImageConnection(err) {
+			return nil, unsent
+		}
+		log.Printf("retrying unsent image connection path=%s reason=%s", req.URL.Path, upstreamFailureReason(err))
+		timer := time.NewTimer(350 * time.Millisecond)
+		select {
+		case <-req.Context().Done():
+			timer.Stop()
+			return nil, &upstreamNotSentError{req.Context().Err()}
+		case <-timer.C:
+		}
+	}
+}
+
+func retryImageConnection(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var rejection *proxyConnectError
+	if errors.As(err, &rejection) {
+		return rejection.status >= 500
+	}
+	var certificate *tls.CertificateVerificationError
+	if errors.As(err, &certificate) {
+		return false
+	}
+	return true
 }
 
 func (t *egressTransport) CloseIdleConnections() {
