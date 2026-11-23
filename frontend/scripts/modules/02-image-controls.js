@@ -396,8 +396,7 @@
         }
 
         function positionImagePicker(button, menu) {
-            const bounds = button.closest('#imageGenerationControlPanel') || pageZoomMetrics().layer;
-            const panel = bounds.getBoundingClientRect();
+            const panel = document.getElementById('imageGenerationControlPanel').getBoundingClientRect();
             const picker = button.parentElement;
             const anchor = picker.getBoundingClientRect();
             const scale = anchor.height / picker.offsetHeight || 1;
@@ -451,7 +450,7 @@
         }
 
         function initializeImageOptionTooltips() {
-            const panels = ['imageGenerationControlPanel', 'imageReasoningMenu', 'imageModelChoices'].map(id => document.getElementById(id));
+            const panels = ['imageGenerationControlPanel', 'imageReasoningMenu'].map(id => document.getElementById(id));
             const bubble = document.createElement('div');
             bubble.id = 'imageOptionTooltip';
             bubble.setAttribute('role', 'tooltip');
@@ -472,7 +471,7 @@
                 hide();
                 target = element;
                 timer = setTimeout(() => {
-                    if (!element.getClientRects().length || (panel.id !== 'imageModelChoices' && !panel.classList.contains('is-open'))) return hide();
+                    if (!element.getClientRects().length || !panel.classList.contains('is-open')) return hide();
                     bubble.textContent = element.dataset.imageTip;
                     bubble.hidden = false;
                     element.setAttribute('aria-describedby', bubble.id);
@@ -512,7 +511,7 @@
                 }, true);
                 panel.addEventListener('click', hide);
                 new MutationObserver(() => {
-                    if (target && panel.contains(target) && (panel.hidden || (panel.id !== 'imageModelChoices' && !panel.classList.contains('is-open')))) hide();
+                    if (target && panel.contains(target) && (panel.hidden || !panel.classList.contains('is-open'))) hide();
                 }).observe(panel, { attributes: true, attributeFilter: ['hidden', 'class'] });
             }
         }
@@ -589,10 +588,6 @@
             }
 
             function open() {
-                if (container.id === 'imageModelChoices') {
-                    closeImageGenerationControls();
-                    closeImageReasoningMenu();
-                }
                 closeImagePicker();
                 activeImagePicker = container;
                 container.classList.add('is-picker-open');
@@ -642,9 +637,9 @@
             };
         }
 
-        function renderImageChoices(id, items, value, onSelect, { segmented = false, picker = false, disabled = false, icons = {} } = {}) {
+        function renderImageChoices(id, items, value, onSelect, { segmented = false, disabled = false, icons = {} } = {}) {
             const container = document.getElementById(id);
-            const inline = !picker && (segmented || items.length <= 3);
+            const inline = segmented || items.length <= 3;
             const signature = JSON.stringify([items, inline, disabled, icons]);
             if (container.dataset.signature !== signature) {
                 const hadFocus = container.contains(document.activeElement);
@@ -861,7 +856,7 @@
             const label = IMAGE_MODEL_LABELS[model];
             renderImageChoices('imageModelChoices', models.map(item => [
                 item, IMAGE_MODEL_LABELS[item] || item, imageModelTip(item)
-            ]), model, setImageModel, { picker: true, disabled: models.length === 1 });
+            ]), model, setImageModel, { disabled: models.length === 1 });
             if (!state.editSession) {
                 document.getElementById('imageEditHeading').textContent = label ? 'GPT Image ' + label + ' 生图' : model + ' 生图';
             }
