@@ -4463,6 +4463,201 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
   text-align: right;
 }
 
+/* A tier lock is distinct from a supported option that has not been selected. */
+.image-tier-lock {
+  display: inline-flex;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  align-items: center;
+  justify-content: center;
+  margin-left: 3px;
+  pointer-events: none;
+}
+
+.image-tier-lock svg {
+  width: 10px !important;
+  height: 10px !important;
+}
+
+#imageGenerationControlPanel button.is-tier-locked,
+#imageGenerationControlPanel .image-control-segmented > button.is-tier-locked:disabled:not(.is-active),
+#polishImagePromptButton.is-tier-locked,
+#generateEditedImageButton.is-tier-locked,
+.advanced-entry-row.is-tier-locked {
+  border: 1px dashed color-mix(in srgb, var(--muted) 72%, transparent);
+  background: color-mix(in srgb, var(--muted) 16%, var(--surface));
+  color: var(--text-soft);
+  opacity: 1;
+  cursor: not-allowed;
+  box-shadow: none;
+  filter: none;
+}
+
+#imageGenerationControlPanel button.is-tier-locked::after {
+  content: none;
+}
+
+#imageGenerationControlPanel .image-choice-menu button.is-tier-locked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+#imageGenerationControlPanel .image-choice-menu button.is-tier-locked:hover {
+  background: color-mix(in srgb, var(--muted) 20%, var(--surface));
+}
+
+.image-tier-restriction-note {
+  color: var(--text-soft);
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--muted) 15%, var(--surface));
+}
+
+.image-tier-restriction-note[hidden] {
+  display: none;
+}
+
+.web-search-row.is-tier-locked {
+  opacity: 1;
+  border-radius: 8px;
+  border: 1px dashed var(--border);
+  background: color-mix(in srgb, var(--muted) 12%, var(--surface));
+}
+
+.advanced-entry-row.is-tier-locked .advanced-entry-hint {
+  color: var(--text-soft);
+  font-size: 9px;
+}
+
+.advanced-entry-row.is-tier-locked .advanced-entry-hint::after {
+  display: none;
+}
+
+#reasoningSliderTrack .slider-dot.is-unavailable {
+  opacity: 1;
+  width: 6px;
+  height: 6px;
+  border: 1px dashed var(--text-soft);
+  background: color-mix(in srgb, var(--surface) 85%, var(--muted));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--muted) 15%, transparent);
+}
+
+#reasoningSliderTrack[aria-disabled=true] {
+  cursor: default;
+  opacity: 1;
+}
+
+.advanced-y-label, .advanced-x-label {
+  cursor: pointer;
+  border-radius: 5px;
+}
+
+html.dark :is(.advanced-y-label, .advanced-x-label):not(.is-active):not(.is-tier-locked) {
+  color: var(--text-soft);
+}
+
+.advanced-y-label:focus-visible, .advanced-x-label:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.advanced-y-label.is-tier-locked, .advanced-x-label.is-tier-locked {
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--muted) 18%, var(--surface));
+  border: 1px dashed color-mix(in srgb, var(--muted) 70%, transparent);
+  cursor: not-allowed;
+  text-shadow: none;
+}
+
+.advanced-y-label.is-tier-locked {
+  padding: 2px 3px;
+  gap: 2px;
+}
+
+.advanced-x-label.is-tier-locked {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding-block: 2px;
+}
+
+.advanced-x-label .image-tier-lock {
+  width: 8px;
+  height: 8px;
+  margin-left: 0;
+}
+
+.advanced-node {
+  position: absolute;
+  z-index: 3;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.advanced-node.is-tier-locked {
+  border: 1px dashed #a3b2ca;
+  background: #34415c;
+  color: #e1e7f2;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.advanced-node .image-tier-lock {
+  width: 10px;
+  height: 10px;
+  margin: 0;
+}
+
+.advanced-node[hidden], .advanced-x-label[hidden], .advanced-y-label[hidden] {
+  display: none !important;
+}
+
+.advanced-pad.is-over-locked {
+  cursor: not-allowed;
+}
+
+.advanced-pad.is-over-locked::after {
+  content: "当前档位未开放";
+  position: absolute;
+  z-index: 7;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: #303747;
+  color: #f3f5fa;
+  font-size: 9px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.advanced-knob.is-dragging {
+  transition: left 120ms ease-out, top 120ms ease-out, background-color 260ms ease, box-shadow 320ms ease;
+}
+
+#editImageAddTile.is-tier-locked {
+  background: color-mix(in srgb, var(--muted) 16%, var(--surface));
+  color: var(--text-soft);
+  border-style: dashed;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
 #dashboardGrid {
   display: grid;
   flex: 1 1 auto;

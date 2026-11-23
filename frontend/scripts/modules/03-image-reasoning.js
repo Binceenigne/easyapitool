@@ -118,20 +118,71 @@
 
         function imageAdvancedCapabilities(slot) {
             const profile = activeImageProfile();
-            const preset = profile?.reasoning?.[slot];
+            const preset = profile?.catalog?.reasoning?.[slot] || profile?.reasoning?.[slot];
             const model = preset?.model || (profile?.reasoning ? '' : IMAGE_REASONING_MODEL_IDS[slot]);
-            if (!model || !imageTierAllows('reasoningModels', model)) return { model: '', efforts: [], preferred: '' };
-            const caps = profile?.reasoningCapabilities?.[model];
-            if (caps) {
-                return { model, efforts: IMAGE_ADVANCED_EFFORTS.filter(effort => caps.efforts.includes(effort) && imageTierAllows('reasoningEfforts', effort)),
-                    preferred: caps.default };
-            }
+            if (!model) return { model: '', efforts: [], nativeEfforts: [], preferred: '' };
+            const caps = profile?.catalog?.reasoningCapabilities?.[model] || profile?.reasoningCapabilities?.[model];
             const base = model.replace(/-\d{4}-\d{2}-\d{2}$/, '');
-            if (Object.values(IMAGE_REASONING_MODEL_IDS).includes(base)) {
-                return { model, efforts: IMAGE_ADVANCED_EFFORTS.filter(effort => imageTierAllows('reasoningEfforts', effort)), preferred: 'medium' };
-            }
-            return { model, efforts: IMAGE_ADVANCED_EFFORTS.filter(effort => preset?.effort === effort && imageTierAllows('reasoningEfforts', effort)),
-                preferred: preset?.effort || '' };
+            const nativeEfforts = caps ? IMAGE_ADVANCED_EFFORTS.filter(effort => caps.efforts.includes(effort))
+                : Object.values(IMAGE_REASONING_MODEL_IDS).includes(base) ? [...IMAGE_ADVANCED_EFFORTS]
+                : IMAGE_ADVANCED_EFFORTS.filter(effort => preset?.effort === effort);
+            const enabledModel = imageTierAllows('reasoningModels', model)
+                && (!profile?.tier || profile.reasoning?.[slot]?.model === model);
+            const filtered = profile?.reasoningCapabilities?.[model]?.efforts;
+            const efforts = enabledModel ? nativeEfforts.filter(effort => imageTierAllows('reasoningEfforts', effort)
+                && (!filtered || filtered.includes(effort))) : [];
+            return { model, nativeEfforts, efforts, preferred: caps?.default || preset?.effort || '' };
+        }
+
+        function imageAdvancedNodeAllowed(modelIndex, effortIndex) {
+            return imageAdvancedAllowed() && imageAdvancedCapabilities(IMAGE_ADVANCED_MODELS[modelIndex]).efforts.includes(IMAGE_ADVANCED_EFFORTS[effortIndex]);
+        }
+
+        function syncImageAdvancedAvailability() {
+            const state = window.imageEditState;
+            const allowed = imageAdvancedAllowed();
+            const current = imageAdvancedCapabilities(state.reasoningAdvancedModel);
+            const matrix = document.getElementById('advancedMatrix');
+            matrix.setAttribute('aria-disabled', String(!allowed));
+            matrix.tabIndex = allowed ? 0 : -1;
+            matrix.setAttribute('aria-label', `模型与思维深度矩阵，当前 ${current.model || '未开放'} ${state.reasoningAdvancedEffort || ''}。方向键只切换已开放节点。`);
+            document.querySelectorAll('.advanced-y-label').forEach(label => {
+                const slot = IMAGE_ADVANCED_MODELS[Number(label.dataset.yLabel)];
+                const capabilities = imageAdvancedCapabilities(slot);
+                const permitted = allowed && capabilities.efforts.length > 0;
+                label.hidden = !capabilities.model || !capabilities.nativeEfforts.length;
+                label.firstElementChild.textContent = capabilities.model;
+                label.setAttribute('role', 'button');
+                label.tabIndex = permitted ? 0 : -1;
+                label.dataset.imageTip = permitted ? imageReasoningModelTip(capabilities.model) : '当前档位未开放此模型或思考深度';
+                applyImageChoiceAvailability(label, !permitted, !permitted);
+                label.tabIndex = permitted ? 0 : -1;
+            });
+            document.querySelectorAll('.advanced-x-label').forEach(label => {
+                const effort = IMAGE_ADVANCED_EFFORTS[Number(label.dataset.xLabel)];
+                const permitted = allowed && current.efforts.includes(effort);
+                label.hidden = !current.nativeEfforts.includes(effort);
+                label.style.visibility = '';
+                label.textContent = effort;
+                label.setAttribute('role', 'button');
+                label.dataset.imageTip = permitted ? IMAGE_REASONING_EFFORT_TIPS[effort] : '当前档位未开放此思考深度';
+                applyImageChoiceAvailability(label, !permitted, !permitted);
+                label.tabIndex = permitted ? 0 : -1;
+            });
+            document.querySelectorAll('.advanced-node').forEach(node => {
+                const modelIndex = Number(node.dataset.modelIndex), effortIndex = Number(node.dataset.effortIndex);
+                const capabilities = imageAdvancedCapabilities(IMAGE_ADVANCED_MODELS[modelIndex]);
+                const effort = IMAGE_ADVANCED_EFFORTS[effortIndex];
+                const supported = capabilities.nativeEfforts.includes(effort);
+                const permitted = imageAdvancedNodeAllowed(modelIndex, effortIndex);
+                node.hidden = !supported;
+                node.setAttribute('aria-label', `${capabilities.model} · ${effort}${permitted ? '' : '，当前档位未开放'}`);
+                node.dataset.imageTip = permitted ? IMAGE_REASONING_EFFORT_TIPS[effort] : '当前档位未开放';
+                applyImageChoiceAvailability(node, !permitted, !permitted);
+                node.tabIndex = -1;
+                node.classList.toggle('is-active', permitted && state.reasoningAdvancedModel === IMAGE_ADVANCED_MODELS[modelIndex] && state.reasoningAdvancedEffort === effort);
+                node.setAttribute('aria-pressed', String(node.classList.contains('is-active')));
+            });
         }
 
         function compatibleImageAdvancedEffort(slot, effort) {
@@ -207,33 +258,37 @@
         function syncImageReasoningLabels() {
             const state = window.imageEditState;
             const mode = normalizeImageReasoningMode(state.reasoningMode);
-            document.getElementById('advancedEntryButton').hidden = !imageAdvancedAllowed();
-            if (state.reasoningAdvanced && !imageAdvancedAllowed()) { returnToNormalImageReasoningMode(false); return; }
-            if (!state.reasoningAdvanced && !availableImageReasoningModes().includes(mode)) { setImageReasoningMode('instant', false); return; }
+            const entry = document.getElementById('advancedEntryButton');
+            entry.hidden = false;
+            const advanced = imageAdvancedAllowed();
+            applyImageChoiceAvailability(entry, !advanced, !advanced);
+            entry.querySelector('.advanced-entry-hint').textContent = advanced ? '矩阵调控' : '当前档位未开放';
+            entry.dataset.imageTip = advanced ? '进入模型和深度矩阵，只能选择当前模型与档位允许的节点。' : '当前档位未开放高级模式或没有可用的模型与深度组合。';
+            if (state.reasoningAdvanced && !advanced) { returnToNormalImageReasoningMode(false); }
+            if (!state.reasoningAdvanced && !availableImageReasoningModes().includes(mode)) { setImageReasoningMode('instant', false); }
             if (state.reasoningAdvanced) setImageAdvancedMode(state.reasoningAdvancedModel, state.reasoningAdvancedEffort, false);
             document.querySelectorAll('#reasoningSliderTrack .slider-dot').forEach((dot, index) => {
                 const permitted = availableImageReasoningModes().includes(IMAGE_REASONING_MODES[index]);
-                dot.classList.toggle('is-unavailable', !permitted); dot.title = permitted ? IMAGE_REASONING_LABELS[IMAGE_REASONING_MODES[index]] : '当前档位未开放';
+                dot.classList.toggle('is-unavailable', !permitted);
+                dot.title = permitted ? IMAGE_REASONING_LABELS[IMAGE_REASONING_MODES[index]] : '当前档位未开放';
             });
-            document.querySelectorAll('.advanced-y-label').forEach(label => {
-                const slot = IMAGE_ADVANCED_MODELS[Number(label.dataset.yLabel)];
-                const { model, efforts } = imageAdvancedCapabilities(slot);
-                label.hidden = !model || !efforts.length;
-                label.firstElementChild.textContent = model;
-                label.dataset.imageTip = imageReasoningModelTip(model) + (efforts.length
-                    ? ' 可选思考档位 ' + efforts.join('、') + '。' : ' 使用上游默认思考设置。');
-            });
-            if (mode === 'advanced') {
-                state.reasoningAdvancedEffort = compatibleImageAdvancedEffort(state.reasoningAdvancedModel, state.reasoningAdvancedEffort);
-                updateImageAdvancedSelectionUi(state.reasoningAdvancedModel, state.reasoningAdvancedEffort);
-            }
+            syncImageAdvancedAvailability();
+            const normalTrack = document.getElementById('reasoningSliderTrack');
+            normalTrack.setAttribute('aria-disabled', String(availableImageReasoningModes().length < 2));
+            normalTrack.tabIndex = availableImageReasoningModes().length < 2 ? -1 : 0;
+            if (state.reasoningAdvanced) updateImageAdvancedSelectionUi(state.reasoningAdvancedModel, state.reasoningAdvancedEffort);
             else {
                 const description = document.getElementById('reasoningSliderDesc');
-                description.textContent = reasoningPresetText(mode);
-                description.dataset.imageTip = IMAGE_REASONING_DESCRIPTIONS[mode];
+                description.textContent = reasoningPresetText(state.reasoningMode);
+                description.dataset.imageTip = IMAGE_REASONING_DESCRIPTIONS[state.reasoningMode];
                 document.getElementById('reasoningSliderTrack').dataset.imageTip = description.dataset.imageTip;
             }
-            document.getElementById('imageWebSearchEnabled').disabled = !imageModeUsesReasoning(mode) || !imageTierFeature('webSearch');
+            const search = document.getElementById('imageWebSearchEnabled');
+            const enabled = imageTierFeature('webSearch');
+            search.disabled = state.reasoningAdvanced || !imageModeUsesReasoning(state.reasoningMode) || !enabled;
+            search.setAttribute('aria-disabled', String(search.disabled));
+            applyImageChoiceAvailability(search.closest('.web-search-row'), !enabled, !enabled, '当前档位未开放网络搜索');
+            search.closest('.web-search-row').dataset.imageTip = !enabled ? '当前档位未开放网络搜索' : '允许思维模型搜索网页，为图片提示词补充资料。';
         }
 
         function imageReasoningModeLabel(mode, model = '', effort = '') {
@@ -352,14 +407,7 @@
             const modelIndex = IMAGE_ADVANCED_MODELS.indexOf(cleanModel);
             const effortIndex = Math.max(0, IMAGE_ADVANCED_EFFORTS.indexOf(cleanEffort));
             const available = imageAdvancedCapabilities(cleanModel);
-            document.querySelectorAll('.advanced-x-label').forEach(label => {
-                const index = Number(label.dataset.xLabel);
-                const value = IMAGE_ADVANCED_EFFORTS[index];
-                const automatic = !available.efforts.length && index === 0;
-                label.style.visibility = automatic || available.efforts.includes(value) ? 'visible' : 'hidden';
-                label.textContent = automatic ? '默认' : value;
-                label.dataset.imageTip = automatic ? '使用上游模型的默认思考设置。' : IMAGE_REASONING_EFFORT_TIPS[value];
-            });
+            syncImageAdvancedAvailability();
             const modelDetails = IMAGE_ADVANCED_MODEL_DETAILS[cleanModel];
             const knob = document.getElementById('advancedKnob');
             if (knob) {
@@ -670,7 +718,8 @@
             const sliderTrack = document.getElementById('reasoningSliderTrack');
             const rect = sliderTrack.getBoundingClientRect();
             const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-            setImageReasoningMode(IMAGE_REASONING_MODES[Math.round(fraction * (IMAGE_REASONING_MODES.length - 1))]);
+            const wanted = IMAGE_REASONING_MODES[Math.round(fraction * (IMAGE_REASONING_MODES.length - 1))];
+            if (availableImageReasoningModes().includes(wanted)) setImageReasoningMode(wanted);
         }
 
         function initializeImageReasoningSlider() {
@@ -763,21 +812,23 @@
         }
 
         function previewImageAdvancedPointer(event) {
-            const inner = document.getElementById('advancedPadInner');
-            const knob = document.getElementById('advancedKnob');
+            const cell = imageAdvancedCellFromPointer(event);
             const pad = document.getElementById('advancedPad');
-            const rect = inner.getBoundingClientRect();
-            const pointerX = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
-            const pointerY = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
-            const effortPosition = pointerX / rect.width * 4;
-            const modelPosition = (1 - pointerY / rect.height) * 2;
-            knob.style.left = `${pointerX / rect.width * 100}%`;
-            knob.style.top = `${pointerY / rect.height * 100}%`;
-            updateImageAdvancedHighlights(effortPosition, modelPosition, true);
-            knob.style.background = `hsl(${imageAdvancedHue(modelPosition, effortPosition)}, 95%, ${68 - effortPosition}%)`;
-            knob.style.boxShadow = `0 1px 3px rgba(0, 0, 0, 0.3), ${imageAdvancedCellGlow(effortPosition, modelPosition)}`;
-            pad.style.boxShadow = imageAdvancedPadGlow(effortPosition, modelPosition);
-            applyImageAdvancedButtonTheme(modelPosition, effortPosition);
+            if (!imageAdvancedNodeAllowed(cell.modelIndex, cell.effortIndex)) {
+                pad.classList.add('is-over-locked');
+                return null;
+            }
+            pad.classList.remove('is-over-locked');
+            const { modelIndex, effortIndex } = cell;
+            const knob = document.getElementById('advancedKnob');
+            knob.style.left = `${effortIndex / (IMAGE_ADVANCED_EFFORTS.length - 1) * 100}%`;
+            knob.style.top = `${(IMAGE_ADVANCED_MODELS.length - 1 - modelIndex) / (IMAGE_ADVANCED_MODELS.length - 1) * 100}%`;
+            updateImageAdvancedHighlights(effortIndex, modelIndex, true);
+            knob.style.background = `hsl(${imageAdvancedHue(modelIndex, effortIndex)}, 95%, ${68 - effortIndex}%)`;
+            knob.style.boxShadow = `0 1px 3px rgba(0, 0, 0, 0.3), ${imageAdvancedCellGlow(effortIndex, modelIndex)}`;
+            pad.style.boxShadow = imageAdvancedPadGlow(effortIndex, modelIndex);
+            applyImageAdvancedButtonTheme(modelIndex, effortIndex);
+            return cell;
         }
 
         function initializeImageAdvancedReasoningMatrix() {
@@ -787,68 +838,94 @@
             if (!rows || !pad || !matrix || rows.dataset.initialized === 'true') return;
             rows.dataset.initialized = 'true';
             for (let rowIndex = 0; rowIndex < 11; rowIndex += 1) {
-                const row = document.createElement('div');
-                row.className = 'advanced-row';
+                const row = document.createElement('div'); row.className = 'advanced-row';
                 for (let columnIndex = 0; columnIndex < 17; columnIndex += 1) {
-                    const anchor = document.createElement('span');
-                    anchor.className = 'advanced-anchor';
-                    anchor.dataset.row = String(rowIndex);
-                    anchor.dataset.col = String(columnIndex);
+                    const anchor = document.createElement('span'); anchor.className = 'advanced-anchor';
+                    anchor.dataset.row = String(rowIndex); anchor.dataset.col = String(columnIndex);
                     anchor.classList.toggle('is-snap', rowIndex % 5 === 0 && columnIndex % 4 === 0);
                     row.append(anchor);
                 }
                 rows.append(row);
             }
-            let dragging = false;
+            for (let modelIndex = 0; modelIndex < IMAGE_ADVANCED_MODELS.length; modelIndex += 1) {
+                for (let effortIndex = 0; effortIndex < IMAGE_ADVANCED_EFFORTS.length; effortIndex += 1) {
+                    const node = document.createElement('button'); node.type = 'button'; node.className = 'advanced-node';
+                    node.dataset.modelIndex = String(modelIndex); node.dataset.effortIndex = String(effortIndex);
+                    node.style.left = `${effortIndex / 4 * 100}%`; node.style.top = `${(2 - modelIndex) / 2 * 100}%`;
+                    node.addEventListener('click', () => {
+                        if (!window.imageEditState.busy && imageAdvancedNodeAllowed(modelIndex, effortIndex))
+                            setImageAdvancedMode(IMAGE_ADVANCED_MODELS[modelIndex], IMAGE_ADVANCED_EFFORTS[effortIndex]);
+                    });
+                    document.getElementById('advancedPadInner').append(node);
+                }
+            }
+            let dragging = false, pending = null;
             pad.addEventListener('pointerdown', event => {
-                if (window.imageEditState.busy) return;
+                if (window.imageEditState.busy || !imageAdvancedAllowed()) return;
+                pending = previewImageAdvancedPointer(event);
+                if (!pending) return;
                 dragging = true;
                 pad.setPointerCapture(event.pointerId);
                 pad.classList.add('is-dragging');
-                document.getElementById('advancedKnob')?.classList.add('is-dragging');
-                previewImageAdvancedPointer(event);
+                document.getElementById('advancedKnob').classList.add('is-dragging');
             });
             pad.addEventListener('pointermove', event => {
-                if (dragging && pad.hasPointerCapture(event.pointerId)) previewImageAdvancedPointer(event);
+                if (dragging && pad.hasPointerCapture(event.pointerId)) pending = previewImageAdvancedPointer(event) || pending;
             });
-            const finishPointer = event => {
-                if (!dragging) return;
-                dragging = false;
-                pad.classList.remove('is-dragging');
-                document.getElementById('advancedKnob')?.classList.remove('is-dragging');
+            const stop = event => {
+                const wasDragging = dragging; dragging = false;
+                pad.classList.remove('is-dragging', 'is-over-locked');
+                document.getElementById('advancedKnob').classList.remove('is-dragging');
                 if (pad.hasPointerCapture(event.pointerId)) pad.releasePointerCapture(event.pointerId);
-                const cell = imageAdvancedCellFromPointer(event);
-                setImageAdvancedMode(
-                    IMAGE_ADVANCED_MODELS[cell.modelIndex],
-                    IMAGE_ADVANCED_EFFORTS[cell.effortIndex],
-                    true
-                );
+                if (wasDragging && pending && event.type !== 'pointercancel' && imageAdvancedNodeAllowed(pending.modelIndex, pending.effortIndex)) {
+                    setImageAdvancedMode(IMAGE_ADVANCED_MODELS[pending.modelIndex], IMAGE_ADVANCED_EFFORTS[pending.effortIndex]);
+                } else updateImageAdvancedSelectionUi(window.imageEditState.reasoningAdvancedModel, window.imageEditState.reasoningAdvancedEffort);
+                pending = null;
             };
-            pad.addEventListener('pointerup', finishPointer);
-            pad.addEventListener('pointercancel', finishPointer);
+            pad.addEventListener('pointerup', stop); pad.addEventListener('pointercancel', stop);
+            pad.addEventListener('pointerleave', () => { if (!dragging) pad.classList.remove('is-over-locked'); });
             matrix.addEventListener('keydown', event => {
-                if (window.imageEditState.busy) return;
-                let modelIndex = IMAGE_ADVANCED_MODELS.indexOf(window.imageEditState.reasoningAdvancedModel);
-                let effortIndex = IMAGE_ADVANCED_EFFORTS.indexOf(window.imageEditState.reasoningAdvancedEffort);
-                if (event.key === 'ArrowLeft') effortIndex -= 1;
-                else if (event.key === 'ArrowRight') effortIndex += 1;
-                else if (event.key === 'ArrowUp') modelIndex += 1;
-                else if (event.key === 'ArrowDown') modelIndex -= 1;
-                else if (event.key === 'Home') effortIndex = 0;
-                else if (event.key === 'End') effortIndex = IMAGE_ADVANCED_EFFORTS.length - 1;
-                else return;
+                if (window.imageEditState.busy || !imageAdvancedAllowed() || event.target !== matrix) return;
+                const state = window.imageEditState;
+                const models = availableImageAdvancedModels();
+                let model = state.reasoningAdvancedModel;
+                let effort = state.reasoningAdvancedEffort;
+                if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                    const next = models.indexOf(model) + (event.key === 'ArrowUp' ? 1 : -1);
+                    model = models[Math.max(0, Math.min(models.length - 1, next))];
+                    effort = compatibleImageAdvancedEffort(model, effort);
+                } else if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+                    const efforts = imageAdvancedCapabilities(model).efforts;
+                    let next = efforts.indexOf(effort) + (event.key === 'ArrowRight' ? 1 : -1);
+                    if (event.key === 'Home') next = 0;
+                    if (event.key === 'End') next = efforts.length - 1;
+                    effort = efforts[Math.max(0, Math.min(efforts.length - 1, next))];
+                } else return;
                 event.preventDefault();
-                setImageAdvancedMode(
-                    IMAGE_ADVANCED_MODELS[Math.max(0, Math.min(IMAGE_ADVANCED_MODELS.length - 1, modelIndex))],
-                    IMAGE_ADVANCED_EFFORTS[Math.max(0, Math.min(IMAGE_ADVANCED_EFFORTS.length - 1, effortIndex))]
-                );
+                setImageAdvancedMode(model, effort);
             });
-            document.getElementById('advancedEntryButton')?.addEventListener('click', () => showImageReasoningAdvancedView(true));
+            const activateAxis = (element, action) => {
+                element.addEventListener('click', () => { if (!window.imageEditState.busy && element.getAttribute('aria-disabled') !== 'true') action(); });
+                element.addEventListener('keydown', event => {
+                    if (!['Enter', ' '].includes(event.key)) return;
+                    event.preventDefault();
+                    if (!window.imageEditState.busy && element.getAttribute('aria-disabled') !== 'true') action();
+                });
+            };
+            document.querySelector('.advanced-x-labels').removeAttribute('aria-hidden');
+            document.querySelectorAll('.advanced-y-label').forEach(label => activateAxis(label, () => {
+                const slot = IMAGE_ADVANCED_MODELS[Number(label.dataset.yLabel)];
+                if (imageAdvancedAllowed() && imageAdvancedCapabilities(slot).efforts.length)
+                    setImageAdvancedMode(slot, compatibleImageAdvancedEffort(slot, window.imageEditState.reasoningAdvancedEffort));
+            }));
+            document.querySelectorAll('.advanced-x-label').forEach(label => activateAxis(label, () => {
+                const effort = IMAGE_ADVANCED_EFFORTS[Number(label.dataset.xLabel)];
+                if (imageAdvancedAllowed() && imageAdvancedCapabilities(window.imageEditState.reasoningAdvancedModel).efforts.includes(effort))
+                    setImageAdvancedMode(window.imageEditState.reasoningAdvancedModel, effort);
+            }));
+            document.getElementById('advancedEntryButton')?.addEventListener('click', () => { if (imageAdvancedAllowed()) showImageReasoningAdvancedView(true); });
             document.getElementById('advancedBackButton')?.addEventListener('click', () => returnToNormalImageReasoningMode(true));
-            updateImageAdvancedSelectionUi(
-                window.imageEditState.reasoningAdvancedModel,
-                window.imageEditState.reasoningAdvancedEffort
-            );
+            updateImageAdvancedSelectionUi(window.imageEditState.reasoningAdvancedModel, window.imageEditState.reasoningAdvancedEffort);
         }
 
         async function polishImagePrompt() {

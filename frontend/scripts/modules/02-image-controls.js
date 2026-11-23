@@ -42,6 +42,7 @@
             setImageGenerationCount(saved.imageCount || 1, false);
             setImageWebSearchEnabled(saved.webSearchEnabled !== false, false);
             restoreImageReasoningPreferences(saved, false);
+            normalizeImageTierPreferences();
         }
 
         function setWorkspaceMode(mode) {
@@ -176,7 +177,10 @@
                 item.append(preview, name, remove);
                 list.append(item);
             });
-            addTile.hidden = files.length >= imageReferenceLimit();
+            addTile.hidden = imageReferenceLimit() > 0 && files.length >= imageReferenceLimit();
+            applyImageChoiceAvailability(addTile, imageReferenceLimit() === 0, imageReferenceLimit() === 0, '当前档位未开放参考图编辑');
+            addTile.setAttribute('aria-label', imageReferenceLimit() === 0 ? '当前档位未开放参考图编辑' : '添加参考图');
+            addTile.title = imageReferenceLimit() === 0 ? '当前档位未开放参考图编辑' : '添加参考图';
             list.append(addTile);
             renderLucideIcons();
             const maximumScrollLeft = Math.max(0, list.scrollWidth - list.clientWidth);
@@ -373,6 +377,33 @@
 
         function activeImageTier() { return activeImageProfile()?.tier || null; }
 
+        function imageCatalogModels(profile = activeImageProfile()) {
+            return profile?.catalog?.imageModels || availableImageModels(profile);
+        }
+
+        function imageLockedItems(items, allowed, reason = '当前档位未开放') {
+            return items.map(([value, label, tip]) => {
+                const locked = !allowed(value);
+                return [value, label, locked ? `${reason}。${tip || ''}` : tip, { disabled: locked, tierLocked: locked }];
+            });
+        }
+
+        function applyImageChoiceAvailability(button, unavailable = false, tierLocked = false, reason = '当前档位未开放') {
+            if ('disabled' in button) button.disabled = unavailable;
+            button.setAttribute('aria-disabled', String(unavailable));
+            button.classList.toggle('is-tier-locked', tierLocked);
+            if (unavailable) button.tabIndex = -1;
+            else if (!button.matches('[role="option"]')) button.removeAttribute('tabindex');
+            if (tierLocked) {
+                button.dataset.imageTip = button.dataset.imageTip?.includes(reason) ? button.dataset.imageTip : `${reason}。${button.dataset.imageTip || ''}`;
+                button.title = reason;
+                if (!button.querySelector('.image-tier-lock')) button.insertAdjacentHTML('beforeend', '<span class="image-tier-lock" aria-hidden="true">' + iconMarkup('lock-keyhole') + '</span>');
+            } else {
+                button.querySelector('.image-tier-lock')?.remove();
+                if (button.title === reason) button.removeAttribute('title');
+            }
+        }
+
         function imageTierAllows(field, value) {
             const tier = activeImageTier();
             return !tier || (Array.isArray(tier[field]) && (tier[field].includes('*') || tier[field].includes(value)));
@@ -392,6 +423,7 @@
                 && state.files.length <= imageReferenceLimit()
                 && availableImageModels(activeImageProfile()).includes(state.imageModel)
                 && features.quality.includes(state.quality) && imageTierAllows('qualities', state.quality)
+                && (state.outputFormat === 'svg' || !features.complexity || (state.complexity === 'auto' ? imageTierAllows('complexities', '*') : imageTierAllows('complexities', state.complexity)))
                 && IMAGE_FORMAT_CHOICES.some(([format]) => format === state.outputFormat && imageTierAllows('formats', format)
                     && (format !== 'svg' || features.svg && activeImageProfile()?.svg?.enabled === true && state.files.length === 0 && !state.editSession)
                     && (format !== 'gif' || features.animation));
@@ -405,10 +437,42 @@
                 frame_duration_ms: 200, imageCount: state.imageCount, resolution: state.resolution };
         }
 
+        function syncImageGenerationAvailability() {
+            const button = document.getElementById('generateEditedImageButton');
+            const state = window.imageEditState;
+            const complexLocked = state.outputFormat !== 'svg' && imageModelFeatures().complexity
+                && !['low', 'medium', 'high'].some(level => imageTierAllows('complexities', level));
+            const reason = complexLocked ? '当前档位未开放此模型的复杂度，请切换模型或联系管理员'
+                : !imageGenerationAllowed() ? '当前档位未开放这些生图选项，请调整模型、格式或参考图' : '';
+            if (!state.pendingSubmission) applyImageChoiceAvailability(button, Boolean(reason), Boolean(reason), reason || '当前档位未开放');
+            button.title = reason;
+            button.dataset.imageTip = reason;
+            let notice = document.getElementById('imageTierRestrictionNotice');
+            if (!notice) {
+                notice = document.createElement('span'); notice.id = 'imageTierRestrictionNotice';
+                notice.className = 'image-tier-restriction-note'; notice.setAttribute('role', 'status');
+                document.getElementById('imageComplexitySection').append(notice);
+            }
+            notice.hidden = !complexLocked;
+            notice.textContent = complexLocked ? reason : '';
+        }
+
+        function normalizeImageTierPreferences() {
+            if (!activeImageTier()) return;
+            const state = window.imageEditState;
+            if (!availableImageModels(activeImageProfile()).includes(state.preferredImageModel)) state.preferredImageModel = state.imageModel;
+            if (!imageTierAllows('qualities', state.preferredImageQuality)) state.preferredImageQuality = state.quality;
+            if (!imageTierAllows('formats', state.preferredImageFormat)) state.preferredImageFormat = state.outputFormat;
+            if (!imageTierAllows('complexities', state.preferredImageComplexity === 'auto' ? '*' : state.preferredImageComplexity)) state.preferredImageComplexity = state.complexity;
+            if (state.preferredImageCount > activeImageTier().maxImages) state.preferredImageCount = state.imageCount;
+            if (!imageTierFeature('webSearch')) state.webSearchEnabled = false;
+            persistImageGenerationPreferences();
+        }
+
         // OpenAI's Images API guide lists model-specific rendering and output controls.
         function imageModelFeatures(model = window.imageEditState.imageModel) {
             model = String(model || '');
-            const configured = activeImageProfile()?.imageFeatures?.[model];
+            const configured = activeImageProfile()?.catalog?.imageFeatures?.[model] || activeImageProfile()?.imageFeatures?.[model];
             if (Array.isArray(configured?.quality) && configured.sizeMode) return configured;
             const base = model.replace(/-\d{4}-\d{2}-\d{2}$/, '');
             const native26 = /^gpt-image-2\.6-(?:flare|sunburst)$/.test(base);
@@ -573,9 +637,13 @@
             }
             setImageQuality(state.preferredImageQuality ?? state.quality, false);
             setImageResolution(state.resolution || 'sd', false);
-            document.getElementById('polishImagePromptButton').disabled = state.polishing || !imageTierFeature('promptPolish');
+            const polishButton = document.getElementById('polishImagePromptButton');
+            applyImageChoiceAvailability(polishButton, state.polishing || !imageTierFeature('promptPolish'), !imageTierFeature('promptPolish'));
+            polishButton.dataset.imageTip = imageTierFeature('promptPolish') ? '润色提示词，保留原始要求并补充画面细节。' : '当前档位未开放提示词润色';
+            polishButton.title = imageTierFeature('promptPolish') ? '一键润色提示词' : '当前档位未开放提示词润色';
             if (typeof syncImageReasoningLabels === 'function') syncImageReasoningLabels();
-            if (!imageGenerationAllowed()) document.getElementById('generateEditedImageButton').disabled = true;
+            syncImageGenerationAvailability();
+            normalizeImageTierPreferences();
         }
 
         function buildImagePicker(container, items, onSelect, disabled) {
@@ -606,7 +674,7 @@
                 menu.setAttribute('aria-label', name);
             }
 
-            const options = items.map(([value, text, tip]) => {
+            const options = items.map(([value, text, tip, availability = {}]) => {
                 const option = document.createElement('button');
                 option.type = 'button';
                 option.tabIndex = -1;
@@ -614,6 +682,7 @@
                 option.dataset.value = value;
                 option.textContent = text;
                 if (tip) option.dataset.imageTip = tip;
+                applyImageChoiceAvailability(option, disabled || availability.disabled, availability.tierLocked);
                 return option;
             });
             menu.append(...options);
@@ -636,7 +705,8 @@
                 menu.hidden = false;
                 positionImagePicker(button, menu);
                 button.setAttribute('aria-expanded', 'true');
-                focusOption(menu.querySelector('[aria-selected="true"]') || options[0]);
+                const enabled = options.filter(option => !option.disabled);
+                if (enabled.length) focusOption(enabled.find(option => option.getAttribute("aria-selected") === "true") || enabled[0]);
             }
 
             button.addEventListener('click', () => {
@@ -645,7 +715,7 @@
             });
             menu.addEventListener('click', event => {
                 const option = event.target.closest('[role="option"]');
-                if (!option) return;
+                if (!option || option.disabled) return;
                 closeImagePicker(true);
                 onSelect(option.dataset.value);
             });
@@ -669,10 +739,12 @@
                 }
                 if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(key)) return;
                 event.preventDefault();
-                const index = options.indexOf(document.activeElement);
-                const next = key === 'Home' ? 0 : key === 'End' ? options.length - 1
-                    : Math.max(0, Math.min(options.length - 1, index + (key === 'ArrowDown' ? 1 : -1)));
-                focusOption(options[next]);
+                const enabled = options.filter(option => !option.disabled);
+                if (!enabled.length) return;
+                const index = enabled.indexOf(document.activeElement);
+                const next = key === 'Home' ? 0 : key === 'End' ? enabled.length - 1
+                    : Math.max(0, Math.min(enabled.length - 1, index + (key === 'ArrowDown' ? 1 : -1)));
+                focusOption(enabled[next]);
             });
             container.onfocusout = event => {
                 if (activeImagePicker === container && !container.contains(event.relatedTarget)) closeImagePicker();
@@ -684,7 +756,7 @@
             if (!items.length) {
                 container.replaceChildren();
                 const unavailable = document.createElement('button'); unavailable.type = 'button';
-                unavailable.textContent = '未开放'; unavailable.disabled = true;
+                unavailable.textContent = '未开放'; applyImageChoiceAvailability(unavailable, true, true);
                 container.append(unavailable); delete container.dataset.signature; return;
             }
             const inline = segmented || items.length <= 3;
@@ -698,15 +770,15 @@
                 container.replaceChildren();
                 if (inline) {
                     container.setAttribute('role', 'group');
-                    for (const [item, label, tip] of items) {
+                    for (const [item, label, tip, availability = {}] of items) {
                         const button = document.createElement('button');
                         button.type = 'button';
                         button.dataset.value = item;
                         button.textContent = label;
                         if (icons[item]) button.insertAdjacentHTML('afterbegin', iconMarkup(icons[item]));
                         if (tip) button.dataset.imageTip = tip;
-                        button.disabled = disabled;
-                        button.addEventListener('click', () => onSelect(item));
+                        applyImageChoiceAvailability(button, disabled || availability.disabled, availability.tierLocked);
+                        button.addEventListener('click', () => { if (!button.disabled) onSelect(item); });
                         container.append(button);
                     }
                     renderLucideIcons();
@@ -714,11 +786,14 @@
                     container.removeAttribute('role');
                     buildImagePicker(container, items, onSelect, disabled);
                 }
-                if (hadFocus && !disabled) container.firstElementChild.focus({ preventScroll: true });
+                if (hadFocus && !disabled) container.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
             }
             if (!inline) {
                 const [button, menu] = container.children;
-                const [, label, tip] = items.find(([item]) => item === value) || items[0];
+                const selected = items.find(([item, , , availability]) => item === value && !availability?.disabled);
+                const [, label, tip] = selected || ['', '未开放', '当前档位未开放'];
+                const unavailable = items.every(item => item[3]?.disabled);
+                applyImageChoiceAvailability(button, disabled || unavailable, unavailable);
                 button.firstElementChild.textContent = label;
                 button.dataset.value = value;
                 if (tip) button.dataset.imageTip = tip;
@@ -730,7 +805,7 @@
                 return;
             }
             for (const button of container.children) {
-                const active = button.dataset.value === value;
+                const active = button.dataset.value === value && !button.disabled;
                 button.classList.toggle('is-active', active);
                 button.setAttribute('aria-pressed', String(active));
             }
@@ -738,11 +813,13 @@
 
         function setImageQuality(quality, persist = true) {
             const state = window.imageEditState;
-            const levels = IMAGE_QUALITY_CHOICES.filter(([level]) => imageModelFeatures().quality.includes(level) && imageTierAllows('qualities', level));
+            const native = IMAGE_QUALITY_CHOICES.filter(([level]) => imageModelFeatures().quality.includes(level));
+            const items = imageLockedItems(native, level => imageTierAllows('qualities', level));
+            const levels = items.filter(item => !item[3].disabled);
             state.quality = levels.some(([level]) => level === quality) ? quality
                 : levels.some(([level]) => level === 'medium') ? 'medium' : levels[0]?.[0] || '';
             if (persist) state.preferredImageQuality = state.quality;
-            renderImageChoices('imageQualityChoices', levels, state.quality, setImageQuality, { segmented: true });
+            renderImageChoices('imageQualityChoices', items, state.quality, setImageQuality, { segmented: true });
             updateImageGenerationControlSummary();
             if (persist) persistImageGenerationPreferences();
         }
@@ -757,14 +834,15 @@
                 return;
             }
             const levels = [
-                ['auto', '模型默认', '使用上游模型的默认规划深度。GPT Image 2.6 默认为高。'],
+                ['auto', '模型默认', '使用上游模型的默认规划深度。'],
                 ['low', '低', '适合换色、替换物件等范围明确的修改，通常更快。'],
                 ['medium', '中', '适合有几项约束的构图或编辑，在规划深度和速度之间取平衡。'],
                 ['high', '高', '适合密集文字、多主体关系和精确排版，规划耗时可能更长。']
             ];
-            const permitted = levels.filter(([level]) => level === 'auto' ? imageTierAllows('complexities', '*') : imageTierAllows('complexities', level));
-            state.complexity = permitted.some(([level]) => level === complexity) ? complexity : permitted[0]?.[0] || 'auto';
-            renderImageChoices('imageComplexityChoices', permitted, state.complexity, setImageComplexity);
+            const items = imageLockedItems(levels, level => imageTierAllows('complexities', level === 'auto' ? '*' : level));
+            const permitted = items.filter(item => !item[3].disabled);
+            state.complexity = permitted.some(([level]) => level === complexity) ? complexity : permitted[0]?.[0] || '';
+            renderImageChoices('imageComplexityChoices', items, state.complexity, setImageComplexity);
             if (persist) {
                 state.preferredImageComplexity = state.complexity;
                 persistImageGenerationPreferences();
@@ -774,29 +852,36 @@
         function setImageOutputFormat(format, persist = true) {
             const state = window.imageEditState;
             const features = imageModelFeatures();
-            const canGenerateSVG = features.svg && activeImageProfile()?.svg?.enabled === true && state.files.length === 0 && !state.editSession;
-            const formats = IMAGE_FORMAT_CHOICES.filter(([item]) => {
-                if (!imageTierAllows('formats', item)) return false;
-                if (item === 'svg') return canGenerateSVG;
-                if (item === 'gif') return features.animation;
-                return true;
+            const profile = activeImageProfile();
+            const svgConfigured = (profile?.catalog?.svg || profile?.svg)?.enabled === true;
+            const native = IMAGE_FORMAT_CHOICES.filter(([item]) => item === 'svg' ? features.svg && svgConfigured : item !== 'gif' || features.animation);
+            const formats = native.map(([item, label, tip]) => {
+                const tierLocked = !imageTierAllows('formats', item);
+                const contextLocked = item === 'svg' && (state.files.length > 0 || Boolean(state.editSession));
+                const reason = tierLocked ? '当前档位未开放' : contextLocked ? 'SVG 暂不支持参考图和续作编辑' : '';
+                return [item, label, reason ? `${reason}。${tip || ''}` : tip, { disabled: tierLocked || contextLocked, tierLocked }];
             });
-            state.outputFormat = formats.some(([item]) => item === format) ? format : formats[0]?.[0] || '';
+            const permitted = formats.filter(item => !item[3].disabled);
+            state.outputFormat = permitted.some(([item]) => item === format) ? format : permitted[0]?.[0] || '';
             if (persist) state.preferredImageFormat = state.outputFormat;
             renderImageChoices('imageOutputChoices', formats, state.outputFormat, setImageOutputFormat);
+            document.getElementById('imageComplexitySection').hidden = !features.complexity || state.outputFormat === 'svg';
             const gif = state.outputFormat === 'gif';
             const frames = document.getElementById('imageGifFrames');
             frames.inert = !gif;
             frames.classList.toggle('is-open', gif);
             setImageFrameCount(state.frameCount, false);
-            const supportsTransparency = ['png', 'webp'].includes(state.outputFormat) && imageTierFeature('transparency');
-            if (!imageTierFeature('transparency')) state.transparency = 'opaque';
-            if (!supportsTransparency && state.transparency === 'transparent') state.transparency = 'auto';
+            const formatTransparent = ['png', 'webp'].includes(state.outputFormat);
+            const tierTransparent = imageTierFeature('transparency');
+            if (!tierTransparent) state.transparency = 'opaque';
+            else if (!formatTransparent && state.transparency === 'transparent') state.transparency = 'auto';
             for (const button of document.querySelectorAll('#imageTransparencyButtons button')) {
-                const active = button.dataset.transparency === state.transparency;
-                button.disabled = button.dataset.transparency === 'transparent' && !supportsTransparency
-                    || button.dataset.transparency === 'auto' && !imageTierFeature('transparency');
-                button.setAttribute('aria-disabled', String(button.disabled));
+                const value = button.dataset.transparency;
+                const locked = !tierTransparent && value !== 'opaque';
+                const unsupported = value === 'transparent' && !formatTransparent;
+                button.dataset.imageTip = locked ? '当前档位未开放透明背景' : unsupported ? '此输出格式不支持透明背景，请选择 PNG 或 WebP。' : value === 'opaque' ? '输出不透明背景。' : value === 'transparent' ? '输出透明背景。' : '由模型决定是否使用透明背景。';
+                applyImageChoiceAvailability(button, locked || unsupported, locked, '当前档位未开放透明背景');
+                const active = value === state.transparency && !button.disabled;
                 button.classList.toggle('is-active', active);
                 button.setAttribute('aria-pressed', String(active));
             }
@@ -805,14 +890,13 @@
         }
 
         function setImageFrameCount(value, persist = true) {
-            const counts = [4, 9, 12, 16].filter(count => count <= (activeImageTier()?.maxGifFrames ?? 16));
             const state = window.imageEditState;
+            const maximum = activeImageTier()?.maxGifFrames ?? 16;
+            const counts = [4, 9, 12, 16].filter(count => count <= maximum);
             state.frameCount = counts.includes(Number(value)) ? Number(value) : counts.includes(9) ? 9 : counts[0] || 4;
-            renderImageChoices('imageFrameChoices', counts.map(count => [
-                String(count), count + ' 帧',
-                '每帧 200 毫秒，循环一轮 ' + count / 5 + ' 秒。更多帧可呈现更长的动作，通常增加时间和用量。'
-            ]),
-                String(state.frameCount), setImageFrameCount);
+            const items = imageLockedItems([4, 9, 12, 16].map(count => [String(count), count + ' 帧',
+                `每帧 200 毫秒，循环一轮 ${count / 5} 秒。更多帧通常增加时间和用量。`]), value => Number(value) <= maximum);
+            renderImageChoices('imageFrameChoices', items, String(state.frameCount), setImageFrameCount);
             if (persist) persistImageGenerationPreferences();
         }
 
@@ -852,10 +936,11 @@
             const maximum = activeImageTier()?.maxResolution ?? 3840;
             if (IMAGE_RESOLUTIONS[resolution] > maximum) resolution = Object.keys(IMAGE_RESOLUTIONS).filter(id => IMAGE_RESOLUTIONS[id] <= maximum).at(-1) || 'sd';
             window.imageEditState.resolution = resolution;
-            renderImageChoices('imageResolutionChoices', [['sd', '标清', '最长边 1536 像素'],
+            const items = imageLockedItems([['sd', '标清', '最长边 1536 像素'],
                 ['hd', '高清', '最长边目标 2560 像素，适合需要保留更多细节的图片。'],
-                ['uhd', '超清', '最长边目标 3840 像素，会按总像素上限调整。2.5 系列的超高分辨率为实验支持。']].filter(([id]) => IMAGE_RESOLUTIONS[id] <= maximum),
-                resolution, setImageResolution, { icons: { sd: 'monitor', hd: 'scan-line', uhd: 'sparkles' } });
+                ['uhd', '超清', '最长边目标 3840 像素，会按总像素上限调整。']], id => IMAGE_RESOLUTIONS[id] <= maximum);
+            renderImageChoices('imageResolutionChoices', items, resolution, setImageResolution,
+                { icons: { sd: 'monitor', hd: 'scan-line', uhd: 'sparkles' } });
             updateImageGenerationControlSummary();
             if (persist) persistImageGenerationPreferences();
         }
@@ -906,12 +991,9 @@
             state.imageModel = model;
             if (persist) state.preferredImageModel = model;
             const label = IMAGE_MODEL_LABELS[model];
-            renderImageChoices('imageModelChoices', models.map(item => [
-                item, IMAGE_MODEL_LABELS[item] || item, imageModelTip(item)
-            ]), model, setImageModel, { disabled: models.length === 1 });
-            if (!state.editSession) {
-                document.getElementById('imageEditHeading').textContent = label ? label + ' 生图' : model ? model + ' 生图' : '当前档位未开放生图';
-            }
+            const items = imageLockedItems(imageCatalogModels(profile).map(item => [item, IMAGE_MODEL_LABELS[item] || item, imageModelTip(item)]), item => models.includes(item));
+            renderImageChoices('imageModelChoices', items, model, setImageModel);
+            if (!state.editSession) document.getElementById('imageEditHeading').textContent = label ? label + ' 生图' : model ? model + ' 生图' : '当前档位未开放生图';
             setImageQuality(state.preferredImageQuality ?? state.quality, false);
             setImageComplexity(state.preferredImageComplexity, false);
             setImageOutputFormat(state.preferredImageFormat, false);
@@ -922,14 +1004,12 @@
             const state = window.imageEditState;
             const desired = Math.max(1, Math.min(9, Math.trunc(Number(count)) || 1));
             state.preferredImageCount = desired;
-            const limit = Math.min(state.outputFormat === 'svg' ? 1 : 9, activeImageTier()?.maxImages ?? 9);
+            const nativeMaximum = state.outputFormat === 'svg' ? 1 : 9;
+            const limit = Math.min(nativeMaximum, activeImageTier()?.maxImages ?? 9);
             state.imageCount = Math.min(desired, limit);
-            const counts = Array.from({ length: limit }, (_, index) => {
-                const count = index + 1;
-                return [String(count), `${count} 张`, limit === 1 ? 'SVG 每次生成一张矢量图。'
-                    : `为同一个提示词生成 ${count} 张候选图片，数量越多通常用量越高。`];
-            });
-            renderImageChoices('imageCountChoices', counts, String(state.imageCount), setImageGenerationCount, { disabled: limit === 1 });
+            const counts = Array.from({ length: nativeMaximum }, (_, index) => [String(index + 1), `${index + 1} 张`,
+                nativeMaximum === 1 ? 'SVG 每次生成一张矢量图。' : `为同一提示词生成 ${index + 1} 张候选图片，数量越多通常用量越高。`]);
+            renderImageChoices('imageCountChoices', imageLockedItems(counts, value => Number(value) <= limit), String(state.imageCount), setImageGenerationCount);
             updateImageGenerationControlSummary();
             if (persist) persistImageGenerationPreferences();
         }
@@ -960,7 +1040,7 @@
             if (buttonLabel && !window.imageEditState.busy) {
                 buttonLabel.textContent = `生成 ${window.imageEditState.imageCount} 张`;
             }
-            if (!window.imageEditState.pendingSubmission) document.getElementById('generateEditedImageButton').disabled = !imageGenerationAllowed();
+            syncImageGenerationAvailability();
             scheduleImageChoiceMarkers();
         }
 
