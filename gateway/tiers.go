@@ -218,6 +218,7 @@ func (g *gateway) modelsForKey(k accessKey) (*modelSettings, error) {
 	}
 	profile := *current
 	profile.Tiers = nil
+	profile.Catalog = catalogForModels(current)
 	profile.Tier = &t
 	profile.ImageModels = allowedSubset(current.ImageModels, t.ImageModels)
 	profile.ImageFeatures = maps.Clone(current.ImageFeatures)
@@ -337,8 +338,13 @@ func (g *gateway) checkImageTier(k accessKey, o imageOptions, refs int) error {
 	if o.quality == "auto" && !permits(t.Qualities, "*") {
 		return denied("自动图片质量")
 	}
-	if o.complexity != "" && !permits(t.Complexities, o.complexity) {
-		return denied("此复杂度")
+	if o.format != "svg" {
+		if o.complexity != "" && !permits(t.Complexities, o.complexity) {
+			return denied("此复杂度")
+		}
+		if p.Catalog.ImageFeatures[o.model].Complexity && o.complexity == "" && !permits(t.Complexities, "*") {
+			return denied("模型默认复杂度，请明确选择档位允许的复杂度")
+		}
 	}
 	if (o.background == "transparent" || (o.background == "auto" && oneOf(o.format, "png", "webp"))) && !t.Transparency {
 		return denied("透明背景")

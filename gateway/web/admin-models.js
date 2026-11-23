@@ -82,8 +82,8 @@
 
   function updatePreview() {
     if (!state || !preview.getAttribute('src')) return;
-    const profile = draft();
-    if (profile.defaultImage) preview.contentWindow?.postMessage({ type: 'mirra-app-models', profile }, '*');
+    const profile = { ...state.appModels, ...draft(), tier: undefined, tiers: undefined, catalog: undefined };
+    preview.contentWindow?.postMessage({ type: 'mirra-app-models', profile }, '*');
     $('preview-state').textContent = dirty ? '未保存的草稿' : '已保存配置';
   }
   preview.addEventListener('load', updatePreview);

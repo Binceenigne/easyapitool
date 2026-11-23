@@ -62,6 +62,7 @@ func (a *admin) routes(m *mobile) http.Handler {
 	mux.HandleFunc("POST /admin/keys/{id}/reveal", a.protected(a.revealKey))
 	mux.HandleFunc("POST /admin/keys/{id}/delete", a.protected(a.deleteKey))
 	mux.HandleFunc("POST /admin/tiers", a.protected(a.saveTier))
+	mux.HandleFunc("GET /admin/tiers/{id}/preview", a.protected(a.previewTier))
 	mux.HandleFunc("POST /admin/landing-tiers", a.protected(a.saveLandingTiers))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.Host)

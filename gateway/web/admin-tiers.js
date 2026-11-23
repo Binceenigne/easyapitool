@@ -155,6 +155,91 @@
     updateSummary(); openDialog('tier-dialog');
   }
 
+  function copiedTierName(name) {
+    const suffix='/副本', encoder=new TextEncoder(), maximum=120-encoder.encode(suffix).length;
+    let prefix='', bytes=0;
+    for (const character of String(name)) {
+      const width=encoder.encode(character).length;if(bytes+width>maximum)break;
+      prefix+=character;bytes+=width;
+    }
+    return prefix+suffix;
+  }
+
+  function tierCopyAction(tier) {
+    const button=action('一键复制',async()=>{
+      button.setAttribute('aria-busy','true');button.replaceChildren(icon('Copy'),'正在复制…');
+      try {
+        const copy=structuredClone(tier);copy.id='';copy.name=copiedTierName(tier.name);
+        await api('tiers',{tier:copy,revision:state.appModels.revision});
+        await afterSave('已创建“'+copy.name+'”，可从列表继续编辑。');
+      } catch(error) { throw new Error(error.message+'；复制未完成，请刷新配置后重试。'); }
+      finally { button.removeAttribute('aria-busy');button.replaceChildren(icon('Copy'),'一键复制'); }
+    },'Copy');
+    button.setAttribute('aria-label','一键复制档位 '+tier.name);return button;
+  }
+
+  let previewTier=null, previewProfile=null, previewPanel='settings', previewSequence=0, previewLoaded=false, previewTimer=0;
+  const previewDialog=$('tier-preview-dialog'), previewFrame=$('tier-app-preview');
+  const previewThemeObserver=new MutationObserver(()=>sendTierPreview());
+
+  function previewLoading(loading) {
+    $('tier-preview-loading').hidden=!loading;$('tier-preview-stage').setAttribute('aria-busy',String(loading));
+    for(const id of ['tier-preview-settings','tier-preview-reasoning'])$(id).disabled=loading;
+  }
+  function sendTierPreview() {
+    if(!previewDialog.open || !previewProfile || !previewLoaded)return;
+    previewFrame.contentWindow?.postMessage({type:'mirra-app-models',profile:previewProfile,view:'bottom',panel:previewPanel,theme:document.documentElement.dataset.theme==='dark'?'dark':'light'},'*');
+  }
+  function previewFailure(message) {
+    clearTimeout(previewTimer);previewLoading(false);$('tier-preview-stage').hidden=true;
+    $('tier-preview-error').hidden=false;$('tier-preview-error-text').textContent=message;$('tier-preview-retry').disabled=false;
+    $('tier-preview-state').textContent='预览加载失败';
+  }
+  async function loadTierPreview() {
+    if(!previewTier || !previewDialog.open)return;
+    const sequence=++previewSequence;
+    clearTimeout(previewTimer);previewFrame.onload=null;previewFrame.removeAttribute('src');previewProfile=null;previewLoaded=false;
+    $('tier-preview-error').hidden=true;$('tier-preview-stage').hidden=false;$('tier-preview-retry').disabled=true;
+    $('tier-preview-state').textContent='正在读取档位权限…';previewLoading(true);
+    previewTimer=setTimeout(()=>{if(sequence===previewSequence&&previewDialog.open)previewFailure('客户端预览加载超时，请重新加载。');},15000);
+    try {
+      const profile=await api('tiers/'+encodeURIComponent(previewTier.id)+'/preview');
+      if(sequence!==previewSequence || !previewDialog.open)return;
+      if(!profile || profile.tier?.id!==previewTier.id)throw new Error('返回的档位配置不匹配，请刷新后重试。');
+      previewProfile=profile;$('tier-preview-state').textContent='正在加载实际客户端…';
+      previewFrame.onload=()=>{
+        if(sequence!==previewSequence || !previewDialog.open || !previewProfile)return;
+        previewLoaded=true;sendTierPreview();
+      };
+      previewFrame.src='/app-preview/';
+    }catch(error){if(sequence===previewSequence&&previewDialog.open)previewFailure(error.message);}
+  }
+  function openTierPreview(tier) {
+    previewTier={id:tier.id,name:tier.name};previewPanel='settings';
+    $('tier-preview-title').textContent=tier.name+' · 客户端底部预览';previewFrame.title=tier.name+' · 客户端底部预览';
+    $('tier-preview-settings').setAttribute('aria-pressed','true');$('tier-preview-reasoning').setAttribute('aria-pressed','false');
+    openDialog('tier-preview-dialog');previewThemeObserver.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+    void loadTierPreview();
+  }
+  function tierPreviewAction(tier) {
+    const button=action('预览',()=>openTierPreview(tier),'PanelsTopLeft');
+    button.setAttribute('aria-label','预览档位 '+tier.name);return button;
+  }
+  for(const [id,panel] of [['tier-preview-settings','settings'],['tier-preview-reasoning','reasoning']])$(id).addEventListener('click',()=>{
+    previewPanel=panel;$('tier-preview-settings').setAttribute('aria-pressed',String(panel==='settings'));$('tier-preview-reasoning').setAttribute('aria-pressed',String(panel==='reasoning'));sendTierPreview();
+  });
+  $('tier-preview-retry').addEventListener('click',()=>{void loadTierPreview();});
+  window.addEventListener('message',event=>{
+    if(event.source!==previewFrame.contentWindow || event.data?.type!=='mirra-app-preview-ready' || !previewDialog.open || !previewProfile || !previewLoaded || event.data.tierId!==previewTier?.id)return;
+    clearTimeout(previewTimer);previewLoading(false);$('tier-preview-state').textContent=previewPanel==='settings'?'生图设置 · 已保存权限':'思维深度 · 已保存权限';
+  });
+  previewFrame.addEventListener('error',()=>{if(previewDialog.open)previewFailure('无法加载实际客户端页面，请重试。');});
+  previewDialog.addEventListener('close',()=>{
+    previewSequence++;clearTimeout(previewTimer);previewThemeObserver.disconnect();previewFrame.onload=null;previewFrame.removeAttribute('src');
+    previewTier=null;previewProfile=null;previewLoaded=false;previewPanel='settings';$('tier-preview-title').textContent='客户端底部预览';previewFrame.title='档位客户端底部预览';
+    $('tier-preview-error').hidden=true;$('tier-preview-state').textContent='正在准备预览…';
+  });
+
   function comparison() {
     const plans = tiers(), query = $('tier-feature-search').value.trim().toLowerCase();
     if (!plans.length) { $('tier-comparison').replaceChildren(empty('Layers3','尚无功能档位','创建功能档位后，可在这里横向对比额度与权限。',action('新建档位',()=>openTier(),'Plus'))); return; }
@@ -173,7 +258,7 @@
     const header = grid.createTHead().insertRow(); header.append(node('th','','功能权限'));
     plans.forEach((t,index) => {
       const cell = node('th'), box = node('div','tier-column-title'); cell.scope = 'col';
-      box.append(node('small','caption','档位 '+(index+1)),node('strong','',t.name),actions(action('编辑',()=>openTier(t)),tierDeleteAction(t)));
+      box.append(node('small','caption','档位 '+(index+1)),node('strong','',t.name),actions(tierPreviewAction(t),tierCopyAction(t),action('编辑',()=>openTier(t)),tierDeleteAction(t)));
       cell.append(box); header.append(cell);
     });
     const body = grid.createTBody(); let count = 0;
@@ -241,7 +326,7 @@
     if (!state) return;
     if (tiers().length) $('tier-list').replaceChildren(table(['档位','能力范围','绑定密钥','操作'],tiers().map(t => {
       const capabilities = node('div','tier-tags');capabilities.append(status(limitName(t)),status(t.advanced?'高级思维':'预设思维'),status(all(t.formats,'gif')?'含 GIF':'静态输出'),status('RPM · '+rpmName(t)));
-      const buttons=actions(action('编辑',()=>openTier(t)),action('复制',()=>openTier(t,true)),tierDeleteAction(t));
+      const buttons=actions(tierPreviewAction(t),tierCopyAction(t),action('编辑',()=>openTier(t)),tierDeleteAction(t));
       return [stacked(t.name,t.description),capabilities,bindingCount(t.id)+' 把',buttons];
     })));
     else $('tier-list').replaceChildren(empty('Layers3','尚无功能档位','先创建档位，再为分发密钥分配额度与功能权限。',action('新建档位',()=>openTier(),'Plus')));

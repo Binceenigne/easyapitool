@@ -5,7 +5,7 @@
             if (performance.now() < pending.unlockAt) return;
             window.imageEditState.pendingSubmission = null;
             const button = document.getElementById('generateEditedImageButton');
-            button.disabled = !imageGenerationAllowed();
+            syncImageGenerationAvailability();
             button.removeAttribute('aria-busy');
         }
 

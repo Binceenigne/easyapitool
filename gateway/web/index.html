@@ -6,11 +6,11 @@
   <meta name="theme-color" content="#f7f7ff">
   <title>Mirra · 分发网关</title>
   <link rel="icon" href="/mirra.png">
-  <link rel="stylesheet" href="/admin.css?v=tier-delete-rpm-1">
-  <script src="/admin.js?v=tier-delete-rpm-1" defer></script>
-  <script src="/admin-models.js?v=tier-delete-rpm-1" defer></script>
-  <script src="/admin/assets/admin-tiers.js?v=tier-delete-rpm-1" defer></script>
-  <script src="/admin/assets/admin-tier-publish.js?v=tier-delete-rpm-1" defer></script>
+  <link rel="stylesheet" href="/admin.css?v=tier-preview-copy-1">
+  <script src="/admin.js?v=tier-preview-copy-1" defer></script>
+  <script src="/admin-models.js?v=tier-preview-copy-1" defer></script>
+  <script src="/admin/assets/admin-tiers.js?v=tier-preview-copy-1" defer></script>
+  <script src="/admin/assets/admin-tier-publish.js?v=tier-preview-copy-1" defer></script>
 </head>
 <body>
   <main id="auth" class="auth">
@@ -308,6 +308,14 @@
       <p class="error" role="alert" hidden></p>
     </div><footer><button type="button" data-close>取消</button><button type="submit" class="primary">保存档位</button></footer>
   </form></dialog>
+  <dialog id="tier-preview-dialog" class="tier-preview-dialog" aria-labelledby="tier-preview-title"><div class="editor">
+    <header><div><h2 id="tier-preview-title">客户端底部预览</h2><p class="hint">使用已保存的档位权限和实际客户端控件，不签发密钥，不调用模型。</p></div><button type="button" class="icon-button" data-close aria-label="关闭预览"><i data-icon="X"></i></button></header>
+    <div class="editor-body tier-preview-body">
+      <div class="tier-preview-toolbar"><div class="presets" role="group" aria-label="客户端底部面板"><button type="button" id="tier-preview-settings" aria-pressed="true">生图设置</button><button type="button" id="tier-preview-reasoning" aria-pressed="false">思维深度</button></div><span id="tier-preview-state" class="caption" role="status">正在准备预览…</span></div>
+      <div id="tier-preview-error" class="tier-preview-error" role="alert" hidden><p id="tier-preview-error-text"></p><button type="button" id="tier-preview-retry"><i data-icon="RefreshCw"></i>重新加载</button></div>
+      <div id="tier-preview-stage" class="tier-preview-stage" aria-busy="true"><iframe id="tier-app-preview" title="档位客户端底部预览" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe><div id="tier-preview-loading" class="tier-preview-loading" role="status"><i data-icon="RefreshCw"></i><span>正在加载真实客户端控件…</span></div></div>
+    </div><footer><span class="hint">权限按档位过滤；图片质量、复杂度和思维深度仍以模型实际能力为准。</span><button type="button" data-close>关闭预览</button></footer>
+  </div></dialog>
   <dialog id="delete-key-dialog" aria-labelledby="delete-key-title"><form id="delete-key-form" class="editor">
     <header><h2 id="delete-key-title">删除分发密钥</h2><button type="button" class="icon-button" data-close aria-label="关闭"><i data-icon="X"></i></button></header>
     <div class="editor-body"><p id="delete-key-name"></p><p id="delete-key-note" class="hint">删除后立即停止该密钥的新请求，历史用量回执保留。</p><div id="delete-tier-replacement" class="form-body" hidden><label>替代功能档位<select id="delete-tier-replacement-select" name="replacementTierId" disabled></select></label><p class="hint">迁移只更新功能权限，不会套用替代档位的默认额度。四类费用额度、已用金额、有效期与 IP 白名单保持不变，不会删除密钥。</p><div id="delete-tier-replacement-summary" class="tier-assignment-summary" hidden></div></div><p id="delete-tier-snapshot-note" class="hint" hidden>已发布的落地页快照保持不变。删除后如需更新公开内容，请手动同步或关闭落地页展示。</p><p class="error" role="alert" hidden></p></div>

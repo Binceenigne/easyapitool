@@ -48,6 +48,7 @@ type modelSettings struct {
 	Tiers                 []featureTier                  `json:"tiers"`
 	DefaultTierID         string                         `json:"defaultTierId"`
 	Tier                  *featureTier                   `json:"tier,omitempty"`
+	Catalog               *modelCatalog                  `json:"catalog,omitempty"`
 	Polish                modelPreset                    `json:"polish"`
 	Continuation          modelPreset                    `json:"continuation"`
 	Revision              int64                          `json:"revision"`
@@ -187,6 +188,7 @@ func (g *gateway) loadModels(ctx context.Context) error {
 			settings.ReasoningModes = defaultReasoningModes(settings.Reasoning)
 		}
 		settings.ensureTiers()
+		settings.Catalog = nil
 		if settings.validate() != nil || validateTiers(settings.Tiers) != nil {
 			return errors.New("已保存的模型配置无效")
 		}
@@ -249,6 +251,7 @@ func prepareModels(current *modelSettings, proposed modelSettings) (modelSetting
 	proposed.Tiers = sortedTiers(proposed.Tiers)
 	proposed.DefaultTierID = proposed.defaultTierID()
 	proposed.Tier = nil
+	proposed.Catalog = nil
 	proposed.Polish, proposed.Continuation = modelPreset{}, modelPreset{}
 	if err := proposed.validate(); err != nil {
 		return modelSettings{}, err
