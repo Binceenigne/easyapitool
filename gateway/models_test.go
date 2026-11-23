@@ -137,7 +137,7 @@ func TestManagedModelConfiguration(t *testing.T) {
 	g.proxyUsage(w, r)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"defaultImage":"image-fixture"`) ||
 		!strings.Contains(w.Body.String(), `"flash":{"model":"text-fixture","effort":"high"}`) ||
-		!strings.Contains(w.Body.String(), `"image-fixture":{"complexity":true,"animation":true}`) {
+		!strings.Contains(w.Body.String(), `"image-fixture":{"complexity":false,"animation":false,"svg":false,"quality":[],"sizeMode":"auto"}`) {
 		t.Fatal("client usage lacks managed model settings")
 	}
 	if _, err := g.imageOptions(object{"imageModel": "misconfigured"}, false, g.appModels()); err == nil {
@@ -173,6 +173,38 @@ func TestManagedModelConfiguration(t *testing.T) {
 		input.Options = mode
 		if _, _, err := m.preparePrompt(ctx, job, key, ip, input, g.appModels()); err != nil || !seenReasoning.Load() {
 			t.Fatalf("managed reasoning %v failed: %v", mode, err)
+		}
+	}
+}
+
+func TestOpenAIModelCapabilities(t *testing.T) {
+	g := testGateway(t)
+	updated := modelDefaults(g.cfg)
+	updated.ImageFeatures["gpt-image-2"] = imageFeatures{Complexity: true, Animation: true, Quality: []string{"max"}}
+	updated.ReasoningModes["flash"] = modelPreset{Model: "gpt-6-luna", Effort: "minimal"}
+	saved, err := g.saveModels(t.Context(), updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	image2 := saved.ImageFeatures["gpt-image-2"]
+	if image2.Complexity || image2.Animation || image2.SVG || len(image2.Quality) != 3 {
+		t.Fatalf("the basic Image 2 settings were overridden: %+v", image2)
+	}
+	flare := saved.ImageFeatures["gpt-image-2.6-flare"]
+	if !flare.Complexity || !flare.Animation || !flare.SVG || len(flare.Quality) != 5 {
+		t.Fatalf("the documented Flare controls are missing: %+v", flare)
+	}
+	if saved.ReasoningModes["flash"].Effort != "medium" || supportedReasoningEffort("gpt-6-luna", "max") != "max" ||
+		supportedReasoningEffort("gpt-5.4", "max") != "none" {
+		t.Fatalf("the default reasoning efforts were not applied: %+v", saved.ReasoningModes["flash"])
+	}
+	for _, option := range []object{
+		{"imageModel": "gpt-image-2", "quality": "xhigh"},
+		{"imageModel": "gpt-image-2", "complexity": "medium"},
+		{"imageModel": "gpt-image-2", "output_format": "gif"},
+	} {
+		if _, err := g.imageOptions(option, false, saved); err == nil {
+			t.Fatalf("an unsupported image setting was accepted: %+v", option)
 		}
 	}
 }

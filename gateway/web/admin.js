@@ -102,7 +102,7 @@ function navigate() {
   });
   $('crumb-page').textContent = pages[page];
   document.title = pages[page] + ' · Mirra 分发网关';
-  if (page === 'models') window.showModelPreview?.();
+  if (page === 'models') window.showModelSettings?.();
 }
 window.addEventListener('hashchange', () => {
   document.querySelectorAll('dialog[open]').forEach(d => d.close());

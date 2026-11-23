@@ -3,22 +3,20 @@
 (() => {
   const form = $('model-form');
   const source = $('model-upstream');
+  const fetchButton = $('fetch-models');
+  const imagePicker = $('model-image-picker');
   const search = $('model-search');
   const preview = $('app-preview');
   const slots = ['luna', 'terra', 'sol'];
   const modes = ['Instant', 'Flash', 'Medium', 'High', 'Extra', 'Max'];
-  const featureTarget = $('model-feature-target');
-  const features = {
-    complexity: $('model-feature-complexity'),
-    animation: $('model-feature-animation')
-  };
   const selected = new Set();
-  const imageFeatures = new Map();
   let found = [];
+  let foundImages = [];
+  let foundReasoning = {};
   let dirty = false;
   let revision = 0;
   let fetchRound = 0;
-  let hasCatalog = false;
+  let catalogRequested = false;
   const efforts = [
     ['none', '不启用 · none'],
     ['minimal', '最少 · minimal'],
@@ -31,16 +29,13 @@
   for (const mode of modes) {
     const preset = node('fieldset', 'model-slot');
     const inputs = node('div', 'model-slot-fields');
-    const model = node('input');
+    const model = node('select');
     model.name = mode + 'Model';
-    model.setAttribute('list', 'model-catalog');
-    model.spellcheck = false;
+    model.dataset.modelSelect = mode === 'Instant' ? '留空直接生图' : '';
     model.required = mode !== 'Instant';
-    if (!model.required) model.placeholder = '留空直接生图';
     const depth = node('select');
     depth.name = mode + 'Effort';
     depth.dataset.effort = '';
-    depth.required = true;
     const modelLabel = node('label', '', '默认模型');
     const depthLabel = node('label', '', '思考深度');
     modelLabel.append(model);
@@ -49,22 +44,38 @@
     preset.append(node('legend', '', mode), inputs);
     $('model-reasoning-presets').append(preset);
   }
-  for (const field of form.querySelectorAll('[data-effort]')) {
-    const options = field.name === 'svgEffort' ? [['', '上游默认'], ...efforts] : efforts;
-    field.replaceChildren(...options.map(([value, label]) => new Option(label, value)));
+  const modelFields = [...form.querySelectorAll('[data-model-select]')];
+  const effortLabels = new Map(efforts);
+
+  function capability(model) {
+    const configured = state.appModels.reasoningCapabilities || {};
+    return Object.hasOwn(foundReasoning, model) ? foundReasoning[model]
+      : Object.hasOwn(configured, model) ? configured[model] : undefined;
+  }
+
+  function updateEfforts(field, preferred) {
+    const depth = form.elements[field.name.replace(/Model$/, 'Effort')];
+    if (!depth) return;
+    const caps = capability(field.value);
+    const previous = preferred ?? depth.value;
+    const allowed = caps ? caps.efforts : effortLabels.has(previous) && field.value ? [previous] : [];
+    depth.replaceChildren(new Option(caps ? '模型默认 · ' + caps.default : '上游默认', ''),
+      ...allowed.map(value => new Option(effortLabels.get(value) || value, value)));
+    depth.value = allowed.includes(previous) ? previous : caps?.default || '';
   }
 
   function draft() {
     const fields = form.elements;
-    const reasoning = Object.fromEntries(slots.map(slot => [slot, {
-      ...state.appModels.reasoning[slot], model: fields[slot + 'Model'].value.trim()
-    }]));
+    const reasoning = Object.fromEntries(slots.map(slot => {
+      const model = fields[slot + 'Model'].value;
+      const previous = state.appModels.reasoning[slot];
+      return [slot, {model, effort: previous.model === model ? previous.effort : capability(model)?.default || ''}];
+    }));
     const reasoningModes = Object.fromEntries(modes.map(mode => [mode.toLowerCase(), {
       model: fields[mode + 'Model'].value.trim(), effort: fields[mode + 'Effort'].value
     }]));
     return {
       revision, defaultImage: fields.defaultImage.value, imageModels: [...selected], reasoning, reasoningModes,
-      imageFeatures: Object.fromEntries([...imageFeatures].filter(([model]) => selected.has(model))),
       svg: { enabled: fields.svgEnabled.checked, model: fields.svgModel.value.trim(), effort: fields.svgEffort.value }
     };
   }
@@ -77,13 +88,11 @@
   }
   preview.addEventListener('load', updatePreview);
 
-  function listModels() {
-    return [...new Set([...selected, ...state.appModels.imageModels, ...found])];
-  }
-
   function renderImageModels() {
     const filter = search.value.trim().toLowerCase();
-    const choices = listModels().filter(model => model.toLowerCase().includes(filter));
+    const discovered = foundImages.length ? foundImages : found;
+    const choices = [...new Set([...selected, ...state.appModels.imageModels, ...discovered])]
+      .filter(model => model.toLowerCase().includes(filter));
     const list = $('model-image-list');
     list.replaceChildren(...choices.map(model => {
       const label = node('label', 'model-choice');
@@ -108,7 +117,7 @@
       label.append(check, node('span', 'mono', model));
       return label;
     }));
-    if (!choices.length) list.append(node('p', 'hint', '没有匹配的模型'));
+    if (!choices.length) list.append(node('p', 'hint', filter ? '没有匹配的模型' : '上游目录暂无可选模型'));
   }
 
   function updateDefaultModels(preferred = form.elements.defaultImage.value) {
@@ -116,28 +125,31 @@
     select.replaceChildren(...[...selected].map(model => new Option(model, model)));
     if (selected.has(preferred)) select.value = preferred;
     select.disabled = selected.size === 0;
-    const active = featureTarget.value;
-    featureTarget.replaceChildren(...[...selected].map(model => new Option(model, model)));
-    featureTarget.value = selected.has(active) ? active : select.value;
-    featureTarget.disabled = select.disabled;
-    syncFeatures();
     $('selected-images').textContent = '已开放 ' + selected.size + ' 个';
+    const tags = $('enabled-image-models');
+    tags.replaceChildren(...[...selected].map(model => {
+      const tag = node('span', 'model-tag mono', model);
+      tag.setAttribute('role', 'listitem');
+      return tag;
+    }));
+    tags.hidden = !selected.size;
   }
 
-  function syncFeatures() {
-    const model = featureTarget.value;
-    const enabledByDefault = /^gpt-image-2\.6-(?:flare|sunburst)(?:-|$)/.test(model);
-    for (const [feature, field] of Object.entries(features)) {
-      field.disabled = !model;
-      field.checked = imageFeatures.get(model)?.[feature] ?? enabledByDefault;
-    }
-  }
-
-  function updateCatalog() {
+  function updateCatalog(values = {}) {
     const current = state.appModels;
-    const extra = [current.svg.model, ...Object.values(current.reasoning).map(preset => preset.model),
+    const configured = [current.svg.model, ...Object.values(current.reasoning).map(preset => preset.model),
       ...Object.values(current.reasoningModes).map(preset => preset.model)];
-    $('model-catalog').replaceChildren(...[...new Set([...listModels(), ...extra])].filter(Boolean).sort().map(model => new Option(model, model)));
+    const documented = found.filter(model => capability(model));
+    const discovered = documented.length ? documented : found.filter(model => !foundImages.includes(model));
+    const catalog = [...new Set([...discovered, ...configured].filter(Boolean))].sort();
+    for (const field of modelFields) {
+      const model = values[field.name] ?? field.value;
+      const options = model && !catalog.includes(model) ? [model, ...catalog] : catalog;
+      field.replaceChildren(new Option(field.dataset.modelSelect || '选择模型', ''),
+        ...options.map(id => new Option(id, id)));
+      field.value = model;
+      updateEfforts(field, values[field.name.replace(/Model$/, 'Effort')]);
+    }
     renderImageModels();
   }
 
@@ -150,22 +162,19 @@
     revision = profile.revision;
     selected.clear();
     profile.imageModels.forEach(model => selected.add(model));
-    imageFeatures.clear();
-    for (const [model, options] of Object.entries(profile.imageFeatures)) imageFeatures.set(model, options);
     const fields = form.elements;
+    const values = {svgModel: profile.svg.model, svgEffort: profile.svg.effort};
     for (const slot of slots) {
-      fields[slot + 'Model'].value = profile.reasoning[slot].model;
+      values[slot + 'Model'] = profile.reasoning[slot].model;
     }
     for (const mode of modes) {
       const preset = profile.reasoningModes[mode.toLowerCase()];
-      fields[mode + 'Model'].value = preset.model;
-      fields[mode + 'Effort'].value = preset.effort;
+      values[mode + 'Model'] = preset.model;
+      values[mode + 'Effort'] = preset.effort;
     }
     fields.svgEnabled.checked = profile.svg.enabled;
-    fields.svgModel.value = profile.svg.model;
-    fields.svgEffort.value = profile.svg.effort;
     updateDefaultModels(profile.defaultImage);
-    updateCatalog();
+    updateCatalog(values);
     syncSVG();
     formError(form);
     updatePreview();
@@ -180,7 +189,39 @@
 
   function showSourceStatus(message = '') {
     const text = $('model-source-status');
-    text.textContent = message || (source.value ? '选择来源后拉取 GET /models。' : '添加上游账户后即可拉取模型。');
+    text.textContent = message || (source.value ? '进入模型配置时自动拉取上游目录。' : '启用上游账户后即可拉取模型。');
+  }
+
+  function resetCatalog() {
+    fetchRound++;
+    found = [];
+    foundImages = [];
+    foundReasoning = {};
+    catalogRequested = false;
+    fetchButton.disabled = !source.value;
+    showSourceStatus();
+  }
+
+  async function fetchCatalog() {
+    const currentSource = source.value;
+    if (!currentSource || fetchButton.disabled) return;
+    const round = ++fetchRound;
+    catalogRequested = true;
+    fetchButton.disabled = true;
+    showSourceStatus('正在拉取上游模型…');
+    try {
+      const result = await api('upstreams/' + encodeURIComponent(currentSource) + '/models');
+      if (round !== fetchRound) return;
+      found = result.models;
+      foundImages = result.imageModels || [];
+      foundReasoning = result.reasoningCapabilities || {};
+      updateCatalog();
+      showSourceStatus('上游返回 ' + found.length + ' 个模型。');
+    } catch (error) {
+      if (round === fetchRound) showSourceStatus(error.message);
+    } finally {
+      if (round === fetchRound) fetchButton.disabled = !source.value;
+    }
   }
 
   window.renderModelSettings = () => {
@@ -189,67 +230,50 @@
     source.replaceChildren(...upstreams.map(u => new Option([u.pool, u.name, u.baseUrl].filter(Boolean).join(' · '), u.id)));
     if (!upstreams.length) source.append(new Option('暂无启用的上游', ''));
     if (upstreams.some(u => u.id === previous)) source.value = previous;
-    if (previous !== source.value) {
-      fetchRound++;
-      found = [];
-      hasCatalog = false;
-    }
     source.disabled = !source.value;
-    $('fetch-models').disabled = !source.value;
-    if (!hasCatalog) showSourceStatus();
+    if (previous !== source.value || !source.value) resetCatalog();
     if (!dirty) loadForm(state.appModels);
     else updateCatalog();
   };
 
-  window.showModelPreview = () => {
+  window.showModelSettings = () => {
     if (!state) return;
+    if (!catalogRequested) void fetchCatalog();
     if (!preview.getAttribute('src')) preview.src = '/app-preview/';
     else updatePreview();
   };
 
   window.resetModelSettings = () => {
-    found = [];
+    resetCatalog();
     selected.clear();
     dirty = false;
-    hasCatalog = false;
-    fetchRound++;
+    imagePicker.open = false;
+    search.value = '';
     preview.removeAttribute('src');
   };
 
   source.addEventListener('change', () => {
-    fetchRound++;
-    found = [];
-    hasCatalog = false;
-    showSourceStatus();
+    resetCatalog();
     updateCatalog();
+    void fetchCatalog();
   });
   search.addEventListener('input', renderImageModels);
-  featureTarget.addEventListener('change', syncFeatures);
-  for (const field of Object.values(features)) {
-    field.addEventListener('change', () => {
-      imageFeatures.set(featureTarget.value, { complexity: features.complexity.checked, animation: features.animation.checked });
-      markDirty();
-    });
-  }
-  form.addEventListener('input', event => {
-    if (event.target !== search && event.target.name) markDirty();
+  document.addEventListener('pointerdown', event => {
+    if (imagePicker.open && !imagePicker.contains(event.target)) imagePicker.open = false;
   });
-  $('fetch-models').addEventListener('click', () => runButton($('fetch-models'), async () => {
-    const currentSource = source.value;
-    if (!currentSource) return;
-    const round = ++fetchRound;
-    showSourceStatus('正在拉取上游模型…');
-    try {
-      const result = await api('upstreams/' + encodeURIComponent(currentSource) + '/models');
-      if (round !== fetchRound) return;
-      found = result.models;
-      hasCatalog = true;
-      updateCatalog();
-      showSourceStatus('上游返回 ' + found.length + ' 个模型。');
-    } catch (error) {
-      if (round === fetchRound) showSourceStatus(error.message);
-    }
-  }));
+  imagePicker.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !imagePicker.open) return;
+    event.preventDefault();
+    imagePicker.open = false;
+    imagePicker.querySelector('summary').focus();
+  });
+  window.addEventListener('hashchange', () => { imagePicker.open = false; });
+  form.addEventListener('input', event => {
+    const field = event.target;
+    if (field.hasAttribute('data-model-select')) updateEfforts(field, capability(field.value)?.default || '');
+    if (field.name) markDirty();
+  });
+  fetchButton.addEventListener('click', () => { void fetchCatalog(); });
 
   $('reset-models').addEventListener('click', () => runButton($('reset-models'), async () => {
     await refresh();
@@ -265,6 +289,6 @@
   });
   if (state) {
     window.renderModelSettings();
-    if (location.hash === '#/models') window.showModelPreview();
+    if (location.hash === '#/models') window.showModelSettings();
   }
 })();

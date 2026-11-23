@@ -275,8 +275,31 @@ dialog[open] { display: flex; }
 }
 .model-settings-grid > section + section { border-left: 1px solid var(--line); }
 .model-slot legend { font-weight: 650; }
-.model-feature-switches { display: flex; flex-wrap: wrap; gap: .65rem 1rem; margin-top: .65rem; }
-.model-list { border: 1px solid var(--edge); max-height: 13.2rem; min-height: 4rem; overflow-y: auto; }
+.model-image-picker { position: relative; min-width: 0; }
+.model-image-picker summary {
+  display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+  min-height: 2.5rem; padding: .56rem .68rem; border: 1px solid var(--edge);
+  background: var(--card); font-size: .9rem; list-style: none; cursor: pointer;
+}
+.model-image-picker summary::-webkit-details-marker { display: none; }
+.model-image-picker summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.model-image-picker summary:hover, .model-image-picker[open] summary { border-color: var(--accent); }
+.model-image-picker summary svg { width: 1rem; flex: none; transform: rotate(90deg); transition: transform 160ms ease; }
+.model-image-picker[open] summary svg { transform: rotate(-90deg); }
+.model-picker-menu {
+  position: absolute; z-index: 5; inset: calc(100% + .28rem) 0 auto;
+  display: grid; gap: .6rem; padding: .65rem; background: var(--card);
+  border: 1px solid var(--edge); box-shadow: 0 .5rem 1.4rem rgb(15 23 42 / .16);
+  animation: model-picker-open 160ms ease-out both;
+}
+@keyframes model-picker-open { from { opacity: 0; transform: translateY(-.3rem); } }
+@media (prefers-reduced-motion: reduce) {
+  .model-picker-menu { animation: none; }
+  .model-image-picker summary svg { transition: none; }
+}
+.model-tags { display: flex; flex-wrap: wrap; gap: .35rem; max-height: 5.25rem; overflow: auto; }
+.model-tag { padding: .22rem .45rem; background: var(--surface); font-size: .77rem; overflow-wrap: anywhere; }
+.model-list { border: 1px solid var(--edge); max-height: min(13.2rem, 33dvh); overflow-y: auto; overscroll-behavior: contain; }
 .model-list > .hint { padding: .65rem; }
 .model-choice {
   display: flex;

@@ -158,7 +158,9 @@
             const list = document.getElementById('editImageList');
             const addTile = document.getElementById('editImageAddTile');
             const previousScrollLeft = list.scrollLeft;
-            selection.classList.toggle('is-empty', files.length === 0);
+            const empty = files.length === 0;
+            const referencesChanged = selection.classList.contains('is-empty') !== empty;
+            selection.classList.toggle('is-empty', empty);
             document.getElementById('editImageCount').textContent = `${files.length}/16`;
             list.replaceChildren();
             files.forEach((file, index) => {
@@ -188,6 +190,7 @@
                 ? maximumScrollLeft
                 : Math.min(previousScrollLeft, maximumScrollLeft);
             syncEditImageScrollbar();
+            if (referencesChanged) setImageOutputFormat(window.imageEditState.preferredImageFormat, false);
         }
 
         function appendReferenceImage(file) {
@@ -408,11 +411,17 @@
                 svg: { enabled: true } };
         }
 
-        function imageModelFeatures() {
-            const model = window.imageEditState.imageModel;
-            const enabledByDefault = /^gpt-image-2\.6-(?:flare|sunburst)(?:-|$)/.test(model);
-            return activeImageProfile()?.imageFeatures?.[model]
-                ?? { complexity: enabledByDefault, animation: enabledByDefault };
+        // OpenAI's Images API guide lists model-specific rendering and output controls.
+        function imageModelFeatures(model = window.imageEditState.imageModel) {
+            const configured = activeImageProfile()?.imageFeatures?.[model];
+            if (Array.isArray(configured?.quality) && configured.sizeMode) return configured;
+            const base = model.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+            const native26 = /^gpt-image-2\.6-(?:flare|sunburst)$/.test(base);
+            const extended = native26 || /^gpt-image-2\.5(?:-(?:flare|sunburst))?$/.test(base);
+            const standard = /^gpt-image-(?:1(?:-mini|\.5)?|2)$/.test(base) || base === 'chatgpt-image-latest';
+            const quality = extended ? ['low', 'medium', 'high', 'xhigh', 'max'] : standard ? ['low', 'medium', 'high'] : [];
+            const sizeMode = extended || base === 'gpt-image-2' ? 'flexible' : standard ? 'fixed' : 'auto';
+            return { quality, complexity: native26, animation: native26, svg: native26, sizeMode };
         }
 
         let activeImagePicker = null;
@@ -430,8 +439,9 @@
 
         function positionImagePicker(button, menu) {
             const panel = document.getElementById('imageGenerationControlPanel').getBoundingClientRect();
-            const anchor = button.getBoundingClientRect();
-            const scale = anchor.height / button.offsetHeight || 1;
+            const picker = button.parentElement;
+            const anchor = picker.getBoundingClientRect();
+            const scale = anchor.height / picker.offsetHeight || 1;
             const above = (anchor.top - Math.max(panel.top, 0)) / scale - 10;
             const below = (Math.min(panel.bottom, innerHeight) - anchor.bottom) / scale - 10;
             const opensUp = below < Math.min(menu.scrollHeight + 2, 220) && above > below;
@@ -447,19 +457,49 @@
         }
 
         const IMAGE_MODEL_TIPS = {
-            'gpt-image-2.6-flare': '强大且经济的轻量级模型，适合快速出图',
-            'gpt-image-2.6-sunburst': '最强大的模型，适合最复杂的任务'
+            'gpt-image-1-mini': '较轻量的第一代模型，适合低成本草稿和简单视觉任务。',
+            'gpt-image-1': '通用的第一代图像模型，适合文字出图和常规参考图编辑。',
+            'gpt-image-1.5': '较早的高保真版本，适合常规图像生成及参考图编辑。',
+            'chatgpt-image-latest': 'ChatGPT 图像模型的滚动别名，具体模型版本可能更新。',
+            'gpt-image-2': '适合通用生图和高保真参考图编辑，支持自定义尺寸与低、中、高三档质量。',
+            'gpt-image-2.5': '2.5 系列的兼容名称，支持五档质量，可用性由所选上游目录提供。',
+            'gpt-image-2.5-flare': '适合快速生成、日常设计和多轮迭代，支持五档渲染质量。',
+            'gpt-image-2.5-sunburst': '适合高保真图片编辑、保持参考图细节与精确调整，支持五档渲染质量。',
+            'gpt-image-2.6-flare': '强大且经济的轻量级模型，适合快速出图与多轮修改。',
+            'gpt-image-2.6-sunburst': '适合最复杂的任务，包括密集文字、多主体构图和精细编辑。'
         };
-        const PNG_TIP = '无损格式，最常用，支持透明背景';
+        const IMAGE_FORMAT_CHOICES = [
+            ['png', 'PNG', '无损压缩，保留细节，支持透明背景，适合图标、插图和后期制作。'],
+            ['jpeg', 'JPEG', '有损压缩，适合照片和不透明的成品图，压缩质量默认 75。'],
+            ['webp', 'WebP', '兼顾清晰度和文件体积，可保留透明通道，压缩质量默认 75。'],
+            ['svg', 'SVG', '可缩放矢量格式，适合图标、标志和线稿。每次生成一张静态图，需账号开通权限，仅用于无参考图的生成。'],
+            ['gif', 'GIF', '可循环播放的动图。请选择帧数，每帧默认 200 毫秒，上游需开通 GIF 能力。']
+        ];
+        const IMAGE_QUALITY_CHOICES = [
+            ['low', '低', '适合草稿和快速试构图，较小的文字、纹理和细节可能产生伪影。'],
+            ['medium', '中', '适合一般出图，兼顾清晰度、生成速度和用量。'],
+            ['high', '高', '适合正式出图，通常保留更多纹理和小字细节。'],
+            ['xhigh', '超高', '进一步提高细节保真度，适合复杂材质、密集文字和精细参考图编辑。'],
+            ['max', '最高', '该模型的最高显式渲染档位，适合精细成品，通常耗时和用量更高。']
+        ];
+
+        function imageModelTip(model) {
+            const base = model.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+            const tip = Object.hasOwn(IMAGE_MODEL_TIPS, base) ? IMAGE_MODEL_TIPS[base]
+                : '上游目录提供的图像模型，具体能力由该上游决定。';
+            const features = imageModelFeatures(model);
+            return features.complexity ? tip + ' 支持五档画质、复杂度、SVG 和 GIF。' : tip;
+        }
 
         function initializeImageOptionTooltips() {
-            const panel = document.getElementById('imageGenerationControlPanel');
+            const panels = ['imageGenerationControlPanel', 'imageReasoningMenu'].map(id => document.getElementById(id));
             const bubble = document.createElement('div');
             bubble.id = 'imageOptionTooltip';
             bubble.setAttribute('role', 'tooltip');
             bubble.hidden = true;
             document.body.append(bubble);
             let target = null;
+            let hover = null;
             let timer;
             function hide() {
                 clearTimeout(timer);
@@ -467,13 +507,13 @@
                 target = null;
                 bubble.hidden = true;
             }
-            function show(element) {
+            function show(element, panel) {
                 if (!element?.dataset.imageTip || panel.hidden) return;
                 if (target === element) return;
                 hide();
                 target = element;
                 timer = setTimeout(() => {
-                    if (!element.isConnected || !panel.classList.contains('is-open')) return hide();
+                    if (!element.getClientRects().length || !panel.classList.contains('is-open')) return hide();
                     bubble.textContent = element.dataset.imageTip;
                     bubble.hidden = false;
                     element.setAttribute('aria-describedby', bubble.id);
@@ -486,21 +526,36 @@
                     bubble.style.top = top + 'px';
                 }, 280);
             }
-            panel.addEventListener('pointerover', event => {
-                if (event.pointerType !== 'touch') show(event.target.closest('[data-image-tip]'));
-            });
-            panel.addEventListener('pointerout', event => {
-                if (target && target.contains(event.target) && !target.contains(event.relatedTarget)) hide();
-            });
-            panel.addEventListener('focusin', event => {
-                if (event.target.matches(':focus-visible')) show(event.target.closest('[data-image-tip]'));
-            });
-            panel.addEventListener('focusout', hide);
-            panel.addEventListener('scroll', hide, true);
-            panel.addEventListener('scroll', () => closeImagePicker(true));
-            panel.addEventListener('click', hide);
-            new MutationObserver(() => { if (panel.hidden || !panel.classList.contains('is-open')) hide(); })
-                .observe(panel, { attributes: true, attributeFilter: ['hidden', 'class'] });
+            panels[0].addEventListener('scroll', () => closeImagePicker(true));
+            for (const panel of panels) {
+                const trackPointer = event => {
+                    if (event.pointerType === 'touch') return;
+                    hover = { panel, x: event.clientX, y: event.clientY };
+                    show(event.target.closest('[data-image-tip]'), panel);
+                };
+                panel.addEventListener('pointerover', trackPointer);
+                panel.addEventListener('pointermove', trackPointer);
+                panel.addEventListener('pointerleave', () => {
+                    if (hover?.panel === panel) hover = null;
+                });
+                panel.addEventListener('pointerout', event => {
+                    if (target && target.contains(event.target) && !target.contains(event.relatedTarget)) hide();
+                });
+                panel.addEventListener('focusin', event => {
+                    if (event.target.matches(':focus-visible')) show(event.target.closest('[data-image-tip]'), panel);
+                });
+                panel.addEventListener('focusout', hide);
+                panel.addEventListener('scroll', () => {
+                    hide();
+                    if (hover?.panel !== panel) return;
+                    const hit = document.elementFromPoint(hover.x, hover.y);
+                    if (panel.contains(hit)) show(hit.closest('[data-image-tip]'), panel);
+                }, true);
+                panel.addEventListener('click', hide);
+                new MutationObserver(() => {
+                    if (target && panel.contains(target) && (panel.hidden || !panel.classList.contains('is-open'))) hide();
+                }).observe(panel, { attributes: true, attributeFilter: ['hidden', 'class'] });
+            }
         }
 
         function availableImageModels(profile) {
@@ -675,13 +730,15 @@
         function setImageQuality(quality, persist = true) {
             const state = window.imageEditState;
             if (persist) state.preferredImageQuality = quality;
-            const levels = [['low', '低'], ['medium', '中'], ['high', '高']];
-            if (/^gpt-image-2\.[56](?:-|$)/.test(state.imageModel)) {
-                levels.push(['xhigh', '超高'], ['max', '最高']);
-            }
+            const available = imageModelFeatures().quality;
+            const levels = IMAGE_QUALITY_CHOICES.filter(([level]) => available.includes(level));
             state.quality = levels.some(([level]) => level === quality) ? quality : 'auto';
-            renderImageChoices('imageQualityChoices', levels, state.quality, setImageQuality, { segmented: true });
-            document.getElementById('imageQualityAuto').setAttribute('aria-pressed', String(state.quality === 'auto'));
+            const automatic = document.getElementById('imageQualityAuto');
+            automatic.hidden = levels.length === 0;
+            automatic.setAttribute('aria-pressed', String(state.quality === 'auto'));
+            renderImageChoices('imageQualityChoices', levels.length ? levels : [
+                ['auto', '自动', '上游决定该模型可用的渲染质量。']
+            ], state.quality, setImageQuality, { segmented: true });
             updateImageGenerationControlSummary();
             if (persist) persistImageGenerationPreferences();
         }
@@ -689,10 +746,20 @@
         function setImageComplexity(complexity, persist = true) {
             const state = window.imageEditState;
             const supported = imageModelFeatures().complexity;
-            const levels = [['auto', '模型默认']];
-            if (supported) levels.push(['low', '低'], ['medium', '中'], ['high', '高']);
+            document.getElementById('imageComplexitySection').hidden = !supported;
+            if (!supported) {
+                if (activeImagePicker?.id === 'imageComplexityChoices') closeImagePicker();
+                state.complexity = 'auto';
+                return;
+            }
+            const levels = [
+                ['auto', '模型默认', '使用上游模型的默认规划深度。GPT Image 2.6 默认为高。'],
+                ['low', '低', '适合换色、替换物件等范围明确的修改，通常更快。'],
+                ['medium', '中', '适合有几项约束的构图或编辑，在规划深度和速度之间取平衡。'],
+                ['high', '高', '适合密集文字、多主体关系和精确排版，规划耗时可能更长。']
+            ];
             state.complexity = levels.some(([level]) => level === complexity) ? complexity : 'auto';
-            renderImageChoices('imageComplexityChoices', levels, state.complexity, setImageComplexity, { disabled: !supported });
+            renderImageChoices('imageComplexityChoices', levels, state.complexity, setImageComplexity);
             if (persist) {
                 state.preferredImageComplexity = state.complexity;
                 persistImageGenerationPreferences();
@@ -702,11 +769,12 @@
         function setImageOutputFormat(format, persist = true) {
             const state = window.imageEditState;
             const features = imageModelFeatures();
-            const formats = [['png', 'PNG', PNG_TIP], ['jpeg', 'JPEG'], ['webp', 'WebP']];
-            if (activeImageProfile()?.svg?.enabled === true && (features.svg ?? features.animation)) {
-                formats.push(['svg', 'SVG']);
-            }
-            if (features.animation) formats.push(['gif', 'GIF']);
+            const canGenerateSVG = features.svg && activeImageProfile()?.svg?.enabled === true && state.files.length === 0;
+            const formats = IMAGE_FORMAT_CHOICES.filter(([item]) => {
+                if (item === 'svg') return canGenerateSVG;
+                if (item === 'gif') return features.animation;
+                return true;
+            });
             state.outputFormat = formats.some(([item]) => item === format) ? format : 'png';
             if (persist) state.preferredImageFormat = state.outputFormat;
             renderImageChoices('imageOutputChoices', formats, state.outputFormat, setImageOutputFormat);
@@ -716,7 +784,7 @@
             frames.classList.toggle('is-open', gif);
             setImageFrameCount(state.frameCount, false);
             document.getElementById('imageEditCompressionLabel').hidden = !['jpeg', 'webp'].includes(state.outputFormat);
-            const supportsTransparency = ['png', 'webp', 'svg'].includes(state.outputFormat);
+            const supportsTransparency = ['png', 'webp'].includes(state.outputFormat);
             if (!supportsTransparency && state.transparency === 'transparent') state.transparency = 'auto';
             for (const button of document.querySelectorAll('#imageTransparencyButtons button')) {
                 const active = button.dataset.transparency === state.transparency;
@@ -732,7 +800,10 @@
             const counts = [4, 9, 12, 16];
             const state = window.imageEditState;
             state.frameCount = counts.includes(Number(value)) ? Number(value) : 9;
-            renderImageChoices('imageFrameChoices', counts.map(count => [String(count), count + ' 帧', '每帧 200 毫秒']),
+            renderImageChoices('imageFrameChoices', counts.map(count => [
+                String(count), count + ' 帧',
+                '每帧 200 毫秒，循环一轮 ' + count / 5 + ' 秒。更多帧可呈现更长的动作，通常增加时间和用量。'
+            ]),
                 String(state.frameCount), setImageFrameCount);
             if (persist) persistImageGenerationPreferences();
         }
@@ -748,9 +819,21 @@
 
         const IMAGE_RESOLUTIONS = { sd: 1536, hd: 2560, uhd: 3840 };
         const IMAGE_PIXEL_LIMIT = 8294400;
+        const STANDARD_IMAGE_SIZES = { '1:1': '1024x1024', '3:2': '1536x1024', '2:3': '1024x1536' };
 
-        function imageRequestSize(ratio, resolution) {
+        function supportsImageRatio(ratio, mode) {
+            return ratio === 'auto' || mode === 'flexible' || (mode === 'fixed' && Object.hasOwn(STANDARD_IMAGE_SIZES, ratio));
+        }
+
+        function effectiveImageRatio(mode = imageModelFeatures().sizeMode) {
+            const ratio = window.imageEditState.aspectRatio;
+            return supportsImageRatio(ratio, mode) ? ratio : 'auto';
+        }
+
+        function imageRequestSize(ratio, resolution, mode = imageModelFeatures().sizeMode) {
             if (ratio === 'auto') return 'auto';
+            if (mode === 'fixed') return STANDARD_IMAGE_SIZES[ratio] || 'auto';
+            if (mode !== 'flexible') return 'auto';
             const [width, height] = ratio.split(':').map(Number);
             const longRatio = Math.max(width, height);
             const shortRatio = Math.min(width, height);
@@ -768,7 +851,8 @@
             if (!IMAGE_RESOLUTIONS[resolution]) return;
             window.imageEditState.resolution = resolution;
             renderImageChoices('imageResolutionChoices', [['sd', '标清', '最长边 1536 像素'],
-                ['hd', '高清', '最长边 2560 像素'], ['uhd', '超清', '最长边至多 3840 像素']],
+                ['hd', '高清', '最长边目标 2560 像素，适合需要保留更多细节的图片。'],
+                ['uhd', '超清', '最长边目标 3840 像素，会按总像素上限调整。2.5 系列的超高分辨率为实验支持。']],
                 resolution, setImageResolution);
             updateImageGenerationControlSummary();
             if (persist) persistImageGenerationPreferences();
@@ -777,13 +861,21 @@
         function setImageAspectRatio(ratio, persist = true) {
             if (!IMAGE_SIZE_PRESETS[ratio]) return;
             window.imageEditState.aspectRatio = ratio;
+            updateImageGenerationControlSummary();
+            if (persist) persistImageGenerationPreferences();
+        }
+
+        function syncImageRatioOptions(mode, ratio) {
+            document.getElementById('imageResolutionSection').hidden = mode !== 'flexible';
+            const group = document.getElementById('imageAspectRatioSection');
+            group.hidden = mode === 'auto';
+            group.classList.toggle('uses-standard-sizes', mode === 'fixed');
             document.querySelectorAll('#imageAspectRatioButtons button').forEach(button => {
                 const active = button.dataset.ratio === ratio;
+                button.hidden = !supportsImageRatio(button.dataset.ratio, mode);
                 button.classList.toggle('is-active', active);
                 button.setAttribute('aria-pressed', String(active));
             });
-            updateImageGenerationControlSummary();
-            if (persist) persistImageGenerationPreferences();
         }
 
         function setImageTransparency(transparency, persist = true) {
@@ -812,7 +904,7 @@
             if (persist) state.preferredImageModel = model;
             const label = IMAGE_MODEL_LABELS[model];
             renderImageChoices('imageModelChoices', models.map(item => [
-                item, IMAGE_MODEL_LABELS[item] || item, IMAGE_MODEL_TIPS[item] || item
+                item, IMAGE_MODEL_LABELS[item] || item, imageModelTip(item)
             ]), model, setImageModel);
             if (!state.editSession) {
                 document.getElementById('imageEditHeading').textContent = label ? 'GPT Image ' + label + ' 生图' : model + ' 生图';
@@ -829,23 +921,29 @@
             state.preferredImageCount = desired;
             const limit = state.outputFormat === 'svg' ? 1 : 9;
             state.imageCount = Math.min(desired, limit);
-            const counts = Array.from({ length: limit }, (_, index) => [String(index + 1), `${index + 1} 张`]);
+            const counts = Array.from({ length: limit }, (_, index) => {
+                const count = index + 1;
+                return [String(count), `${count} 张`, limit === 1 ? 'SVG 每次生成一张矢量图。'
+                    : `为同一个提示词生成 ${count} 张候选图片，数量越多通常用量越高。`];
+            });
             renderImageChoices('imageCountChoices', counts, String(state.imageCount), setImageGenerationCount, { disabled: limit === 1 });
             updateImageGenerationControlSummary();
             if (persist) persistImageGenerationPreferences();
         }
 
         function updateImageGenerationControlSummary() {
-            const ratio = window.imageEditState.aspectRatio;
+            const mode = imageModelFeatures().sizeMode;
+            const ratio = effectiveImageRatio(mode);
+            syncImageRatioOptions(mode, ratio);
             const qualityLabels = { auto: '自动质量', low: '低质量', medium: '中质量', high: '高质量', xhigh: '超高质量', max: '最高质量' };
             const resolution = window.imageEditState.resolution || 'sd';
-            const size = imageRequestSize(ratio, resolution);
+            const size = imageRequestSize(ratio, resolution, mode);
             document.getElementById('imageEditSize').value = size;
             const resolutionLabel = document.getElementById('imageResolutionLabel');
             resolutionLabel.dataset.imageTip = size === 'auto'
-                ? '智能比例由模型选择尺寸。设定比例后使用选定的分辨率。'
-                : size.replace('x', ' × ') + (Math.max(...size.split('x').map(Number)) < IMAGE_RESOLUTIONS[resolution]
-                    ? ' 像素，已按模型的像素上限缩放' : ' 像素');
+                ? '最长边控制输出的像素档位。智能比例由模型决定尺寸，选择固定比例后可应用标清、高清或超清。'
+                : '预计输出 ' + size.replace('x', ' × ') + (Math.max(...size.split('x').map(Number)) < IMAGE_RESOLUTIONS[resolution]
+                    ? ' 像素，已按模型的像素上限调整。' : ' 像素。分辨率越高通常用量越大。');
             const qualitySummary = document.getElementById('imageGenerationQualitySummary');
             qualitySummary.textContent = qualityLabels[window.imageEditState.quality];
             qualitySummary.dataset.quality = window.imageEditState.quality;

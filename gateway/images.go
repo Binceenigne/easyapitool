@@ -81,8 +81,22 @@ func (g *gateway) imageOptions(options object, edit bool, settings *modelSetting
 		!oneOf(o.background, "auto", "opaque", "transparent") || !oneOf(o.complexity, "", "low", "medium", "high") || imageMIME[o.format] == "" {
 		return o, errors.New("生图模型、大小、质量、复杂度、背景或输出格式无效")
 	}
-	if o.background == "transparent" && !oneOf(o.format, "png", "webp", "svg") {
-		return o, errors.New("透明背景需要 PNG、WebP 或 SVG")
+	if o.background == "transparent" && !oneOf(o.format, "png", "webp") {
+		return o, errors.New("透明背景需要 PNG 或 WebP")
+	}
+	if features, known := documentedImageFeatures(o.model); known {
+		if features.SizeMode == "fixed" && !oneOf(o.size, "auto", "1024x1024", "1536x1024", "1024x1536") {
+			return o, errors.New("所选模型仅支持标准尺寸")
+		}
+		if o.quality != "auto" && !slices.Contains(features.Quality, o.quality) {
+			return o, errors.New("所选模型不支持该质量档位")
+		}
+		if o.complexity != "" && !features.Complexity {
+			return o, errors.New("所选模型不支持复杂度")
+		}
+		if (o.format == "gif" && !features.Animation) || (o.format == "svg" && !features.SVG) {
+			return o, errors.New("所选模型不支持该输出格式")
+		}
 	}
 	if o.format == "svg" && (!svg.Enabled || edit) {
 		return o, errors.New("SVG 需要网关启用，且仅支持无参考图的生成")

@@ -91,36 +91,33 @@
             <div class="panel-body">
               <div class="model-source-controls">
                 <label>来源账户<select id="model-upstream"></select></label>
-                <button id="fetch-models" type="button"><i data-icon="RefreshCw"></i>拉取模型</button>
+                <button id="fetch-models" type="button"><i data-icon="RefreshCw"></i>刷新目录</button>
               </div>
               <p id="model-source-status" class="hint" role="status"></p>
             </div>
           </section>
           <form id="model-form" class="panel model-settings">
-            <datalist id="model-catalog"></datalist>
             <div class="model-settings-grid">
               <section aria-labelledby="image-models-title">
                 <div class="panel-head"><h2 id="image-models-title"><i data-icon="PanelsTopLeft"></i>生图模型</h2><span id="selected-images" class="caption"></span></div>
                 <div class="panel-body form-body">
-                  <label>搜索可选模型<input id="model-search" type="search" placeholder="输入模型 ID，例如 gpt-image"></label>
-                  <div id="model-image-list" class="model-list" aria-label="客户端可选生图模型"></div>
+                  <details id="model-image-picker" class="model-image-picker">
+                    <summary><span>选择启用的模型</span><i data-icon="ChevronRight"></i></summary>
+                    <div class="model-picker-menu">
+                      <label>搜索上游模型<input id="model-search" type="search" placeholder="输入模型 ID"></label>
+                      <div id="model-image-list" class="model-list" role="group" aria-label="可启用的生图模型"></div>
+                    </div>
+                  </details>
+                  <div id="enabled-image-models" class="model-tags" role="list" aria-label="已启用的生图模型" hidden></div>
                   <label>客户端默认模型<select name="defaultImage" required></select></label>
-                    <fieldset class="model-slot">
-                      <legend>模型功能</legend>
-                      <label>选择模型<select id="model-feature-target"></select></label>
-                      <div class="model-feature-switches">
-                        <label class="model-switch"><input type="checkbox" id="model-feature-complexity">复杂度</label>
-                        <label class="model-switch"><input type="checkbox" id="model-feature-animation">GIF 动画</label>
-                      </div>
-                    </fieldset>
                 </div>
               </section>
               <section aria-labelledby="reasoning-models-title">
                   <div class="panel-head"><h2 id="reasoning-models-title"><i data-icon="SlidersHorizontal"></i>高级模式 · 三个模型</h2></div>
                 <div class="panel-body form-body">
-                    <label>Sol<input name="solModel" list="model-catalog" spellcheck="false" required></label>
-                    <label>Terra<input name="terraModel" list="model-catalog" spellcheck="false" required></label>
-                    <label>Luna<input name="lunaModel" list="model-catalog" spellcheck="false" required></label>
+                    <label>Sol<select name="solModel" data-model-select required></select></label>
+                    <label>Terra<select name="terraModel" data-model-select required></select></label>
+                    <label>Luna<select name="lunaModel" data-model-select required></select></label>
                     <p class="hint">对应客户端高级面板的纵轴，思考深度由用户在横轴选择。</p>
                 </div>
               </section>
@@ -133,7 +130,7 @@
               <div class="panel-head"><h2 id="svg-model-title">SVG 输出</h2><label class="model-switch"><input type="checkbox" name="svgEnabled" role="switch">启用 SVG</label></div>
               <div class="panel-body form-body" id="model-svg-fields" hidden>
                 <div class="model-slot-fields">
-                  <label>矢量化模型<input name="svgModel" list="model-catalog" spellcheck="false" placeholder="上游默认"></label>
+                  <label>矢量化模型<select name="svgModel" data-model-select="上游默认"></select></label>
                   <label>思考深度<select name="svgEffort" data-effort></select></label>
                 </div>
                 <p class="hint">SVG 适用于单张无参考图生成。</p>

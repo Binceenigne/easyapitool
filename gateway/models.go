@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"slices"
 	"sort"
@@ -23,18 +24,22 @@ type svgSettings struct {
 }
 
 type imageFeatures struct {
-	Complexity bool `json:"complexity"`
-	Animation  bool `json:"animation"`
+	Complexity bool     `json:"complexity"`
+	Animation  bool     `json:"animation"`
+	SVG        bool     `json:"svg"`
+	Quality    []string `json:"quality"`
+	SizeMode   string   `json:"sizeMode"`
 }
 
 type modelSettings struct {
-	Revision       int64                    `json:"revision"`
-	DefaultImage   string                   `json:"defaultImage"`
-	ImageModels    []string                 `json:"imageModels"`
-	ImageFeatures  map[string]imageFeatures `json:"imageFeatures"`
-	SVG            svgSettings              `json:"svg"`
-	Reasoning      map[string]modelPreset   `json:"reasoning"`
-	ReasoningModes map[string]modelPreset   `json:"reasoningModes"`
+	Revision              int64                          `json:"revision"`
+	DefaultImage          string                         `json:"defaultImage"`
+	ImageModels           []string                       `json:"imageModels"`
+	ImageFeatures         map[string]imageFeatures       `json:"imageFeatures"`
+	SVG                   svgSettings                    `json:"svg"`
+	Reasoning             map[string]modelPreset         `json:"reasoning"`
+	ReasoningModes        map[string]modelPreset         `json:"reasoningModes"`
+	ReasoningCapabilities map[string]reasoningCapability `json:"reasoningCapabilities"`
 }
 
 var builtinReasoningModels = map[string]string{
@@ -83,7 +88,32 @@ func modelDefaults(cfg config) modelSettings {
 		settings.Reasoning[slot] = modelPreset{Model: model, Effort: effort}
 	}
 	settings.ReasoningModes = defaultReasoningModes(settings.Reasoning)
+	settings.applyCapabilities()
 	return settings
+}
+
+func (s *modelSettings) applyCapabilities() {
+	s.ImageFeatures = make(map[string]imageFeatures, len(s.ImageModels))
+	for _, model := range s.ImageModels {
+		s.ImageFeatures[model], _ = documentedImageFeatures(model)
+	}
+	s.ReasoningCapabilities = make(map[string]reasoningCapability)
+	collect := func(p modelPreset) modelPreset {
+		if capability, known := documentedReasoning(p.Model); known {
+			s.ReasoningCapabilities[p.Model] = capability
+			p.Effort = supportedReasoningEffort(p.Model, p.Effort)
+		}
+		return p
+	}
+	s.Reasoning = maps.Clone(s.Reasoning)
+	s.ReasoningModes = maps.Clone(s.ReasoningModes)
+	for slot, preset := range s.Reasoning {
+		s.Reasoning[slot] = collect(preset)
+	}
+	for mode, preset := range s.ReasoningModes {
+		s.ReasoningModes[mode] = collect(preset)
+	}
+	s.SVG.modelPreset = collect(s.SVG.modelPreset)
 }
 
 func (s modelSettings) validate() error {
@@ -104,13 +134,8 @@ func (s modelSettings) validate() error {
 		return errors.New("请配置 Luna、Terra 和 Sol 三档思维模型")
 	}
 	for name := range builtinReasoningModels {
-		if preset := s.Reasoning[name]; preset.Effort == "" || !validModelPreset(preset, false) {
+		if preset := s.Reasoning[name]; !validModelPreset(preset, false) {
 			return errors.New("请选择有效的思维模型和思考深度")
-		}
-	}
-	for model := range s.ImageFeatures {
-		if !seen[model] {
-			return errors.New("只能配置已开放生图模型的功能")
 		}
 	}
 	if len(s.ReasoningModes) != len(normalReasoningSlots) {
@@ -118,7 +143,7 @@ func (s modelSettings) validate() error {
 	}
 	for mode := range normalReasoningSlots {
 		preset := s.ReasoningModes[mode]
-		if preset.Effort == "" || !validModelPreset(preset, mode == "instant") {
+		if _, exists := s.ReasoningModes[mode]; !exists || !validModelPreset(preset, mode == "instant") {
 			return errors.New("请为 " + mode + " 选择有效的模型和思考深度")
 		}
 	}
@@ -142,12 +167,10 @@ func (g *gateway) loadModels(ctx context.Context) error {
 		if settings.ReasoningModes == nil {
 			settings.ReasoningModes = defaultReasoningModes(settings.Reasoning)
 		}
-		if settings.ImageFeatures == nil {
-			settings.ImageFeatures = map[string]imageFeatures{}
-		}
 		if settings.validate() != nil {
 			return errors.New("已保存的模型配置无效")
 		}
+		settings.applyCapabilities()
 	case errors.Is(err, sql.ErrNoRows):
 		settings = modelDefaults(g.cfg)
 	default:
@@ -175,17 +198,10 @@ func (g *gateway) saveModels(ctx context.Context, proposed modelSettings) (*mode
 	if proposed.ReasoningModes == nil {
 		proposed.ReasoningModes = current.ReasoningModes
 	}
-	if proposed.ImageFeatures == nil {
-		proposed.ImageFeatures = make(map[string]imageFeatures)
-		for _, model := range proposed.ImageModels {
-			if features, ok := current.ImageFeatures[model]; ok {
-				proposed.ImageFeatures[model] = features
-			}
-		}
-	}
 	if err := proposed.validate(); err != nil {
 		return nil, err
 	}
+	proposed.applyCapabilities()
 	proposed.Revision++
 	data, err := json.Marshal(proposed)
 	if err != nil {
@@ -263,7 +279,18 @@ func (a *admin) discoverModels(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadGateway, "上游未返回有效的模型列表")
 		return
 	}
-	writeJSON(w, http.StatusOK, object{"upstreamId": u.ID, "models": modelIDs(payload)})
+	ids := modelIDs(payload)
+	images := make([]string, 0)
+	reasoning := make(map[string]reasoningCapability)
+	for _, model := range ids {
+		if _, known := documentedImageFeatures(model); known {
+			images = append(images, model)
+		}
+		if capability, known := documentedReasoning(model); known {
+			reasoning[model] = capability
+		}
+	}
+	writeJSON(w, http.StatusOK, object{"upstreamId": u.ID, "models": ids, "imageModels": images, "reasoningCapabilities": reasoning})
 }
 
 func (g *gateway) managedKey(key keyInput) bool {

@@ -59,7 +59,7 @@ func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInpu
 	model, effort := "", ""
 	if mode == "advanced" {
 		slot, effort = objectString(input.Options, "reasoningModel"), objectString(input.Options, "reasoningEffort")
-		if !oneOf(slot, "luna", "terra", "sol") || !oneOf(effort, "low", "medium", "high", "xhigh", "max") {
+		if !oneOf(slot, "luna", "terra", "sol") || !oneOf(effort, "", "low", "medium", "high", "xhigh", "max") {
 			return "", nil, errors.New("思维模型或深度无效")
 		}
 	} else if !ok {
@@ -93,10 +93,8 @@ func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInpu
 		if model == "" && selected.upstream.URL == m.g.cfg.legacyBase {
 			model = builtinReasoningModels[slot]
 		}
-		if effort == "max" && selected.upstream.URL == openAIBaseURL {
-			effort = "xhigh"
-		}
 	}
+	effort = supportedReasoningEffort(model, effort)
 	web := input.Options["webSearchEnabled"] == true
 	start := time.Now()
 	m.publish(id, object{"type": "react_started", "model": model, "reasoningEffort": effort, "webSearchEnabled": web}, false)
@@ -114,6 +112,7 @@ func (g *gateway) rewrite(ctx context.Context, selected route, model, effort, pr
 	if !modelPattern.MatchString(model) {
 		return "", nil, false, errors.New("请在网关模型配置中选择可用的思维模型")
 	}
+	effort = supportedReasoningEffort(model, effort)
 	fields := object{"model": model, "input": prompt, "store": false, "max_output_tokens": 8192,
 		"instructions": "优化用户的生图提示词，保留原意、语言和引用对象。只输出可直接用于生成或编辑的提示词。"}
 	if effort != "" {
