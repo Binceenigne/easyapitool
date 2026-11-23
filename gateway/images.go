@@ -25,7 +25,7 @@ const maxImageEnvelope = (maxImageBytes*4/3 + 1<<20)
 type imageOptions struct {
 	model, size, ratio, quality, complexity, format, background string
 	svg                                                         modelPreset
-	compression, frameCount, frameDuration                      *int
+	frameCount, frameDuration                                   *int
 	partial, n                                                  int
 	stream                                                      bool
 }
@@ -71,10 +71,8 @@ func (g *gateway) imageOptions(options object, edit bool, settings *modelSetting
 	}
 	if o.format == "" {
 		o.format = "png"
-		if o.background != "transparent" {
-			if compression, ok := map[string]int{"large": 90, "medium": 75, "small": 55}[objectString(options, "outputPreset")]; ok {
-				o.format, o.compression = "jpeg", &compression
-			}
+		if o.background != "transparent" && oneOf(objectString(options, "outputPreset"), "large", "medium", "small") {
+			o.format = "jpeg"
 		}
 	}
 	if !modelPattern.MatchString(o.model) || !validImageSize(o.size) || !oneOf(o.quality, "auto", "low", "medium", "high", "xhigh", "max") ||
@@ -127,8 +125,6 @@ func (g *gateway) imageOptions(options object, edit bool, settings *modelSetting
 		if !ok || n > 100 || !oneOf(o.format, "webp", "jpeg") {
 			return o, errors.New("压缩质量仅适用于 JPEG 和 WebP，范围为 0 至 100")
 		}
-		v := int(n)
-		o.compression = &v
 	}
 	for _, frame := range []struct {
 		field, label string
@@ -185,8 +181,8 @@ func (m *mobile) renderImage(ctx context.Context, id credentialID, key keyInput,
 	if o.complexity != "" {
 		fields["complexity"] = o.complexity
 	}
-	if o.compression != nil {
-		fields["output_compression"] = *o.compression
+	if oneOf(o.format, "jpeg", "webp") {
+		fields["output_compression"] = 75
 	}
 	if o.frameCount != nil {
 		fields["frame_count"] = *o.frameCount

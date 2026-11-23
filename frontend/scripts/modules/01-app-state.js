@@ -49,7 +49,6 @@
             quality: 'auto',
             complexity: 'auto',
             outputFormat: 'png',
-            outputCompression: 75,
             resolution: 'sd',
             preferredImageComplexity: 'auto',
             preferredImageFormat: 'png',

@@ -227,6 +227,47 @@ func TestLegacyModelSettingsSeedNormalModes(t *testing.T) {
 	}
 }
 
+func TestMobileImageCompressionUsesFixedQuality(t *testing.T) {
+	g := testGateway(t)
+	var picture bytes.Buffer
+	if err := png.Encode(&picture, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	up := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body object
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		format := objectString(body, "output_format")
+		var expected any
+		if oneOf(format, "webp", "jpeg") {
+			expected = float64(75)
+		}
+		if body["output_compression"] != expected {
+			t.Errorf("%s used compression %v, want %v", format, body["output_compression"], expected)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(object{"data": []object{{"b64_json": base64.StdEncoding.EncodeToString(picture.Bytes())}}})
+	}))
+	defer up.Close()
+	g.client = up.Client()
+	account := addUpstream(t, g, "compression", "", up.URL+"/v1")
+	k, secret := issue(t, g, accessKey{Name: "compression", Upstream: account.ID})
+	m := newMobile(t.Context(), g, t.TempDir())
+	key := keyInput{KeyID: k.ID, Value: secret, BaseURL: g.cfg.publicBase}
+	for _, input := range []object{
+		{"outputPreset": "small"}, {"output_format": "jpeg"}, {"output_format": "webp", "output_compression": float64(42)}, {"output_format": "png"},
+	} {
+		options, err := g.imageOptions(input, false, g.appModels())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.renderImage(t.Context(), credentialID{"device", options.format}, key, netip.MustParseAddr("127.0.0.1"), "test", options, nil, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestAnimatedImageGenerateAndEdit(t *testing.T) {
 	g := testGateway(t)
 	palette := color.Palette{color.Black, color.White}

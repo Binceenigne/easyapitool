@@ -401,7 +401,6 @@
                     quality: window.imageEditState.quality,
                     complexity: window.imageEditState.preferredImageComplexity,
                     outputFormat: window.imageEditState.preferredImageFormat,
-                    outputCompression: window.imageEditState.outputCompression,
                     frameCount: window.imageEditState.frameCount,
                     resolution: window.imageEditState.resolution,
                     imageModel: window.imageEditState.imageModel,
@@ -459,7 +458,6 @@
                 window.imageEditState.preferredImageFormat = draft.outputFormat || 'png';
                 setImageComplexity(window.imageEditState.preferredImageComplexity, false);
                 setImageOutputFormat(window.imageEditState.preferredImageFormat, false);
-                setImageOutputCompression(draft.outputCompression, false);
                 setImageFrameCount(draft.frameCount ?? 9, false);
                 setImageResolution(draft.resolution || 'sd', false);
                 window.imageEditState.reasoningPreviousMode = normalizeImageReasoningPreset(draft.reasoningPreviousMode);
@@ -906,7 +904,7 @@
             const imageCount = window.imageEditState.imageCount;
             const aspectRatio = effectiveImageRatio();
             const transparency = window.imageEditState.transparency;
-            const { outputFormat, outputCompression, complexity, quality, frameCount } = window.imageEditState;
+            const { outputFormat, complexity, quality, frameCount } = window.imageEditState;
             if (outputFormat === 'svg' && (files.length || session || imageCount !== 1)) {
                 return showToast('SVG 仅支持单张生成，请先移除参考图并退出续作', 'error');
             }
@@ -922,8 +920,7 @@
                 ...(complexity === 'auto' ? {} : { complexity }),
                 output_format: outputFormat,
                 ...(outputFormat === 'gif' ? { frame_count: frameCount, frame_duration_ms: 200 } : {}),
-                ...(['jpeg', 'webp'].includes(outputFormat) && outputCompression !== null
-                    ? { output_compression: outputCompression } : {}),
+                ...(['jpeg', 'webp'].includes(outputFormat) ? { output_compression: 75 } : {}),
                 imageCount,
                 requestId,
                 sessionId: session?.sessionId || requestId,

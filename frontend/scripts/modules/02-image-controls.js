@@ -4,7 +4,6 @@
                 quality: state.preferredImageQuality ?? state.quality,
                 complexity: state.preferredImageComplexity,
                 outputFormat: state.preferredImageFormat,
-                outputCompression: state.outputCompression,
                 frameCount: state.frameCount,
                 resolution: state.resolution,
                 aspectRatio: state.aspectRatio,
@@ -32,12 +31,11 @@
             const state = window.imageEditState;
             state.preferredImageModel = saved.imageModelPreference ?? (saved.imageModel === 'gpt-image-2' ? '' : saved.imageModel || '');
             state.preferredImageComplexity = saved.complexity || 'auto';
-            const legacyCompression = { small: 55, medium: 75, large: 90 }[saved.outputPreset];
-            state.preferredImageFormat = saved.outputFormat || (legacyCompression ? 'jpeg' : 'png');
+            const legacyJPEG = ['small', 'medium', 'large'].includes(saved.outputPreset);
+            state.preferredImageFormat = saved.outputFormat || (legacyJPEG ? 'jpeg' : 'png');
             state.preferredImageQuality = saved.quality || 'auto';
             syncManagedImageControls();
             setImageTransparency(saved.transparency || 'auto', false);
-            setImageOutputCompression(saved.outputCompression ?? legacyCompression ?? 75, false);
             setImageFrameCount(saved.frameCount ?? 9, false);
             setImageResolution(saved.resolution || 'sd', false);
             setImageAspectRatio(saved.aspectRatio || 'auto', false);
@@ -269,48 +267,10 @@
             return true;
         }
 
-        function imagePromptMetrics(textarea) {
-            const style = getComputedStyle(textarea);
-            const lineHeight = Number.parseFloat(style.lineHeight) || 20;
-            const verticalPadding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
-            const pageZoom = Math.max(0.01, Number(getPageZoom()) || 1);
-            const prompt = textarea.closest('.image-edit-prompt');
-            const footer = document.querySelector('.image-generation-footer');
-            const form = document.getElementById('imageEditForm');
-            const textareaRect = textarea.getBoundingClientRect();
-            const formRect = form?.getBoundingClientRect();
-            const footerRect = footer?.getBoundingClientRect();
-            const formStyle = form ? getComputedStyle(form) : null;
-            const fixedBeforePrompt = formRect ? (textareaRect.top - formRect.top) / pageZoom : 0;
-            const footerHeight = (footerRect?.height || 0) / pageZoom;
-            const formGap = Number.parseFloat(formStyle?.rowGap || formStyle?.gap || '0');
-            const formPaddingBottom = Number.parseFloat(formStyle?.paddingBottom || '0');
-            const containerHeight = formRect ? formRect.height / pageZoom : window.innerHeight / pageZoom;
-            const availableHeight = Math.max(
-                lineHeight + verticalPadding,
-                containerHeight - fixedBeforePrompt - footerHeight - formGap - formPaddingBottom - 2
-            );
-            const minimum = Math.min(Math.ceil(lineHeight * 7 + verticalPadding), Math.floor(availableHeight));
-            const maximum = Math.max(minimum, Math.floor(availableHeight));
-            return {
-                minimum,
-                maximum,
-                expandThreshold: Math.max(minimum, Math.floor(maximum * 0.75))
-            };
-        }
-
         function resizeImagePrompt() {
             const textarea = document.getElementById('imageEditPrompt');
-            const metrics = imagePromptMetrics(textarea);
-            textarea.style.height = 'auto';
-            const contentHeight = Math.max(metrics.minimum, textarea.scrollHeight);
-            const nextHeight = Math.min(metrics.maximum, contentHeight);
-            textarea.style.height = `${nextHeight}px`;
-            const overflowing = contentHeight > metrics.maximum + 1;
-            textarea.style.overflowY = overflowing ? 'auto' : 'hidden';
-            document.getElementById('expandImagePromptButton').hidden = !(
-                isAndroidPlatform() && document.documentElement.dataset.keyboardVisible === 'true'
-            ) && contentHeight < metrics.expandThreshold;
+            const overflowing = textarea.scrollHeight > textarea.clientHeight + 1;
+            document.getElementById('expandImagePromptButton').hidden = !overflowing;
         }
 
         function openImagePromptModal() {
@@ -359,6 +319,7 @@
             panel.style.setProperty('--image-popover-left', `${(formRect.left - layerRect.left) / scale + 12}px`);
             panel.style.setProperty('--image-popover-width', `${Math.max(0, formRect.width / scale - 24)}px`);
             panel.style.setProperty('--image-popover-bottom', `${Math.max(12, (layerRect.bottom - buttonRect.top) / scale + 8)}px`);
+            scheduleImageChoiceMarkers();
         }
 
         function closeImageGenerationControls() {
@@ -470,8 +431,8 @@
         };
         const IMAGE_FORMAT_CHOICES = [
             ['png', 'PNG', '无损压缩，保留细节，支持透明背景，适合图标、插图和后期制作。'],
-            ['jpeg', 'JPEG', '有损压缩，适合照片和不透明的成品图，压缩质量默认 75。'],
-            ['webp', 'WebP', '兼顾清晰度和文件体积，可保留透明通道，压缩质量默认 75。'],
+            ['jpeg', 'JPEG', '有损压缩，适合照片和不透明的成品图，编码质量固定为 75。'],
+            ['webp', 'WebP', '兼顾清晰度和文件体积，可保留透明通道，编码质量固定为 75。'],
             ['svg', 'SVG', '可缩放矢量格式，适合图标、标志和线稿。每次生成一张静态图，需账号开通权限，仅用于无参考图的生成。'],
             ['gif', 'GIF', '可循环播放的动图。请选择帧数，每帧默认 200 毫秒，上游需开通 GIF 能力。']
         ];
@@ -712,6 +673,7 @@
                 const [button, menu] = container.children;
                 const [, label, tip] = items.find(([item]) => item === value) || items[0];
                 button.firstElementChild.textContent = label;
+                button.dataset.value = value;
                 if (tip) button.dataset.imageTip = tip;
                 else delete button.dataset.imageTip;
                 if (menu.hasAttribute('aria-label')) button.setAttribute('aria-label', menu.getAttribute('aria-label') + ' ' + label);
@@ -783,7 +745,6 @@
             frames.inert = !gif;
             frames.classList.toggle('is-open', gif);
             setImageFrameCount(state.frameCount, false);
-            document.getElementById('imageEditCompressionLabel').hidden = !['jpeg', 'webp'].includes(state.outputFormat);
             const supportsTransparency = ['png', 'webp'].includes(state.outputFormat);
             if (!supportsTransparency && state.transparency === 'transparent') state.transparency = 'auto';
             for (const button of document.querySelectorAll('#imageTransparencyButtons button')) {
@@ -805,15 +766,6 @@
                 '每帧 200 毫秒，循环一轮 ' + count / 5 + ' 秒。更多帧可呈现更长的动作，通常增加时间和用量。'
             ]),
                 String(state.frameCount), setImageFrameCount);
-            if (persist) persistImageGenerationPreferences();
-        }
-
-        function setImageOutputCompression(value, persist = true) {
-            const rounded = Number(value);
-            const compression = value != null && value !== '' && Number.isInteger(rounded) && rounded >= 0 && rounded <= 100
-                ? rounded : 75;
-            window.imageEditState.outputCompression = compression;
-            document.getElementById('imageEditCompression').value = compression;
             if (persist) persistImageGenerationPreferences();
         }
 
@@ -954,4 +906,28 @@
             if (buttonLabel && !window.imageEditState.busy) {
                 buttonLabel.textContent = `生成 ${window.imageEditState.imageCount} 张`;
             }
+            scheduleImageChoiceMarkers();
+        }
+
+        let imageChoiceMarkerFrame = 0;
+
+        function scheduleImageChoiceMarkers() {
+            const panel = document.getElementById('imageGenerationControlPanel');
+            if (panel.hidden || imageChoiceMarkerFrame) return;
+            imageChoiceMarkerFrame = requestAnimationFrame(() => {
+                imageChoiceMarkerFrame = 0;
+                if (panel.hidden) return;
+                for (const group of panel.querySelectorAll('.image-control-segmented, .image-aspect-options')) {
+                    const selected = group.querySelector('button.is-active:not([hidden])');
+                    if (!selected?.offsetWidth || !selected.offsetHeight) {
+                        group.classList.remove('has-choice-marker');
+                        continue;
+                    }
+                    group.style.setProperty('--choice-marker-x', selected.offsetLeft + 'px');
+                    group.style.setProperty('--choice-marker-y', selected.offsetTop + 'px');
+                    group.style.setProperty('--choice-marker-width', selected.offsetWidth + 'px');
+                    group.style.setProperty('--choice-marker-height', selected.offsetHeight + 'px');
+                    group.classList.add('has-choice-marker');
+                }
+            });
         }
