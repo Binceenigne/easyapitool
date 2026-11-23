@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="styles/app.css?v=40">
+    <link rel="stylesheet" href="styles/app.css?v=41">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -245,10 +245,6 @@
                                             <div id="imageCountChoices" class="image-choice" aria-labelledby="imageCountLabel"></div>
                                         </div>
                                     </div>
-                                    <label class="image-control-section" id="imageEditCompressionLabel" hidden>
-                                        <span tabindex="0" data-image-tip="JPEG 和 WebP 的编码质量，范围 0–100，默认 75。档位越高通常保留更多细节，文件也更大。">压缩质量</span>
-                                        <input id="imageEditCompression" type="number" data-image-tip="填写 0–100，默认 75。改变文件的编码质量，不改变模型的渲染档位。" min="0" max="100" step="1" value="75" onchange="setImageOutputCompression(this.value)">
-                                    </label>
                                     <input id="imageEditSize" type="hidden" value="auto">
                                 </div>
                             </div>
@@ -941,11 +937,11 @@
 
     <script src="vendor/lucide/lucide.min.js"></script>
     <script src="scripts/modules/00-core-ui.js?v=2"></script>
-    <script src="scripts/modules/01-app-state.js?v=3"></script>
-    <script src="scripts/modules/02-image-controls.js?v=6"></script>
+    <script src="scripts/modules/01-app-state.js?v=4"></script>
+    <script src="scripts/modules/02-image-controls.js?v=7"></script>
     <script src="scripts/modules/03-image-reasoning.js?v=4"></script>
     <script src="scripts/modules/04-image-stream-rendering.js?v=1"></script>
-    <script src="scripts/modules/05-image-events-sessions.js?v=4"></script>
+    <script src="scripts/modules/05-image-events-sessions.js?v=5"></script>
     <script src="scripts/modules/06-backend-bridge.js?v=2"></script>
     <script src="scripts/modules/07-page-initializer.js?v=4"></script>
     <script src="scripts/modules/08-window-settings-updates.js?v=4"></script>

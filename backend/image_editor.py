@@ -36,10 +36,10 @@ CONTENT_TYPES = {
     ".svg": "image/svg+xml",
 }
 OUTPUT_PRESETS = {
-    "lossless": ("png", None),
-    "large": ("jpeg", 90),
-    "medium": ("jpeg", 75),
-    "small": ("jpeg", 55),
+    "lossless": "png",
+    "large": "jpeg",
+    "medium": "jpeg",
+    "small": "jpeg",
 }
 IMAGE_MODEL_IDS = {
     "gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
@@ -1276,9 +1276,9 @@ def prepare_image_generation(
     partial_images = int(_number(clean_options.get("partial_images", clean_options.get("partialImages")), 0))
     if output_preset not in OUTPUT_PRESETS:
         raise ValueError("无效的输出大小")
-    fallback_format, fallback_compression = OUTPUT_PRESETS[output_preset]
+    fallback_format = OUTPUT_PRESETS[output_preset]
     if transparency == "transparent" and fallback_format == "jpeg":
-        fallback_format, fallback_compression = "png", None
+        fallback_format = "png"
     output_format = str(clean_options.get("output_format") or fallback_format).lower()
     formats = {"png", "jpeg", "webp", "gif"}
     svg = (app_models or {}).get("svg") or {}
@@ -1295,8 +1295,6 @@ def prepare_image_generation(
     if transparency == "transparent" and output_format not in {"png", "webp"}:
         raise ValueError("透明背景需要 PNG 或 WebP")
     compression = clean_options.get("output_compression")
-    if compression is None and not clean_options.get("output_format"):
-        compression = fallback_compression
     if compression is not None and (type(compression) is not int or not 0 <= compression <= 100 or output_format not in {"jpeg", "webp"}):
         raise ValueError("压缩质量仅适用于 JPEG 和 WebP，范围为 0 至 100")
     frames = {}
@@ -1364,8 +1362,8 @@ def prepare_image_generation(
             fields["svg"] = author
     if complexity:
         fields["complexity"] = complexity
-    if compression is not None:
-        fields["output_compression"] = compression
+    if output_format in {"jpeg", "webp"}:
+        fields["output_compression"] = 75
     if stream:
         fields["partial_images"] = partial_images
     return ImageGenerationRequest(

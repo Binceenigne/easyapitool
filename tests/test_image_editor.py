@@ -212,25 +212,24 @@ class ImageEditorTests(unittest.TestCase):
         self.assertFalse(legacy_usage["hasCost"])
 
     def test_legacy_output_presets_translate_to_native_format_and_compression(self):
-        self.assertEqual(
-            image_editor.OUTPUT_PRESETS,
-            {
-                "lossless": ("png", None),
-                "large": ("jpeg", 90),
-                "medium": ("jpeg", 75),
-                "small": ("jpeg", 55),
-            },
-        )
-        for preset, (output_format, compression) in image_editor.OUTPUT_PRESETS.items():
+        for preset, output_format in {"lossless": "png", "large": "jpeg", "medium": "jpeg", "small": "jpeg"}.items():
             request = image_editor.prepare_image_generation(
                 "Generate an image",
                 [],
                 {"outputPreset": preset},
             )
             self.assertEqual(request.fields["output_format"], output_format)
-            self.assertEqual(request.fields.get("output_compression"), compression)
+            self.assertEqual(request.fields.get("output_compression"), 75 if output_format == "jpeg" else None)
             self.assertEqual(request.output_format, output_format)
             self.assertEqual(request.output_preset, preset)
+
+    def test_explicit_jpeg_and_webp_use_fixed_compression(self):
+        for output_format in ("jpeg", "webp"):
+            with self.subTest(output_format=output_format):
+                request = image_editor.prepare_image_generation(
+                    "Generate an image", [], {"output_format": output_format, "output_compression": 42},
+                )
+                self.assertEqual(request.fields["output_compression"], 75)
 
     def test_client_posts_all_supported_generation_parameters_as_json(self):
         class FakeResponse:
@@ -460,7 +459,7 @@ class ImageEditorTests(unittest.TestCase):
             )
             service = image_editor.ImageGenerationService(client)
 
-            for preset, expected_quality in {"large": 90, "medium": 75, "small": 55}.items():
+            for preset in ("large", "medium", "small"):
                 request = image_editor.prepare_image_generation(
                     "Generate an image",
                     [],
@@ -472,7 +471,7 @@ class ImageEditorTests(unittest.TestCase):
                     request,
                     root / preset,
                 )
-                self.assertEqual(client.generate_image.call_args.args[2]["output_compression"], expected_quality)
+                self.assertEqual(client.generate_image.call_args.args[2]["output_compression"], 75)
                 self.assertEqual(Path(result["path"]).read_bytes(), source.getvalue())
                 self.assertEqual(result["format"], "jpeg")
                 self.assertEqual(result["outputPreset"], preset)
