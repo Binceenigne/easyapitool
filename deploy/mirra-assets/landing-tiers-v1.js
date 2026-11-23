@@ -2,7 +2,7 @@ import { createIcons } from './icons.min.js';
 
 const style = document.createElement('link');
 style.rel = 'stylesheet';
-style.href = new URL('./tiers-v1.css?v=table-rpm-1', import.meta.url).href;
+style.href = new URL('./tiers-v1.css?v=semantic-colors-1', import.meta.url).href;
 const styleReady = new Promise(resolve => {
   style.addEventListener('load', () => resolve(true), { once: true });
   style.addEventListener('error', () => resolve(false), { once: true });
@@ -38,13 +38,13 @@ const mainRows = [
   ['7 天额度', '', t => fee(quota(t).weekMicroUSD)],
   ['有效期', '', t => validity(quota(t).expiresInDays)],
   ['RPM（语言 + 图像）', '', t => t.rpmLimit > 0 ? `${Number(t.rpmLimit).toLocaleString('zh-CN')} 次 / 分钟` : '不限'],
-  ['最高分辨率', 'scan-eye', resolution],
+  ['最高分辨率', 'monitor', resolution, 'resolution'],
   ['每次生成', 'copy', t => `最多 ${t.maxImages} 张`],
-  ['输出格式', 'play', t => choices(t.formats, labels.formats, 'PNG · JPEG · WebP · SVG · GIF')],
-  ['高级思维', 'sparkles', t => t.advanced],
-  ['透明背景', 'aperture', t => t.transparency],
-  ['SVG 矢量图', '', t => permitted(t.formats, 'svg')],
-  ['GIF 动图', 'play', t => permitted(t.formats, 'gif')],
+  ['输出格式', 'play', t => choices(t.formats, labels.formats, 'PNG · JPEG · WebP · SVG · GIF'), 'formats'],
+  ['高级思维', 'sparkles', t => t.advanced, 'reasoning'],
+  ['透明背景', 'aperture', t => t.transparency, 'transparency'],
+  ['SVG 矢量图', 'aperture', t => permitted(t.formats, 'svg'), 'vector'],
+  ['GIF 动图', 'play', t => permitted(t.formats, 'gif'), 'animation'],
 ];
 const extraRows = [
   ['生图模型', 'aperture', t => choices(t.imageModels, null, '全部已开放生图模型')],
@@ -53,11 +53,47 @@ const extraRows = [
   ['模型思考深度', '', t => choices(t.reasoningEfforts, labels.efforts)],
   ['图片质量', '', t => choices(t.qualities, labels.qualities)],
   ['构图复杂度', '', t => choices(t.complexities, labels.complexities)],
-  ['参考图编辑', 'scan-eye', t => t.imageEditing ? `最多 ${t.maxReferences} 张参考图` : false],
-  ['GIF 最大帧数', 'play', t => permitted(t.formats, 'gif') ? `${t.maxGifFrames} 帧` : false],
-  ['联网搜索', '', t => t.webSearch],
-  ['提示词润色', 'sparkles', t => t.promptPolish],
+  ['参考图编辑', 'scan-eye', t => t.imageEditing ? `最多 ${t.maxReferences} 张参考图` : false, 'editing'],
+  ['GIF 最大帧数', 'play', t => permitted(t.formats, 'gif') ? `${t.maxGifFrames} 帧` : false, 'animation'],
+  ['联网搜索', 'scan-eye', t => t.webSearch, 'search'],
+  ['提示词润色', 'sparkles', t => t.promptPolish, 'reasoning'],
 ];
+
+function capabilityBadge(text, tone, icon) {
+  const badge = node('span', 'mirra-tier-table__badge');
+  badge.dataset.tone = tone;
+  if (icon) badge.append(glyph(icon));
+  badge.append(node('span', '', text));
+  return badge;
+}
+
+function appendCellValue(cell, value, kind, tier) {
+  if (kind === 'resolution') {
+    const label = {1536:'标清',2560:'高清',3840:'超清'}[tier.maxResolution];
+    const tone = {1536:'neutral',2560:'blue',3840:'purple'}[tier.maxResolution] || 'neutral';
+    const stack = node('span', 'mirra-tier-table__cell-stack');
+    stack.append(capabilityBadge(label || value, tone, 'monitor'), node('small', 'mirra-tier-table__detail', `${tier.maxResolution} px`));
+    cell.append(stack);
+    return;
+  }
+  if (kind === 'formats') {
+    const formats = tier.formats?.includes('*') ? Object.keys(labels.formats) : tier.formats || [];
+    const group = node('span', 'mirra-tier-table__format-badges');
+    for (const format of formats) {
+      const [tone, icon] = {svg:['purple','aperture'],gif:['blue','play'],webp:['teal','scan-eye']}[format] || ['neutral', null];
+      group.append(capabilityBadge(labels.formats[format] || format, tone, icon));
+    }
+    cell.append(formats.length ? group : node('span', 'mirra-tier-table__status is-unavailable', '未开放'));
+    return;
+  }
+  const special = {reasoning:['purple','sparkles'],transparency:['teal','aperture'],vector:['purple','aperture'],animation:['blue','play'],editing:['blue','scan-eye'],search:['blue','scan-eye']}[kind];
+  if (value !== false && special) {
+    cell.append(capabilityBadge(value === true ? '支持' : value, ...special));
+    return;
+  }
+  if (typeof value === 'boolean') cell.append(node('span', `mirra-tier-table__status ${value ? 'is-allowed' : 'is-unavailable'}`, value ? '支持' : '未开放'));
+  else cell.append(node('span', kind === 'amount' ? 'mirra-tier-table__amount' : '', value));
+}
 
 function appendRows(body, definitions, plans) {
   for (const [label, icon, get, kind] of definitions) {
@@ -68,8 +104,7 @@ function appendRows(body, definitions, plans) {
     words.append(node('span', '', label)); name.append(words); row.append(name);
     plans.forEach(tier => {
       const cell = row.insertCell(), value = get(tier);
-      if (typeof value === 'boolean') cell.append(node('span', `mirra-tier-table__status ${value ? 'is-allowed' : 'is-unavailable'}`, value ? '支持' : '未开放'));
-      else cell.append(node('span', kind === 'amount' ? 'mirra-tier-table__amount' : '', value));
+      appendCellValue(cell, value, kind, tier);
     });
     if (kind === 'amount') row.className = 'mirra-tier-table__quota';
   }
@@ -88,7 +123,7 @@ function render(payload) {
   const intro = node('div', 'mirra-plans__intro'), label = node('p', 'mirra-plans__label'); label.append(glyph('sparkles'), '创作档位对比');
   const title = node('h2', '', '给灵感，恰好的空间。'); title.id = 'creative-tiers-title';
   intro.append(label, title, node('p', 'mirra-plans__description', '横向对比各档位的默认额度、模型与生成功能。'));
-  const tools = node('div', 'mirra-plans__tools'); tools.append(node('p', '', `${plans.length} 个档位 · 按能力范围排列`));
+  const tools = node('div', 'mirra-plans__tools'); tools.append(node('p', '', `${plans.length} 个档位 · 横向对比`));
   const controls = node('div', 'mirra-plans__controls'), rail = node('div', 'mirra-plans__rail');
   rail.tabIndex = 0; rail.setAttribute('role', 'region'); rail.setAttribute('aria-label', '档位横向对比表，可横向滚动，左侧项目名称固定');
   const table = node('table', 'mirra-tier-table'); table.style.setProperty('--plan-count', plans.length);

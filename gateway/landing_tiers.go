@@ -157,7 +157,14 @@ func (g *gateway) updateLandingTiers(ctx context.Context, input landingTierUpdat
 			seen[id] = true
 			selected = append(selected, tier)
 		}
-		next.Tiers = sortedTiers(selected)
+		// Publication follows the saved workspace order, independently of the
+		// order in which the selection checkboxes were clicked.
+		next.Tiers = make([]featureTier, 0, len(selected))
+		for _, tier := range models.Tiers {
+			if seen[tier.ID] {
+				next.Tiers = append(next.Tiers, tier)
+			}
+		}
 		next.TierIDs = make([]string, 0, len(selected))
 		for _, tier := range next.Tiers {
 			next.TierIDs = append(next.TierIDs, tier.ID)

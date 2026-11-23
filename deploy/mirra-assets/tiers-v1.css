@@ -37,6 +37,17 @@
 .mirra-tier-table__status { display: inline-block; padding: 2px 11px; border-radius: 3px; font-size: 12px; line-height: 1.8; }
 .mirra-tier-table__status.is-allowed { background: #e9dff4; color: #624086; }
 .mirra-tier-table__status.is-unavailable { background: transparent; color: #756a7e; }
+.mirra-tier-table__badge { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 3px 10px; border: 1px solid transparent; border-radius: 4px; font-size: 12px; font-weight: 500; line-height: 1.7; vertical-align: middle; }
+.mirra-tier-table__badge[data-tone='neutral'] { color: #343a46; background: #ececf1; border-color: #e1dfe7; }
+.mirra-tier-table__badge[data-tone='blue'] { color: #1d4ed8; background: #e7eefc; border-color: #cedcf7; }
+.mirra-tier-table__badge[data-tone='purple'] { color: #6d28b9; background: #eee3fa; border-color: #dfccf4; }
+.mirra-tier-table__badge[data-tone='teal'] { color: #11685e; background: #e2f2ed; border-color: #c4e6db; }
+.mirra-tier-table__badge svg { width: 15px; height: 15px; flex: 0 0 15px; stroke-width: 1.7; }
+.mirra-tier-table__cell-stack { display: inline-flex; flex-direction: column; align-items: center; gap: 5px; }
+.mirra-tier-table__detail { color: var(--muted,#635b70); font-size: 11px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.mirra-tier-table__format-badges { display: inline-flex; flex-wrap: wrap; gap: 5px; justify-content: center; }
+.mirra-tier-table__format-badges .mirra-tier-table__badge { padding: 1px 6px; gap: 4px; font-size: 11px; }
+.mirra-tier-table__format-badges svg { width: 12px; height: 12px; flex-basis: 12px; }
 .mirra-plans__expand { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 15px 20px; margin-top: 12px; border: 1px solid #d4c8df; border-radius: 4px; background: #f5f0fa; color: var(--violet,#6944aa); font-size: 12px; }
 .mirra-plans__expand:hover { background: #eae0f5; }
 .mirra-plans__expand svg { width: 16px; height: 16px; transition: transform .22s; }

@@ -44,8 +44,10 @@ func TestAdminTierAssetUsesManagedNamespace(t *testing.T) {
 	for _, tc := range []struct{ path, content string }{
 		{"/", `src="/admin/assets/admin-tiers.js`},
 		{"/", `src="/admin/assets/admin-tier-publish.js`},
+		{"/", `src="/admin/assets/admin-sortable.js`},
 		{"/admin/assets/admin-tiers.js", "window.prepareKeyTier"},
 		{"/admin/assets/admin-tier-publish.js", "window.renderLandingTierSettings"},
+		{"/admin/assets/admin-sortable.js", "window.MirraSortable"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8771"+tc.path, nil)
 		reply := httptest.NewRecorder()

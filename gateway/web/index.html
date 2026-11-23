@@ -6,11 +6,12 @@
   <meta name="theme-color" content="#f7f7ff">
   <title>Mirra · 分发网关</title>
   <link rel="icon" href="/mirra.png">
-  <link rel="stylesheet" href="/admin.css?v=tier-preview-copy-1">
-  <script src="/admin.js?v=tier-preview-copy-1" defer></script>
-  <script src="/admin-models.js?v=tier-preview-copy-1" defer></script>
-  <script src="/admin/assets/admin-tiers.js?v=tier-preview-copy-1" defer></script>
-  <script src="/admin/assets/admin-tier-publish.js?v=tier-preview-copy-1" defer></script>
+  <link rel="stylesheet" href="/admin.css?v=workspace-order-1">
+  <script src="/admin.js?v=workspace-order-1" defer></script>
+  <script src="/admin/assets/admin-sortable.js?v=workspace-order-1" defer></script>
+  <script src="/admin-models.js?v=workspace-order-1" defer></script>
+  <script src="/admin/assets/admin-tiers.js?v=workspace-order-1" defer></script>
+  <script src="/admin/assets/admin-tier-publish.js?v=workspace-order-1" defer></script>
 </head>
 <body>
   <main id="auth" class="auth">
@@ -111,7 +112,7 @@
                       <div id="model-image-list" class="model-list" role="group" aria-label="可启用的生图模型"></div>
                     </div>
                   </details>
-                  <div id="enabled-image-models" class="model-tags" role="list" aria-label="已启用的生图模型" hidden></div>
+                  <section id="enabled-image-models" class="model-enabled-order-block" aria-labelledby="model-enabled-order-title" hidden><div class="field-head"><h3 id="model-enabled-order-title">已启用模型顺序</h3><span class="caption">客户端菜单顺序</span></div><p id="model-order-hint" class="hint">拖动手柄或使用上下方向键排序；保存模型配置后生效，默认模型保持不变。</p><ol id="model-enabled-order" class="model-enabled-order" aria-label="已启用模型排序"></ol><p id="model-order-state" class="caption" role="status"></p></section>
                   <label>客户端默认模型<select name="defaultImage" required></select></label>
                 </div>
               </section>
@@ -144,7 +145,7 @@
           </form>
           <section class="panel tier-manager" aria-labelledby="tier-manager-title">
             <div class="panel-head"><h2 id="tier-manager-title"><i data-icon="Layers3"></i>功能档位</h2><a href="#/tiers">横向对比全部档位</a></div>
-            <p class="panel-body hint">为每把分发密钥分配一组功能权限。客户端会定期同步，实际选项同时受模型能力限制。</p>
+            <div class="tier-order-toolbar panel-body"><p class="hint">拖动档位左侧手柄上下排序，松开即保存。客户端权限不受显示顺序影响。</p><button id="tier-order-auto-list" type="button"><i data-icon="ListFilter"></i>按权限排序</button><span id="tier-order-mode-list" class="caption"></span><p id="tier-order-feedback-list" class="tier-order-feedback" role="status" hidden></p></div>
             <div id="tier-list"></div>
           </section>
           <section class="panel model-preview" aria-labelledby="models-preview-title">
@@ -154,8 +155,8 @@
         </section>
 
         <section id="page-tiers" data-view="tiers" aria-labelledby="tiers-title" hidden>
-          <div class="page-head"><div><h1 id="tiers-title">档位对比</h1><p class="hint">按权限范围由低到高自动排列，权限调整即时生效；默认额度仅在签发或保存密钥时主动套用。</p></div><button type="button" id="new-tier-compare" class="primary"><i data-icon="Plus"></i>新建档位</button></div>
-          <div class="toolbar tier-compare-tools"><label class="search"><i data-icon="Search"></i><input type="search" id="tier-feature-search" placeholder="查找功能或模型" aria-label="查找档位功能"></label><label class="inline-check"><input type="checkbox" id="tier-differences">只看不同项</label></div>
+          <div class="page-head"><div><h1 id="tiers-title">档位对比</h1><p class="hint">拖动列标题中的手柄左右排序，松开即保存；也可按权限范围自动排列。默认额度仅在签发或保存密钥时主动套用。</p></div><button type="button" id="new-tier-compare" class="primary"><i data-icon="Plus"></i>新建档位</button></div>
+          <div class="toolbar tier-compare-tools"><label class="search"><i data-icon="Search"></i><input type="search" id="tier-feature-search" placeholder="查找功能或模型" aria-label="查找档位功能"></label><label class="inline-check"><input type="checkbox" id="tier-differences">只看不同项</label><button id="tier-order-auto-compare" type="button"><i data-icon="ListFilter"></i>按权限排序</button><span id="tier-order-mode-compare" class="caption"></span></div><p id="tier-order-feedback-compare" class="tier-order-feedback" role="status" hidden></p>
           <section id="tier-comparison" class="panel" aria-label="功能权限横向对比"></section>
           <section class="panel landing-tier-publish" aria-labelledby="landing-tier-title">
             <div class="panel-head"><h2 id="landing-tier-title"><i data-icon="PanelsTopLeft"></i>落地页展示</h2><label class="landing-visibility"><span>显示档位</span><input type="checkbox" role="switch" id="landing-tier-enabled" aria-describedby="landing-tier-visibility-hint"></label></div>
@@ -321,5 +322,6 @@
     <div class="editor-body"><p id="delete-key-name"></p><p id="delete-key-note" class="hint">删除后立即停止该密钥的新请求，历史用量回执保留。</p><div id="delete-tier-replacement" class="form-body" hidden><label>替代功能档位<select id="delete-tier-replacement-select" name="replacementTierId" disabled></select></label><p class="hint">迁移只更新功能权限，不会套用替代档位的默认额度。四类费用额度、已用金额、有效期与 IP 白名单保持不变，不会删除密钥。</p><div id="delete-tier-replacement-summary" class="tier-assignment-summary" hidden></div></div><p id="delete-tier-snapshot-note" class="hint" hidden>已发布的落地页快照保持不变。删除后如需更新公开内容，请手动同步或关闭落地页展示。</p><p class="error" role="alert" hidden></p></div>
     <footer><button type="button" data-close>取消</button><button id="delete-key-confirm" type="submit" class="danger">删除密钥</button></footer>
   </form></dialog>
+<p id="workspace-order-instructions" class="sr-only">拖动此手柄调整顺序，或使用上下或左右方向键逐项移动，Home 移到首项，End 移到末项；拖动时按 Escape 取消。</p><div id="workspace-order-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 </body>
 </html>

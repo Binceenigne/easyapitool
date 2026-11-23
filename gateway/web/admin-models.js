@@ -126,13 +126,21 @@
     if (selected.has(preferred)) select.value = preferred;
     select.disabled = selected.size === 0;
     $('selected-images').textContent = '已开放 ' + selected.size + ' 个';
-    const tags = $('enabled-image-models');
-    tags.replaceChildren(...[...selected].map(model => {
-      const tag = node('span', 'model-tag mono', model);
-      tag.setAttribute('role', 'listitem');
-      return tag;
+    const block=$('enabled-image-models'), list=$('model-enabled-order');
+    block.hidden=!selected.size;
+    const ids=[...selected];
+    list.replaceChildren(...ids.map((model,index)=>{
+      const row=node('li','model-enabled-order-item');row.dataset.orderId=model;row.dataset.modelId=model;
+      row.append(window.MirraSortable.handle({id:model,label:model,index,total:ids.length,disabled:form.dataset.pending==='true'}),node('span','order-position caption',String(index+1)),node('span','mono',model));
+      if(model===select.value)row.append(status('默认','model-default-badge'));
+      return row;
     }));
-    tags.hidden = !selected.size;
+    $('model-order-state').textContent=JSON.stringify(ids)===JSON.stringify(state.appModels.imageModels)?'顺序与已保存配置一致':'当前顺序为未保存草稿';
+    window.MirraSortable.bind(list,{disabled:()=>form.dataset.pending==='true',focusRoot:()=>$('model-enabled-order'),onReorder:next=>{
+      const preferred=form.elements.defaultImage.value;
+      selected.clear();next.forEach(model=>selected.add(model));updateDefaultModels(preferred);markDirty();
+      $('model-order-state').textContent='已调整顺序，保存模型配置后生效';
+    }});
   }
 
   function updateCatalog(values = {}) {
@@ -273,9 +281,16 @@
   form.addEventListener('input', event => {
     const field = event.target;
     if (field.hasAttribute('data-model-select')) updateEfforts(field, capability(field.value)?.default || '');
+    if (field.name==='defaultImage')updateDefaultModels(field.value);
     if (field.name) markDirty();
   });
   fetchButton.addEventListener('click', () => { void fetchCatalog(); });
+  new MutationObserver(()=>{
+    const locked=form.dataset.pending==='true' || selected.size<2;
+    $('model-enabled-order').querySelectorAll('.order-handle').forEach(button=>{button.disabled=locked;});
+  }).observe(form,{attributes:true,attributeFilter:['data-pending']});
+  window.acceptTierOrderRevision=(previous,current)=>{if(revision===previous)revision=current;};
+
 
   $('reset-models').addEventListener('click', () => runButton($('reset-models'), async () => {
     await refresh();

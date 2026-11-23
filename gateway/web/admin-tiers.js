@@ -240,6 +240,39 @@
     $('tier-preview-error').hidden=true;$('tier-preview-state').textContent='正在准备预览…';
   });
 
+  let tierOrderPending=false, tierOrderMessage='', tierOrderTone='';
+  function orderHandle(tier,index,axis) {
+    return window.MirraSortable.handle({id:tier.id,label:tier.name,index,total:tiers().length,axis,disabled:tierOrderPending});
+  }
+  function orderFeedback() {
+    const automatic=!(state.appModels.tierOrder || []).length;
+    for(const suffix of ['list','compare']) {
+      $('tier-order-mode-'+suffix).textContent=tierOrderPending?'正在保存顺序…':automatic?'当前：按权限排序':'当前：手动顺序';
+      const reset=$('tier-order-auto-'+suffix);reset.disabled=tierOrderPending || automatic;
+      reset.title=automatic?'当前已按权限范围排列':'恢复按权限范围排列；已发布快照需另行同步';
+      feedback($('tier-order-feedback-'+suffix),tierOrderMessage,tierOrderTone);
+    }
+    for(const id of ['new-tier','new-tier-compare'])$(id).disabled=tierOrderPending;
+    for(const id of ['tier-list','tier-comparison'])$(id).setAttribute('aria-busy',String(tierOrderPending));
+    if(tierOrderPending)for(const selector of ['#tier-list .row-actions button','#tier-comparison .row-actions button'])document.querySelectorAll(selector).forEach(button=>{button.disabled=true;});
+  }
+  async function saveTierOrder(ids,automatic=false) {
+    if(tierOrderPending || !state)return false;
+    const previousRevision=state.appModels.revision;
+    tierOrderPending=true;tierOrderMessage='正在保存档位顺序…';tierOrderTone='';window.renderTiers();
+    try {
+      const profile=await api('tiers/order',{ids:automatic?[]:ids,automatic,revision:previousRevision});
+      if(!state)return false;
+      state.appModels=profile;window.acceptTierOrderRevision?.(previousRevision,profile.revision);
+      tierOrderMessage=automatic?'已恢复按权限排序。已发布的落地页快照保持不变，手动同步后更新。':'档位顺序已保存。已发布的落地页快照保持不变，手动同步后更新。';tierOrderTone='good';
+      await afterSave(tierOrderMessage);return true;
+    }catch(error){
+      try{await refresh();tierOrderMessage='保存排序失败，已恢复服务端顺序。'+error.message;}catch{tierOrderMessage='保存排序失败，本地显示未改动，请刷新后重试。'+error.message;}
+      tierOrderTone='error';tell(tierOrderMessage,'error');window.MirraSortable.announce(tierOrderMessage);return false;
+    }finally{tierOrderPending=false;if(state)window.renderTiers();}
+  }
+  for(const id of ['tier-order-auto-list','tier-order-auto-compare'])$(id).addEventListener('click',()=>{void saveTierOrder([],true);});
+
   function comparison() {
     const plans = tiers(), query = $('tier-feature-search').value.trim().toLowerCase();
     if (!plans.length) { $('tier-comparison').replaceChildren(empty('Layers3','尚无功能档位','创建功能档位后，可在这里横向对比额度与权限。',action('新建档位',()=>openTier(),'Plus'))); return; }
@@ -257,8 +290,9 @@
     const wrap = node('div','tier-table-scroll'), grid = node('table','tier-comparison-table');
     const header = grid.createTHead().insertRow(); header.append(node('th','','功能权限'));
     plans.forEach((t,index) => {
-      const cell = node('th'), box = node('div','tier-column-title'); cell.scope = 'col';
-      box.append(node('small','caption','档位 '+(index+1)),node('strong','',t.name),actions(tierPreviewAction(t),tierCopyAction(t),action('编辑',()=>openTier(t)),tierDeleteAction(t)));
+      const cell = node('th'), box = node('div','tier-column-title'); cell.scope = 'col';cell.dataset.orderId=t.id;cell.dataset.tierId=t.id;
+      const orderLabel=node('div','tier-column-order');orderLabel.append(orderHandle(t,index,'x'),node('small','caption','档位 '+(index+1)));
+      box.append(orderLabel,node('strong','',t.name),actions(tierPreviewAction(t),tierCopyAction(t),action('编辑',()=>openTier(t)),tierDeleteAction(t)));
       cell.append(box); header.append(cell);
     });
     const body = grid.createTBody(); let count = 0;
@@ -270,6 +304,7 @@
       values.forEach(value => { const cell = row.insertCell(); if (typeof value === 'boolean') cell.append(status(value?'允许':'未开放',value?'good':'tier-unavailable')); else cell.append(node('span',label.endsWith('模型')?'tier-model-ids':'',value)); });
       count++;
     }
+    window.MirraSortable.bind(header,{axis:'x',disabled:()=>tierOrderPending,focusRoot:()=>$('tier-comparison'),onReorder:ids=>saveTierOrder(ids)});
     wrap.append(grid); $('tier-comparison').replaceChildren(wrap);
     if (!count) $('tier-comparison').append(empty('Search','没有匹配的差异','可关闭“只看不同项”或更换搜索词。'));
   }
@@ -324,13 +359,20 @@
   window.createTierForKey=()=>openTier();
   window.renderTiers = () => {
     if (!state) return;
-    if (tiers().length) $('tier-list').replaceChildren(table(['档位','能力范围','绑定密钥','操作'],tiers().map(t => {
-      const capabilities = node('div','tier-tags');capabilities.append(status(limitName(t)),status(t.advanced?'高级思维':'预设思维'),status(all(t.formats,'gif')?'含 GIF':'静态输出'),status('RPM · '+rpmName(t)));
-      const buttons=actions(tierPreviewAction(t),tierCopyAction(t),action('编辑',()=>openTier(t)),tierDeleteAction(t));
-      return [stacked(t.name,t.description),capabilities,bindingCount(t.id)+' 把',buttons];
-    })));
+    if (tiers().length) {
+      const list=table(['档位','能力范围','绑定密钥','操作'],tiers().map((t,index) => {
+        const capabilities=node('div','tier-tags');capabilities.append(status(limitName(t)),status(t.advanced?'高级思维':'预设思维'),status(all(t.formats,'gif')?'含 GIF':'静态输出'),status('RPM · '+rpmName(t)));
+        const name=node('div','tier-list-name');name.append(orderHandle(t,index,'y'),stacked(t.name,t.description));
+        const buttons=actions(tierPreviewAction(t),tierCopyAction(t),action('编辑',()=>openTier(t)),tierDeleteAction(t));
+        return [name,capabilities,bindingCount(t.id)+' 把',buttons];
+      }));
+      const body=list.querySelector('tbody');[...body.rows].forEach((row,index)=>{row.dataset.orderId=tiers()[index].id;row.dataset.tierId=tiers()[index].id;});
+      window.MirraSortable.bind(body,{disabled:()=>tierOrderPending,focusRoot:()=>$('tier-list'),onReorder:ids=>saveTierOrder(ids)});
+      $('tier-list').replaceChildren(list);
+    }
     else $('tier-list').replaceChildren(empty('Layers3','尚无功能档位','先创建档位，再为分发密钥分配额度与功能权限。',action('新建档位',()=>openTier(),'Plus')));
     comparison();
+    orderFeedback();
     window.renderLandingTierSettings?.();
   };
 

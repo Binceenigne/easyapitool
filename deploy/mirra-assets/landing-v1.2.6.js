@@ -1,5 +1,5 @@
 import { createIcons } from './icons.min.js';
-import './landing-tiers-v1.js?v=table-rpm-1';
+import './landing-tiers-v1.js?v=semantic-colors-1';
 
 createIcons();
 

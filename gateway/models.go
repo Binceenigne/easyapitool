@@ -46,6 +46,7 @@ type imageFeatures struct {
 
 type modelSettings struct {
 	Tiers                 []featureTier                  `json:"tiers"`
+	TierOrder             []string                       `json:"tierOrder,omitempty"`
 	DefaultTierID         string                         `json:"defaultTierId"`
 	Tier                  *featureTier                   `json:"tier,omitempty"`
 	Catalog               *modelCatalog                  `json:"catalog,omitempty"`
@@ -192,6 +193,9 @@ func (g *gateway) loadModels(ctx context.Context) error {
 		if settings.validate() != nil || validateTiers(settings.Tiers) != nil {
 			return errors.New("已保存的模型配置无效")
 		}
+		if err := settings.applyTierOrder(); err != nil {
+			return errors.New("已保存的档位顺序无效")
+		}
 		settings.applyCapabilities()
 	case errors.Is(err, sql.ErrNoRows):
 		settings = modelDefaults(g.cfg)
@@ -244,11 +248,19 @@ func prepareModels(current *modelSettings, proposed modelSettings) (modelSetting
 	if proposed.Tiers == nil {
 		proposed.Tiers = current.Tiers
 	}
+	if proposed.DefaultTierID == "" {
+		proposed.DefaultTierID = current.defaultTierID()
+	}
 	proposed.ensureTiers()
 	if err := validateTiers(proposed.Tiers); err != nil {
 		return modelSettings{}, err
 	}
-	proposed.Tiers = sortedTiers(proposed.Tiers)
+	if proposed.TierOrder == nil {
+		proposed.TierOrder = slices.Clone(current.TierOrder)
+	}
+	if err := proposed.applyTierOrder(); err != nil {
+		return modelSettings{}, err
+	}
 	proposed.DefaultTierID = proposed.defaultTierID()
 	proposed.Tier = nil
 	proposed.Catalog = nil

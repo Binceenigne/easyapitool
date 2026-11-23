@@ -61,7 +61,16 @@ func (s *modelSettings) defaultTierID() string {
 	if len(s.Tiers) == 0 {
 		return ""
 	}
-	return sortedTiers(s.Tiers)[0].ID
+	first := sortedTiers(s.Tiers)[0]
+	// Stable display sorting alone cannot distinguish equally ranked, equally
+	// named tiers. Retain the saved winner of that tie so dragging columns never
+	// changes an implicit key's permissions or RPM limit.
+	for _, tier := range s.Tiers {
+		if tier.ID == s.DefaultTierID && tier.Name == first.Name && tierScore(tier) == tierScore(first) {
+			return tier.ID
+		}
+	}
+	return first.ID
 }
 func permits(values []string, value string) bool {
 	return slices.Contains(values, "*") || slices.Contains(values, value)
@@ -218,6 +227,7 @@ func (g *gateway) modelsForKey(k accessKey) (*modelSettings, error) {
 	}
 	profile := *current
 	profile.Tiers = nil
+	profile.TierOrder = nil
 	profile.Catalog = catalogForModels(current)
 	profile.Tier = &t
 	profile.ImageModels = allowedSubset(current.ImageModels, t.ImageModels)

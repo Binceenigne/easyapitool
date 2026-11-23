@@ -43,6 +43,7 @@ func (a *admin) routes(m *mobile) http.Handler {
 	// root asset names. Serve the new workspace asset through that namespace.
 	mux.Handle("GET /admin/assets/admin-tiers.js", http.StripPrefix("/admin/assets", files))
 	mux.Handle("GET /admin/assets/admin-tier-publish.js", http.StripPrefix("/admin/assets", files))
+	mux.Handle("GET /admin/assets/admin-sortable.js", http.StripPrefix("/admin/assets", files))
 	if m != nil {
 		mux.HandleFunc("GET /app-preview/{asset...}", m.appPreview)
 	}
@@ -62,6 +63,7 @@ func (a *admin) routes(m *mobile) http.Handler {
 	mux.HandleFunc("POST /admin/keys/{id}/reveal", a.protected(a.revealKey))
 	mux.HandleFunc("POST /admin/keys/{id}/delete", a.protected(a.deleteKey))
 	mux.HandleFunc("POST /admin/tiers", a.protected(a.saveTier))
+	mux.HandleFunc("POST /admin/tiers/order", a.protected(a.orderTiers))
 	mux.HandleFunc("GET /admin/tiers/{id}/preview", a.protected(a.previewTier))
 	mux.HandleFunc("POST /admin/landing-tiers", a.protected(a.saveLandingTiers))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

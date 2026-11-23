@@ -69,7 +69,15 @@
       if (kind) row.className='landing-preview-'+kind+'-row';
       for (const tier of selected) {
         const value=getValue(tier), cell=row.insertCell();
-        if (typeof value==='boolean') cell.append(status(value?'允许':'未开放',value?'good':'tier-unavailable'));
+        const capability={
+          '最大分辨率':{tone:Number(tier.maxResolution)>=3840?'purple':Number(tier.maxResolution)>=2560?'blue':'gray',glyph:'Monitor'},
+          'SVG 矢量图':{tone:'purple',glyph:'FileCode2'},'GIF 动图':{tone:'blue',glyph:'Film'},
+          '透明背景':{tone:'teal',glyph:'Droplets'},'高级模式':{tone:'purple',glyph:'SlidersHorizontal'}
+        }[label];
+        if(capability){
+          const enabled=typeof value!=='boolean'||value, badge=node('span','tier-capability-value tone-'+(enabled?capability.tone:'gray'));
+          badge.classList.toggle('is-unavailable',!enabled);badge.append(icon(enabled?capability.glyph:'X'),enabled?(typeof value==='boolean'?'允许':value):'未开放');cell.append(badge);
+        }else if (typeof value==='boolean') cell.append(status(value?'允许':'未开放',value?'good':'tier-unavailable'));
         else cell.append(node(kind==='amount'?'strong':'span',kind==='amount'?'number':'',value));
       }
     }
