@@ -90,7 +90,7 @@ func TestLandingTierPublicationIsAnIndependentPrivateSnapshot(t *testing.T) {
 	}
 	for _, item := range publicData["tiers"].([]any) {
 		fields := asObject(item)
-		if len(fields) != 20 || fields["defaultQuota"] == nil {
+		if len(fields) != 21 || fields["defaultQuota"] == nil || fields["rpmLimit"] == nil {
 			t.Fatal("public tier fields do not match the explicit safe whitelist")
 		}
 	}

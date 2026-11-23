@@ -265,7 +265,11 @@ func (a *admin) saveKey(w http.ResponseWriter, r *http.Request) {
 	a.gateway.modelMu.Lock()
 	defer a.gateway.modelMu.Unlock()
 	if k.Policy.TierID == "" {
-		k.Policy.TierID = "default"
+		k.Policy.TierID = a.gateway.appModels().defaultTierID()
+		if k.Policy.TierID == "" {
+			jsonError(w, http.StatusBadRequest, "尚未创建功能档位，请先创建档位后再签发密钥")
+			return
+		}
 	}
 	tier, ok := a.gateway.appModels().tier(k.Policy.TierID)
 	if !ok {

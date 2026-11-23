@@ -110,7 +110,7 @@ func (g *gateway) reserve(ctx context.Context, selected route) (int64, error) {
 	if len(g.cfg.pricing) == 0 {
 		estimate = 0
 	}
-	return g.store.reserve(ctx, selected, time.Now(), estimate)
+	return g.store.reserveWithClock(ctx, selected, time.Now, estimate)
 }
 
 func validPool(name string) bool {

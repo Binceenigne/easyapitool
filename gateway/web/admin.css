@@ -460,3 +460,12 @@ button.danger { border-color: var(--error); background: var(--error-bg); }
 @media (forced-colors:active) { .landing-visibility input { appearance:auto; } .landing-visibility input::before { display:none; } }
 
 .landing-preview-table-wrap:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+.tier-column-title .row-actions { gap:.35rem; }
+.tier-column-title .row-actions button { white-space:nowrap; }
+#delete-tier-replacement-summary { padding:.7rem .8rem; }
+
+.tier-runtime-rate { display:grid; grid-template-columns:minmax(11rem,.65fr) minmax(0,1.35fr); gap:.75rem 1rem; padding:1rem; border:1px solid var(--line); background:var(--bg); align-items:start; }
+.tier-runtime-rate h3 { grid-column:1/-1; }
+.tier-runtime-rate .hint { margin:0 !important; }
+@media (max-width:640px) { .tier-runtime-rate { grid-template-columns:minmax(0,1fr); } }

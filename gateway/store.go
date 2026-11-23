@@ -246,7 +246,15 @@ func (s *store) issue(ctx context.Context, k accessKey, custom string) (accessKe
 }
 
 func (s *store) listKeys(ctx context.Context) ([]accessKey, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,prefix,upstream_id,policy,enabled,
+	return listKeys(ctx, s.db)
+}
+
+type contextQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func listKeys(ctx context.Context, db contextQueryer) ([]accessKey, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id,name,prefix,upstream_id,policy,enabled,
 		EXISTS(SELECT 1 FROM key_secrets WHERE key_id=access_keys.id) FROM access_keys
 		WHERE NOT EXISTS(SELECT 1 FROM deleted_keys WHERE key_id=access_keys.id) ORDER BY name,id`)
 	if err != nil {
@@ -291,12 +299,19 @@ func (s *store) authenticate(ctx context.Context, secret string) (accessKey, ups
 }
 
 func (s *store) reserve(ctx context.Context, selected route, now time.Time, estimate int64) (int64, error) {
+	return s.reserveWithClock(ctx, selected, func() time.Time { return now }, estimate)
+}
+
+func (s *store) reserveWithClock(ctx context.Context, selected route, clock func() time.Time, estimate int64) (int64, error) {
 	k := selected.key
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
+	// Production callers obtain the admission time after waiting for the writer,
+	// so a long queue cannot backdate a model call out of its actual RPM window.
+	now := clock()
 	var currentUpstream, anchorPool, anchorURL, pool, upstreamURL, policy string
 	var enabled bool
 	err = tx.QueryRowContext(ctx, `SELECT a.upstream_id,a.enabled AND u.enabled,a.policy,anchor.pool,anchor.url,u.pool,u.url
@@ -314,6 +329,9 @@ func (s *store) reserve(ctx context.Context, selected route, now time.Time, esti
 		return 0, err
 	}
 	if err := k.Policy.check(selected.clientIP, now); err != nil {
+		return 0, err
+	}
+	if err := checkRPMTx(ctx, tx, k, now); err != nil {
 		return 0, err
 	}
 	periods, err := loadPeriods(ctx, tx, k, now, true)
@@ -431,6 +449,11 @@ func (s *store) usageTx(ctx context.Context, tx *sql.Tx, k accessKey, now time.T
 		return nil, err
 	}
 	payload["rates"] = stats
+	rpm, err := rpmStateTx(ctx, tx, k, now)
+	if err != nil {
+		return nil, err
+	}
+	payload["rateLimit"] = rpm.view()
 	if k.Policy.ExpiresAt != nil {
 		payload["expires_at"] = k.Policy.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}

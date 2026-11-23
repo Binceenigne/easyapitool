@@ -44,6 +44,7 @@ type publicFeatureTier struct {
 	MaxReferences    int              `json:"maxReferences"`
 	MaxGIFFrames     int              `json:"maxGifFrames"`
 	DefaultQuota     tierDefaultQuota `json:"defaultQuota"`
+	RPMLimit         perMinuteLimit   `json:"rpmLimit"`
 }
 
 func publicTiers(tiers []featureTier) []publicFeatureTier {
@@ -58,7 +59,7 @@ func publicTiers(tiers []featureTier) []publicFeatureTier {
 			Advanced: t.Advanced, Transparency: t.Transparency, WebSearch: t.WebSearch,
 			PromptPolish: t.PromptPolish, ImageEditing: t.ImageEditing,
 			MaxResolution: t.MaxResolution, MaxImages: t.MaxImages, MaxReferences: t.MaxReferences,
-			MaxGIFFrames: t.MaxGIFFrames, DefaultQuota: t.DefaultQuota,
+			MaxGIFFrames: t.MaxGIFFrames, DefaultQuota: t.DefaultQuota, RPMLimit: t.RPMLimit,
 		})
 	}
 	return result

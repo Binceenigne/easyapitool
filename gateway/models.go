@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"math"
 	"net/http"
 	"slices"
 	"sort"
@@ -44,7 +45,8 @@ type imageFeatures struct {
 }
 
 type modelSettings struct {
-	Tiers                 []featureTier                  `json:"tiers,omitempty"`
+	Tiers                 []featureTier                  `json:"tiers"`
+	DefaultTierID         string                         `json:"defaultTierId"`
 	Tier                  *featureTier                   `json:"tier,omitempty"`
 	Polish                modelPreset                    `json:"polish"`
 	Continuation          modelPreset                    `json:"continuation"`
@@ -210,8 +212,29 @@ func (g *gateway) saveModels(ctx context.Context, proposed modelSettings) (*mode
 	g.modelMu.Lock()
 	defer g.modelMu.Unlock()
 	current := g.appModels()
+	prepared, err := prepareModels(current, proposed)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.validateTierAssignments(ctx, &prepared); err != nil {
+		return nil, err
+	}
+	if err := writeModels(ctx, g.store.db, &prepared); err != nil {
+		return nil, err
+	}
+	g.modelProfile.Store(&prepared)
+	if g.onModelsChange != nil {
+		g.onModelsChange(prepared.Revision)
+	}
+	return &prepared, nil
+}
+
+func prepareModels(current *modelSettings, proposed modelSettings) (modelSettings, error) {
 	if proposed.Revision != current.Revision {
-		return nil, errModelsChanged
+		return modelSettings{}, errModelsChanged
+	}
+	if current.Revision == math.MaxInt64 {
+		return modelSettings{}, errModelsStorage
 	}
 	if proposed.ReasoningModes == nil {
 		proposed.ReasoningModes = current.ReasoningModes
@@ -221,33 +244,31 @@ func (g *gateway) saveModels(ctx context.Context, proposed modelSettings) (*mode
 	}
 	proposed.ensureTiers()
 	if err := validateTiers(proposed.Tiers); err != nil {
-		return nil, err
-	}
-	if err := g.validateTierAssignments(ctx, &proposed); err != nil {
-		return nil, err
+		return modelSettings{}, err
 	}
 	proposed.Tiers = sortedTiers(proposed.Tiers)
+	proposed.DefaultTierID = proposed.defaultTierID()
 	proposed.Tier = nil
 	proposed.Polish, proposed.Continuation = modelPreset{}, modelPreset{}
 	if err := proposed.validate(); err != nil {
-		return nil, err
+		return modelSettings{}, err
 	}
 	proposed.applyCapabilities()
 	proposed.Revision++
+	return proposed, nil
+}
+
+func writeModels(ctx context.Context, db contextExecer, proposed *modelSettings) error {
 	data, err := json.Marshal(proposed)
 	if err != nil {
-		return nil, err
+		return errModelsStorage
 	}
-	_, err = g.store.db.ExecContext(ctx, `INSERT INTO gateway_settings(name,value) VALUES ('models',?)
+	_, err = db.ExecContext(ctx, `INSERT INTO gateway_settings(name,value) VALUES ('models',?)
 		ON CONFLICT(name) DO UPDATE SET value=excluded.value`, data)
 	if err != nil {
-		return nil, errModelsStorage
+		return errModelsStorage
 	}
-	g.modelProfile.Store(&proposed)
-	if g.onModelsChange != nil {
-		g.onModelsChange(proposed.Revision)
-	}
-	return &proposed, nil
+	return nil
 }
 
 var errModelsChanged = errors.New("模型配置已更新，请刷新页面后重试")

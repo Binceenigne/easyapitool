@@ -357,7 +357,7 @@ func (k mobileKey) state() object {
 		masked = k.Value[:4] + "..." + k.Value[len(k.Value)-4:]
 	}
 	return object{"id": k.KeyID, "name": k.Name, "value": masked, "baseUrl": k.BaseURL, "status": status,
-		"serverQuota": payload["serverQuota"], "rates": payload["rates"], "quotaEvents": payload["quotaEvents"], "quotaRevision": payload["quotaRevision"], "quotaSeverity": quota["severity"], "quotaPercent": quota["remainingPercent"], "quotaLimitChange": asObject(payload["_limit_changes"])["quota"], "mode": payload["mode"], "planName": payload["planName"], "expireDateStr": expires, "expireTimestamp": expiresAt,
+		"serverQuota": payload["serverQuota"], "rates": payload["rates"], "rateLimit": payload["rateLimit"], "quotaEvents": payload["quotaEvents"], "quotaRevision": payload["quotaRevision"], "quotaSeverity": quota["severity"], "quotaPercent": quota["remainingPercent"], "quotaLimitChange": asObject(payload["_limit_changes"])["quota"], "mode": payload["mode"], "planName": payload["planName"], "expireDateStr": expires, "expireTimestamp": expiresAt,
 		"totalQuota": limit, "usedQuota": used, "remainingQuota": remaining, "quotaUnit": payload["quotaUnit"],
 		"win5h": window("5h"), "win1d": window("1d"), "win7d": window("7d"),
 		"todayRequests": today["requests"], "totalRequests": total["requests"], "todayCost": today["cost"], "totalCost": total["cost"],

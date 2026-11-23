@@ -43,6 +43,7 @@
       ['每日额度',tier=>amount(quota(tier).dayMicroUSD)],
       ['7 天额度',tier=>amount(quota(tier).weekMicroUSD)],
       ['有效期',tier=>validity(quota(tier).expiresInDays)],
+      ['RPM（语言 + 图像）',tier=>Number(tier.rpmLimit)>0?number(tier.rpmLimit)+' 次/分钟':'不限'],
       ['最大分辨率',tier=>displayResolution(tier)+' · '+number(tier.maxResolution)+' px'],
       ['每次生成张数',tier=>'最多 '+number(tier.maxImages)+' 张'],
       ['参考图上限',tier=>tier.imageEditing?'最多 '+number(tier.maxReferences)+' 张':'未开放'],
@@ -107,7 +108,7 @@
     const visible=$('landing-tier-enabled'); visible.checked=pendingVisibility ?? current.enabled;visible.disabled=pending || !hasSnapshot || !current.tiers.length;
     visible.title=hasSnapshot&&current.tiers.length?'只切换已同步内容的显示状态':'请先选择档位并同步到落地页';
     $('landing-tier-selection').disabled=pending;
-    const selectAll=$('landing-tier-select-all');selectAll.checked=catalog.length>0&&draftIds.size===catalog.length;selectAll.indeterminate=draftIds.size>0&&draftIds.size<catalog.length;
+    const selectAll=$('landing-tier-select-all');selectAll.disabled=!catalog.length;selectAll.checked=catalog.length>0&&draftIds.size===catalog.length;selectAll.indeterminate=draftIds.size>0&&draftIds.size<catalog.length;
     $('landing-tier-count').textContent=draftIds.size+' / '+catalog.length;
     const sync=$('landing-tier-sync');sync.disabled=pending || !draftIds.size || !dirty;sync.querySelector('span').textContent=pending?'正在保存…':'同步到落地页';
     sync.title=!draftIds.size?'请至少选择一个要公开的档位':!dirty?'所选档位已同步':'';

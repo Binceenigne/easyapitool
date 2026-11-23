@@ -6,11 +6,11 @@
   <meta name="theme-color" content="#f7f7ff">
   <title>Mirra · 分发网关</title>
   <link rel="icon" href="/mirra.png">
-  <link rel="stylesheet" href="/admin.css?v=tier-defaults-1">
-  <script src="/admin.js?v=tier-defaults-1" defer></script>
-  <script src="/admin-models.js?v=tier-defaults-1" defer></script>
-  <script src="/admin/assets/admin-tiers.js?v=tier-defaults-1" defer></script>
-  <script src="/admin/assets/admin-tier-publish.js?v=tier-defaults-1" defer></script>
+  <link rel="stylesheet" href="/admin.css?v=tier-delete-rpm-1">
+  <script src="/admin.js?v=tier-delete-rpm-1" defer></script>
+  <script src="/admin-models.js?v=tier-delete-rpm-1" defer></script>
+  <script src="/admin/assets/admin-tiers.js?v=tier-delete-rpm-1" defer></script>
+  <script src="/admin/assets/admin-tier-publish.js?v=tier-delete-rpm-1" defer></script>
 </head>
 <body>
   <main id="auth" class="auth">
@@ -296,6 +296,7 @@
         </div>
       </section>
       <div id="tier-permissions" class="tier-permission-groups"></div>
+      <section class="tier-runtime-rate" aria-labelledby="tier-rpm-title"><h3 id="tier-rpm-title">实时请求限制</h3><label>RPM（语言 + 图像）<input type="number" name="rpmLimit" min="0" max="1000000" step="1" value="0" required aria-describedby="tier-rpm-hint"></label><p id="tier-rpm-hint" class="hint">每把密钥在最近 60 秒内可调用模型的次数，语言与图像模型共享。一次生成可能包含多次思维分析或生图调用，润色与续作中的模型调用也计入；用量、状态和配置查询不计入。0 表示不限，修改后实时生效。</p></section>
       <section class="tier-limits"><h3>生成上限</h3><div class="pair">
         <label>最大分辨率<select name="maxResolution"><option value="1536">标清 · 最长边 1536 px</option><option value="2560">高清 · 最长边 2560 px</option><option value="3840">超清 · 最长边 3840 px</option></select></label>
         <label>每次最多生成<input type="number" name="maxImages" min="1" max="9" required></label>
@@ -309,7 +310,7 @@
   </form></dialog>
   <dialog id="delete-key-dialog" aria-labelledby="delete-key-title"><form id="delete-key-form" class="editor">
     <header><h2 id="delete-key-title">删除分发密钥</h2><button type="button" class="icon-button" data-close aria-label="关闭"><i data-icon="X"></i></button></header>
-    <div class="editor-body"><p id="delete-key-name"></p><p id="delete-key-note" class="hint">删除后立即停止该密钥的新请求，历史用量回执保留。</p><p class="error" role="alert" hidden></p></div>
+    <div class="editor-body"><p id="delete-key-name"></p><p id="delete-key-note" class="hint">删除后立即停止该密钥的新请求，历史用量回执保留。</p><div id="delete-tier-replacement" class="form-body" hidden><label>替代功能档位<select id="delete-tier-replacement-select" name="replacementTierId" disabled></select></label><p class="hint">迁移只更新功能权限，不会套用替代档位的默认额度。四类费用额度、已用金额、有效期与 IP 白名单保持不变，不会删除密钥。</p><div id="delete-tier-replacement-summary" class="tier-assignment-summary" hidden></div></div><p id="delete-tier-snapshot-note" class="hint" hidden>已发布的落地页快照保持不变。删除后如需更新公开内容，请手动同步或关闭落地页展示。</p><p class="error" role="alert" hidden></p></div>
     <footer><button type="button" data-close>取消</button><button id="delete-key-confirm" type="submit" class="danger">删除密钥</button></footer>
   </form></dialog>
 </body>

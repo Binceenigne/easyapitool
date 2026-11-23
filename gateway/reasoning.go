@@ -58,6 +58,10 @@ func (m *mobile) polish(w http.ResponseWriter, r *http.Request, owner string) {
 	input.Options["reasoningMode"] = "polish"
 	prompt, _, _, err := m.g.rewrite(r.Context(), selected, model, effort, input.Prompt, false, input.Options)
 	if err != nil {
+		if rpmFailure(err) != nil {
+			m.g.proxyError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, object{"ok": false, "error": err.Error()})
 		return
 	}

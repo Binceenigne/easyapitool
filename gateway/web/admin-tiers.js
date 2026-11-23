@@ -9,8 +9,11 @@
   const tiers = () => state?.appModels?.tiers || [];
   const all = (values, value) => (values || []).includes('*') || (values || []).includes(value);
   const labels = values => values.map(([v,label]) => [v,label]);
-  const tierFor = key => tiers().find(t => t.id === (key?.policy?.tierId || 'default'));
-  const bindingCount = id => state.keys.filter(k => (k.policy.tierId || 'default') === id).length;
+  const defaultTierId = () => state?.appModels?.defaultTierId || '';
+  const tierFor = key => tiers().find(t => t.id === (key?.policy?.tierId || defaultTierId()));
+  const bindingCount = id => (state?.keys || []).filter(k => (k.policy?.tierId || defaultTierId()) === id).length;
+  const fullTierBaseline = () => ({id:'',name:'',description:'',imageModels:['*'],reasoningModels:['*'],reasoningModes:['*'],reasoningEfforts:['*'],qualities:['*'],complexities:['*'],formats:['*'],advanced:true,transparency:true,webSearch:true,promptPolish:true,imageEditing:true,rpmLimit:0,maxResolution:3840,maxImages:9,maxReferences:16,maxGifFrames:16,defaultQuota:{expiresInDays:0,totalMicroUSD:0,fiveHourMicroUSD:0,dayMicroUSD:0,weekMicroUSD:0}});
+  const rpmName = t => Number(t.rpmLimit)>0 ? number(t.rpmLimit)+' 次/分钟' : '不限';
   const limitName = t => ({1536:'标清',2560:'高清',3840:'超清'}[t.maxResolution] || '—');
   const allowedText = (list, catalog) => (list || []).includes('*') ? '全部' : (list || []).length ? list.map(v => catalog?.find(([id]) => id === v)?.[1] || v).join('、') : '未开放';
   const quotaFields = [['totalUsd','totalMicroUSD'],['fiveHourUsd','fiveHourMicroUSD'],['dayUsd','dayMicroUSD'],['weekUsd','weekMicroUSD']];
@@ -65,6 +68,7 @@
     if (all(t.formats,'gif')) tags.append(status('GIF · '+t.maxGifFrames+' 帧'));
     if (t.transparency) tags.append(status('透明背景'));
     if (t.advanced) tags.append(status('高级思维'));
+    tags.append(status('RPM · '+rpmName(t)));
     target.append(tags);
   }
 
@@ -72,7 +76,8 @@
   window.prepareKeyTier = key => {
     const select = $('key-tier-select');
     select.replaceChildren(...tiers().map(t => new Option(t.name,t.id)));
-    select.value = key?.policy?.tierId || 'default';
+    const requested=key?.policy?.tierId || defaultTierId();
+    select.value = tiers().some(t=>t.id===requested) ? requested : defaultTierId();
     keyManualDraft = null; $('key-use-tier-defaults').checked = !key;
     summary(tiers().find(t => t.id === select.value),$('key-tier-summary'));
   };
@@ -104,7 +109,7 @@
       const checked = [...group.querySelectorAll('input:checked')].map(input => input.value);
       t[group.dataset.permissionGroup] = checked.includes('*') ? ['*'] : checked;
     }
-    for (const name of ['maxResolution','maxImages','maxReferences','maxGifFrames']) t[name] = Number(f[name].value);
+    for (const name of ['maxResolution','maxImages','maxReferences','maxGifFrames','rpmLimit']) t[name] = Number(f[name].value);
     for (const [name] of switches) t[name] = f[name].checked;
     t.defaultQuota = {expiresInDays:Number(f.defaultExpiresInDays.value)};
     for (const [field,prop] of defaultFields) t.defaultQuota[prop] = Math.round(Number(f[field].value || 0)*1e6);
@@ -120,8 +125,7 @@
   }
 
   function openTier(t = null, duplicate = false) {
-    const baseline = tiers().find(t => t.id === 'default');
-    const value = structuredClone(t || baseline);
+    const value = structuredClone(t || fullTierBaseline());
     editing = t && !duplicate ? t : null; revision = state.appModels.revision;
     if (!t) { value.name = ''; value.description = ''; }
     if (duplicate) value.name += ' · 副本';
@@ -147,16 +151,17 @@
       const input = node('input'); input.name = name; input.type = 'checkbox'; input.setAttribute('role','switch'); input.checked = !!value[name];
       row.append(words,input); return row;
     }));
-    for (const name of ['maxResolution','maxImages','maxReferences','maxGifFrames']) f[name].value = value[name];
+    for (const name of ['maxResolution','maxImages','maxReferences','maxGifFrames','rpmLimit']) f[name].value = value[name] ?? 0;
     updateSummary(); openDialog('tier-dialog');
   }
 
   function comparison() {
     const plans = tiers(), query = $('tier-feature-search').value.trim().toLowerCase();
+    if (!plans.length) { $('tier-comparison').replaceChildren(empty('Layers3','尚无功能档位','创建功能档位后，可在这里横向对比额度与权限。',action('新建档位',()=>openTier(),'Plus'))); return; }
     const definitions = [
       ['说明',t => t.description || '—'],['默认有效期',t => validity(quotaDefaults(t).expiresInDays)],
       ['默认总创作额度',t => quotaAmount(quotaDefaults(t).totalMicroUSD)],['默认 5 小时额度',t => quotaAmount(quotaDefaults(t).fiveHourMicroUSD)],
-      ['默认每日额度',t => quotaAmount(quotaDefaults(t).dayMicroUSD)],['默认 7 天额度',t => quotaAmount(quotaDefaults(t).weekMicroUSD)],['生图模型',t => allowedText(t.imageModels)],['思维模型',t => allowedText(t.reasoningModels)],
+      ['默认每日额度',t => quotaAmount(quotaDefaults(t).dayMicroUSD)],['默认 7 天额度',t => quotaAmount(quotaDefaults(t).weekMicroUSD)],['RPM（语言 + 图像）',rpmName],['生图模型',t => allowedText(t.imageModels)],['思维模型',t => allowedText(t.reasoningModels)],
       ['思维深度预设',t => allowedText(t.reasoningModes,modes)],['模型思考深度',t => allowedText(t.reasoningEfforts,efforts)],
       ['高级模式',t => t.advanced],['SVG 矢量输出',t => all(t.formats,'svg')],['GIF 动图',t => all(t.formats,'gif')],
       ['透明背景',t => t.transparency],['最大分辨率',t => limitName(t)+' · '+t.maxResolution+' px'],
@@ -168,7 +173,7 @@
     const header = grid.createTHead().insertRow(); header.append(node('th','','功能权限'));
     plans.forEach((t,index) => {
       const cell = node('th'), box = node('div','tier-column-title'); cell.scope = 'col';
-      box.append(node('small','caption','档位 '+(index+1)),node('strong','',t.name),action('编辑',()=>openTier(t)));
+      box.append(node('small','caption','档位 '+(index+1)),node('strong','',t.name),actions(action('编辑',()=>openTier(t)),tierDeleteAction(t)));
       cell.append(box); header.append(cell);
     });
     const body = grid.createTBody(); let count = 0;
@@ -184,14 +189,62 @@
     if (!count) $('tier-comparison').append(empty('Search','没有匹配的差异','可关闭“只看不同项”或更换搜索词。'));
   }
 
+  function resetTierDeletion() {
+    $('delete-tier-replacement').hidden=true;
+    $('delete-tier-snapshot-note').hidden=true;
+    $('delete-tier-replacement-summary').hidden=true;
+    const select=$('delete-tier-replacement-select');select.replaceChildren();select.required=false;select.disabled=true;
+    $('delete-key-confirm').disabled=false;
+  }
+
+  window.syncTierDeleteButton = () => {
+    if (!deleting?.tier) return;
+    const count=bindingCount(deleting.tier.id), select=$('delete-tier-replacement-select');
+    const valid=tiers().some(t=>t.id===select.value && t.id!==deleting.tier.id);
+    $('delete-key-confirm').disabled=$('delete-key-form').dataset.pending==='true' || count>0&&!valid;
+  };
+
+  function confirmDeleteTier(tier) {
+    resetTierDeletion();deleting={tier,revision:state.appModels.revision};
+    const count=bindingCount(tier.id), replacements=tiers().filter(t=>t.id!==tier.id);
+    $('delete-key-title').textContent='删除功能档位';$('delete-key-name').textContent='删除“'+tier.name+'”？';
+    $('delete-key-note').textContent=count ? replacements.length
+      ? '此档位绑定 '+count+' 把密钥。请选择替代档位，迁移这些密钥后再删除。'
+      : '此档位绑定 '+count+' 把密钥，当前没有其它档位可承接。请先创建替代档位，或先处理绑定的密钥，再重试删除。'
+      : '此档位未绑定密钥，删除后可重新创建功能档位。';
+    $('delete-tier-snapshot-note').hidden=false;
+    $('delete-key-confirm').textContent=count?'迁移并删除档位':'删除档位';
+    if (count) {
+      $('delete-tier-replacement').hidden=false;
+      const select=$('delete-tier-replacement-select');
+      select.replaceChildren(new Option(replacements.length?'请选择替代档位':'暂无可迁移的档位',''),...replacements.map(t=>new Option(t.name,t.id)));
+      select.disabled=!replacements.length;select.required=!!replacements.length;
+    }
+    window.syncTierDeleteButton();openDialog('delete-key-dialog');
+    if(count&&replacements.length)$('delete-tier-replacement-select').focus({preventScroll:true});
+  }
+
+  function tierDeleteAction(tier) {
+    const button=action('删除',()=>confirmDeleteTier(tier),'Trash2');
+    button.classList.add('danger-text');button.setAttribute('aria-label','删除档位 '+tier.name);return button;
+  }
+
+  $('delete-tier-replacement-select').addEventListener('change',event=>{
+    const tier=tiers().find(t=>t.id===event.target.value);
+    $('delete-tier-replacement-summary').hidden=!tier;
+    summary(tier,$('delete-tier-replacement-summary'));
+    window.syncTierDeleteButton();
+  });
+
+  window.createTierForKey=()=>openTier();
   window.renderTiers = () => {
-    if (!state || !tiers().length) return;
-    $('tier-list').replaceChildren(table(['档位','能力范围','绑定密钥','操作'],tiers().map(t => {
-      const capabilities = node('div','tier-tags');capabilities.append(status(limitName(t)),status(t.advanced?'高级思维':'预设思维'),status(all(t.formats,'gif')?'含 GIF':'静态输出'));
-      const buttons = actions(action('编辑',()=>openTier(t)),action('复制',()=>openTier(t,true)));
-      if (t.id !== 'default') { const del = action('删除',()=>{ deleting={tier:t,revision:state.appModels.revision};$('delete-key-title').textContent='删除功能档位';$('delete-key-name').textContent='删除“'+t.name+'”？';$('delete-key-note').textContent='该档位未绑定密钥，删除后可重新创建。';$('delete-key-confirm').textContent='删除档位';openDialog('delete-key-dialog'); });del.classList.add('danger-text');del.disabled = bindingCount(t.id)>0;del.title = del.disabled?'请先为绑定的密钥选择其他档位':'';buttons.append(del); }
+    if (!state) return;
+    if (tiers().length) $('tier-list').replaceChildren(table(['档位','能力范围','绑定密钥','操作'],tiers().map(t => {
+      const capabilities = node('div','tier-tags');capabilities.append(status(limitName(t)),status(t.advanced?'高级思维':'预设思维'),status(all(t.formats,'gif')?'含 GIF':'静态输出'),status('RPM · '+rpmName(t)));
+      const buttons=actions(action('编辑',()=>openTier(t)),action('复制',()=>openTier(t,true)),tierDeleteAction(t));
       return [stacked(t.name,t.description),capabilities,bindingCount(t.id)+' 把',buttons];
     })));
+    else $('tier-list').replaceChildren(empty('Layers3','尚无功能档位','先创建档位，再为分发密钥分配额度与功能权限。',action('新建档位',()=>openTier(),'Plus')));
     comparison();
     window.renderLandingTierSettings?.();
   };
@@ -201,8 +254,16 @@
     $('secret-title').textContent = key.name+' · 完整密钥'; $('secret').value = result.secret;
     $('secret-note').textContent = '仅管理员可查看此值，服务端加密保存。'; openDialog('secret-dialog');
   };
-  window.confirmDeleteDistributedKey = key => { deleting = {key,revision:state.usage[key.id].quotaRevision};$('delete-key-title').textContent='删除分发密钥';$('delete-key-confirm').textContent='删除密钥';$('delete-key-note').textContent='删除后立即停止该密钥的新请求，历史用量回执保留。';$('delete-key-name').textContent = '删除“'+key.name+'”（'+key.prefix+'…）？';openDialog('delete-key-dialog'); };
-  submit('delete-key-form',async()=>{if(deleting.tier){await api('tiers',{tier:{id:deleting.tier.id},delete:true,revision:deleting.revision});}else{await api('keys/'+encodeURIComponent(deleting.key.id)+'/delete',{revision:deleting.revision});}$('delete-key-dialog').close();await afterSave(deleting.tier?'档位已删除':'密钥已删除');});
+  window.confirmDeleteDistributedKey = key => { resetTierDeletion();deleting = {key,revision:state.usage[key.id].quotaRevision};$('delete-key-title').textContent='删除分发密钥';$('delete-key-confirm').textContent='删除密钥';$('delete-key-note').textContent='删除后立即停止该密钥的新请求，历史用量回执保留。';$('delete-key-name').textContent = '删除“'+key.name+'”（'+key.prefix+'…）？';openDialog('delete-key-dialog'); };
+  submit('delete-key-form',async()=>{
+    const target=deleting;
+    if(target.tier){
+      const replacement=$('delete-tier-replacement-select').value;
+      if(bindingCount(target.tier.id)>0&&!tiers().some(t=>t.id===replacement&&t.id!==target.tier.id)) throw new Error('请选择其它功能档位承接绑定的密钥；没有可用档位时，请先新建替代档位或处理绑定。');
+      await api('tiers',{tier:{id:target.tier.id},delete:true,revision:target.revision,replacementTierId:replacement});
+    }else await api('keys/'+encodeURIComponent(target.key.id)+'/delete',{revision:target.revision});
+    $('delete-key-dialog').close();await afterSave(target.tier?'档位已删除；绑定密钥仅迁移权限，已发布快照保持不变。':'密钥已删除');
+  });
   submit('tier-form',async()=>{await api('tiers',{tier:readTier(),revision});$('tier-dialog').close();await afterSave('档位已保存。权限立即生效，默认额度不会修改现有密钥。');});
   $('tier-expiry-presets').addEventListener('click',event=>{
     const button=event.target.closest('[data-expiry-days]'); if(!button)return;

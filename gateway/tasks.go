@@ -57,10 +57,11 @@ func (m *mobile) createGeneration(w http.ResponseWriter, r *http.Request, owner 
 		return
 	}
 	var settings *modelSettings
+	var selected route
 	if m.g.managedKey(key) {
-		selected, routeErr := m.resolveKey(r.Context(), key, m.g.clientIP(r), false)
-		if routeErr != nil {
-			m.g.proxyError(w, routeErr)
+		selected, err = m.resolveKey(r.Context(), key, m.g.clientIP(r), false)
+		if err != nil {
+			m.g.proxyError(w, err)
 			return
 		}
 		settings, err = m.g.modelsForKey(selected.key)
@@ -75,11 +76,6 @@ func (m *mobile) createGeneration(w http.ResponseWriter, r *http.Request, owner 
 		return
 	}
 	if settings != nil {
-		selected, routeErr := m.resolveKey(r.Context(), key, m.g.clientIP(r), false)
-		if routeErr != nil {
-			m.g.proxyError(w, routeErr)
-			return
-		}
 		if err := m.g.checkImageTier(selected.key, options, len(req.ReferenceIDs)); err != nil {
 			m.g.proxyError(w, err)
 			return
@@ -89,6 +85,23 @@ func (m *mobile) createGeneration(w http.ResponseWriter, r *http.Request, owner 
 	payload, _ := json.Marshal(req)
 	fingerprint := sha256.Sum256(payload)
 	jobID := credentialID{owner, id}
+	m.mu.Lock()
+	existing := m.tasks[jobID]
+	m.mu.Unlock()
+	if existing != nil {
+		if existing.fingerprint != fingerprint {
+			jsonError(w, http.StatusConflict, "任务编号已被使用")
+		} else {
+			writeJSON(w, http.StatusOK, object{"ok": true, "requestId": id, "status": "queued"})
+		}
+		return
+	}
+	if settings != nil {
+		if err := m.g.checkRPM(r.Context(), selected); err != nil {
+			m.g.proxyError(w, err)
+			return
+		}
+	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.mu.Lock()
 	if existing := m.tasks[jobID]; existing != nil {
@@ -307,6 +320,7 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 		prompt, usage, err = m.preparePrompt(ctx, id, key, ip, req, settings)
 		if err != nil {
 			result["error"] = err.Error()
+			attachRPMFailure(result, err)
 			result["items"] = failedItems(opts.n, err.Error())
 			return
 		}
@@ -319,7 +333,11 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 		if err != nil {
 			item = object{"ok": false, "itemIndex": i, "error": err.Error()}
 			result["error"] = err.Error()
-			m.publish(id, object{"type": "item_failed", "itemIndex": i, "error": err.Error()}, false)
+			attachRPMFailure(result, err)
+			attachRPMFailure(item, err)
+			failure := object{"type": "item_failed", "itemIndex": i, "error": err.Error()}
+			attachRPMFailure(failure, err)
+			m.publish(id, failure, false)
 		} else {
 			result["ok"] = true
 			m.publish(id, object{"type": "item_completed", "itemIndex": i, "result": item}, false)

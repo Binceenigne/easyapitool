@@ -32,6 +32,7 @@ type featureTier struct {
 	MaxReferences    int              `json:"maxReferences"`
 	MaxGIFFrames     int              `json:"maxGifFrames"`
 	DefaultQuota     tierDefaultQuota `json:"defaultQuota"`
+	RPMLimit         perMinuteLimit   `json:"rpmLimit"`
 }
 
 func fullTier() featureTier {
@@ -41,11 +42,26 @@ func fullTier() featureTier {
 		WebSearch: true, PromptPolish: true, ImageEditing: true, MaxResolution: 3840, MaxImages: 9, MaxReferences: 16, MaxGIFFrames: 16}
 }
 
-func tierID(k accessKey) string {
+func (s *modelSettings) keyTierID(k accessKey) string {
 	if k.Policy.TierID != "" {
 		return k.Policy.TierID
 	}
-	return "default"
+	return s.defaultTierID()
+}
+
+func (s *modelSettings) defaultTierID() string {
+	if s.Tiers == nil {
+		return "default"
+	}
+	for _, tier := range s.Tiers {
+		if tier.ID == "default" {
+			return tier.ID
+		}
+	}
+	if len(s.Tiers) == 0 {
+		return ""
+	}
+	return sortedTiers(s.Tiers)[0].ID
 }
 func permits(values []string, value string) bool {
 	return slices.Contains(values, "*") || slices.Contains(values, value)
@@ -64,10 +80,11 @@ func (s *modelSettings) ensureTiers() {
 	if s.Tiers == nil {
 		s.Tiers = []featureTier{fullTier()}
 	}
+	s.DefaultTierID = s.defaultTierID()
 }
 func (s *modelSettings) tier(id string) (featureTier, bool) {
 	if id == "" {
-		id = "default"
+		id = s.defaultTierID()
 	}
 	if s.Tiers == nil && id == "default" {
 		return fullTier(), true
@@ -86,6 +103,9 @@ func validateTier(t featureTier) error {
 	}
 	if err := t.DefaultQuota.validate(); err != nil {
 		return err
+	}
+	if t.RPMLimit < 0 || t.RPMLimit > 1_000_000 {
+		return errors.New("RPM 须为 0 至 1000000 的整数，0 表示不限")
 	}
 	for _, list := range [][]string{t.ImageModels, t.ReasoningModels, t.ReasoningModes, t.ReasoningEfforts, t.Qualities, t.Complexities, t.Formats} {
 		if len(list) > 128 {
@@ -122,8 +142,8 @@ func validateTier(t featureTier) error {
 }
 
 func validateTiers(tiers []featureTier) error {
-	if len(tiers) == 0 || len(tiers) > 64 {
-		return errors.New("请保留 1 至 64 个功能档位")
+	if len(tiers) > 64 {
+		return errors.New("最多支持 64 个功能档位")
 	}
 	seen := map[string]bool{}
 	for _, t := range tiers {
@@ -134,9 +154,6 @@ func validateTiers(tiers []featureTier) error {
 			return errors.New("档位标识重复")
 		}
 		seen[t.ID] = true
-	}
-	if !seen["default"] {
-		return errors.New("默认档位不能删除")
 	}
 	return nil
 }
@@ -167,6 +184,9 @@ func tierScore(t featureTier) int {
 }
 
 func sortedTiers(tiers []featureTier) []featureTier {
+	if len(tiers) == 0 {
+		return []featureTier{}
+	}
 	result := slices.Clone(tiers)
 	sort.SliceStable(result, func(i, j int) bool {
 		a, b := tierScore(result[i]), tierScore(result[j])
@@ -192,7 +212,7 @@ func presetPermitted(t featureTier, p modelPreset) bool {
 // The same profile is used for authorization and both clients' periodic updates.
 func (g *gateway) modelsForKey(k accessKey) (*modelSettings, error) {
 	current := g.appModels()
-	t, ok := current.tier(tierID(k))
+	t, ok := current.tier(current.keyTierID(k))
 	if !ok {
 		return nil, denied("此档位")
 	}
@@ -410,11 +430,21 @@ func (g *gateway) checkReasoningTier(k accessKey, model, effort, mode string, we
 
 func (a *admin) saveTier(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Tier     featureTier `json:"tier"`
-		Revision int64       `json:"revision"`
-		Delete   bool        `json:"delete"`
+		Tier              featureTier `json:"tier"`
+		Revision          int64       `json:"revision"`
+		Delete            bool        `json:"delete"`
+		ReplacementTierID string      `json:"replacementTierId"`
 	}
 	if !decodeRequest(w, r, 64<<10, &input) {
+		return
+	}
+	if input.Delete {
+		saved, err := a.gateway.deleteTier(r.Context(), input.Tier.ID, input.ReplacementTierID, input.Revision)
+		if err != nil {
+			tierMutationError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, saved)
 		return
 	}
 	profile := *a.gateway.appModels()
@@ -428,28 +458,14 @@ func (a *admin) saveTier(w http.ResponseWriter, r *http.Request) {
 	}
 	index := slices.IndexFunc(profile.Tiers, func(t featureTier) bool { return t.ID == input.Tier.ID })
 	profile.Tiers = slices.Clone(profile.Tiers)
-	if input.Delete {
-		if input.Tier.ID == "default" {
-			jsonError(w, 400, "默认档位不能删除")
-			return
-		}
-		if index < 0 {
-			jsonError(w, 404, "档位不存在")
-			return
-		}
-		profile.Tiers = slices.Delete(profile.Tiers, index, index+1)
-	} else if index < 0 {
+	if index < 0 {
 		profile.Tiers = append(profile.Tiers, input.Tier)
 	} else {
 		profile.Tiers[index] = input.Tier
 	}
 	saved, err := a.gateway.saveModels(r.Context(), profile)
 	if err != nil {
-		status := 400
-		if errors.Is(err, errModelsChanged) {
-			status = 409
-		}
-		jsonError(w, status, err.Error())
+		tierMutationError(w, err)
 		return
 	}
 	writeJSON(w, 200, saved)
@@ -460,10 +476,5 @@ func (g *gateway) validateTierAssignments(ctx context.Context, proposed *modelSe
 	if err != nil {
 		return err
 	}
-	for _, k := range keys {
-		if _, ok := proposed.tier(tierID(k)); !ok {
-			return errors.New("该档位仍绑定分发密钥，请先为密钥选择其他档位")
-		}
-	}
-	return nil
+	return validateTierKeyAssignments(g.appModels(), proposed, keys)
 }

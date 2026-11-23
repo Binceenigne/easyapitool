@@ -2,7 +2,7 @@ import { createIcons } from './icons.min.js';
 
 const style = document.createElement('link');
 style.rel = 'stylesheet';
-style.href = new URL('./tiers-v1.css?v=table-1', import.meta.url).href;
+style.href = new URL('./tiers-v1.css?v=table-rpm-1', import.meta.url).href;
 const styleReady = new Promise(resolve => {
   style.addEventListener('load', () => resolve(true), { once: true });
   style.addEventListener('error', () => resolve(false), { once: true });
@@ -37,6 +37,7 @@ const mainRows = [
   ['每日额度', '', t => fee(quota(t).dayMicroUSD)],
   ['7 天额度', '', t => fee(quota(t).weekMicroUSD)],
   ['有效期', '', t => validity(quota(t).expiresInDays)],
+  ['RPM（语言 + 图像）', '', t => t.rpmLimit > 0 ? `${Number(t.rpmLimit).toLocaleString('zh-CN')} 次 / 分钟` : '不限'],
   ['最高分辨率', 'scan-eye', resolution],
   ['每次生成', 'copy', t => `最多 ${t.maxImages} 张`],
   ['输出格式', 'play', t => choices(t.formats, labels.formats, 'PNG · JPEG · WebP · SVG · GIF')],
@@ -120,7 +121,7 @@ function render(payload) {
   const expandLabel = node('span', '', '展开完整能力对比'); expand.append(expandLabel, glyph('plus'));
   expand.addEventListener('click', () => { extra.hidden = !extra.hidden; expand.setAttribute('aria-expanded', String(!extra.hidden));
     expandLabel.textContent = extra.hidden ? '展开完整能力对比' : '收起完整能力对比'; });
-  const note = node('p', 'mirra-plans__note', '以上为档位默认值。额度按实际调用费用计算，签发密钥时可单独调整；实际权限与期限以所持密钥为准。');
+  const note = node('p', 'mirra-plans__note', '额度按实际调用费用计算，签发密钥时可单独调整。RPM 按每把密钥计算，语言与图像调用共享每分钟配额；实际权限与期限以所持密钥为准。');
   section.append(intro, tools, rail, expand, note);
   resizeObserver?.disconnect(); if (mounted) mounted.replaceWith(section); else anchor.before(section);
   mounted = section; signature = nextSignature; createIcons(); requestAnimationFrame(updateControls);

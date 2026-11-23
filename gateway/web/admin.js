@@ -65,6 +65,7 @@ async function runButton(button, handler) {
 }
 
 async function api(path, body) {
+  const requestLoadID=loadID;
   const options = {cache:'no-store', credentials:'same-origin'};
   if (body !== undefined) Object.assign(options, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
   let response;
@@ -72,20 +73,21 @@ async function api(path, body) {
   catch { throw new Error('无法连接网关，请检查 SSH 隧道后重试'); }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    if (response.status === 401 && path !== 'login') showLogin();
+    if (response.status === 401 && path !== 'login' && requestLoadID===loadID) showLogin();
     throw new Error(data.detail || '网关返回 HTTP ' + response.status);
   }
   return data;
 }
 
 function showLogin() {
+  const resetLogin=state!==null || !$('app').hidden;
   loadID++;
   state = null;
   proxyDirty = false;
   window.resetModelSettings?.();
   window.resetLandingTierSettings?.();
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
-  document.querySelectorAll('form').forEach(f => f.reset());
+  document.querySelectorAll('form').forEach(f => { if(f.id!=='login'||resetLogin)f.reset(); });
   $('secret').value = '';
   $('pool-member-fields').replaceChildren();
   $('app').hidden = true;
@@ -256,13 +258,15 @@ function renderPools() {
 function renderKeys() {
   const q = $('key-search').value.trim().toLowerCase(), filter = $('key-filter').value;
   const keys = state.keys.filter(k=>(!filter || keyStatus(k)===filter) && [k.name,k.prefix].some(v=>v.toLowerCase().includes(q)));
-  const canIssue = state.upstreams.some(u=>u.enabled);
+  const hasTier=!!state.appModels?.tiers?.length;
+  const canIssue = state.upstreams.some(u=>u.enabled) && hasTier;
   $('new-key').disabled = !canIssue;
-  $('new-key').title = canIssue ? '' : '先添加并启用上游成员';
+  $('new-key').title = !hasTier ? '请先创建功能档位，再签发密钥' : canIssue ? '' : '先添加并启用上游成员';
   $('key-count').textContent = keys.length + ' 把';
   if (!keys.length) {
+    if(!hasTier){$('key-list').replaceChildren(empty('Layers3','请先创建功能档位','创建档位后，才能签发分发密钥。',action('创建功能档位',()=>window.createTierForKey?.()),true));return;}
     $('key-list').replaceChildren(q || filter ? empty('Search','没有匹配的密钥','可更改状态或搜索词。',null,true) :
-      empty('KeyRound','还没有分发密钥',canIssue ? '签发后可将密钥用于手机、桌面客户端或 SDK。' : '先创建号池并启用至少一个上游成员。',canIssue ? null : action('管理号池',()=>{location.hash='/pools';}),true));
+      empty('KeyRound','还没有分发密钥',!hasTier ? '请先创建功能档位，再签发分发密钥。' : canIssue ? '签发后可将密钥用于手机、桌面客户端或 SDK。' : '先创建号池并启用至少一个上游成员。',!hasTier ? action('创建功能档位',()=>window.createTierForKey?.()) : canIssue ? null : action('管理号池',()=>{location.hash='/pools';}),true));
     return;
   }
   const rows=keys.map(k=>{
@@ -399,6 +403,7 @@ function syncKey() {
   f.customKey.required=f.customOn.checked; f.ips.required=f.ipOn.checked; f.expiresAt.required=f.expiryOn.checked;
 }
 function openKey(k=null) {
+  if (!state?.appModels?.tiers?.length) { tell('请先创建功能档位，再签发密钥。','error'); location.hash='/models'; return; }
   editingKey=k; keyRevision=k?state.usage[k.id].quotaRevision:0; const form=$('key-form'), f=form.elements; form.reset();
   const choices=[];
   for(const group of groups()) {
@@ -441,7 +446,7 @@ function submit(id, handler) {
     const button=form.querySelector('button[type=submit]');button.disabled=true;formError(form);
     try { await handler(form); }
     catch(error) { formError(form,error.message); }
-    finally { delete form.dataset.pending;button.disabled=false; }
+    finally { delete form.dataset.pending;button.disabled=false;if(id==='delete-key-form')window.syncTierDeleteButton?.(); }
   });
 }
 
@@ -476,6 +481,7 @@ submit('member-form',async form=>{
 });
 submit('key-form',async form=>{
   const f=form.elements;
+  if(!state.appModels?.tiers?.some(t=>t.id===f.tierId.value))throw new Error('请先创建并选择有效的功能档位。');
   const micro=field=>f.usdOn.checked?Math.round(Number(f[field].value||0)*1e6):0;
   let end=null;
   if(f.expiryOn.checked)end=editingKey?.policy.expiresAt && f.expiresAt.value===localDate(new Date(editingKey.policy.expiresAt)) ? editingKey.policy.expiresAt : new Date(f.expiresAt.value).toISOString();

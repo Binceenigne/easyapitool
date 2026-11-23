@@ -79,7 +79,13 @@ func jsonError(w http.ResponseWriter, status int, message string) {
 func (g *gateway) proxyError(w http.ResponseWriter, err error) {
 	status, code, message := http.StatusServiceUnavailable, "gateway_unavailable", "网关暂时不可用"
 	var limited *quotaError
+	var rpm *rpmError
 	switch {
+	case errors.As(err, &rpm):
+		w.Header().Set("Retry-After", strconv.Itoa(rpm.retryAfter()))
+		writeJSON(w, http.StatusTooManyRequests, object{"error": object{"type": "rate_limit_exceeded", "code": "rpm_limit_exceeded",
+			"message": rpm.Error(), "rateLimit": rpm.state.view()}, "rateLimit": rpm.state.view()})
+		return
 	case errors.Is(err, errInvalidKey):
 		status, code, message = http.StatusUnauthorized, "invalid_api_key", errInvalidKey.Error()
 	case errors.Is(err, errKeyIP):

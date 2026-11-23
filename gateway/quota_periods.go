@@ -247,7 +247,7 @@ func (s *store) changeKey(ctx context.Context, id string, updated *accessKey, re
 	if updated != nil {
 		sameExpiry := k.Policy.ExpiresAt == nil && updated.Policy.ExpiresAt == nil ||
 			k.Policy.ExpiresAt != nil && updated.Policy.ExpiresAt != nil && k.Policy.ExpiresAt.Equal(*updated.Policy.ExpiresAt)
-		if tierID(k) != tierID(*updated) {
+		if k.Policy.TierID != updated.Policy.TierID {
 			if err := quotaEvent(ctx, tx, id, "tier_changed", "permissions", 0, 0, now); err != nil {
 				return nil, err
 			}

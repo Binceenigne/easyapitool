@@ -121,6 +121,15 @@ func TestImageConnectionRetryNeverReplaysSubmittedPost(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			g := testGateway(t)
+			setTestRPM(t, g, 1)
+			account := addUpstream(t, g, "retry-rpm", "", openAIBaseURL)
+			key, _ := issue(t, g, accessKey{Name: "retry", Upstream: account.ID})
+			selected := route{key: key, upstream: account}
+			reservation, err := g.reserve(ctx, selected)
+			if err != nil {
+				t.Fatal(err)
+			}
 			res, err := (&http.Client{Transport: transport, Timeout: 5 * time.Second}).Do(req)
 			if res != nil {
 				io.Copy(io.Discard, res.Body)
@@ -137,6 +146,19 @@ func TestImageConnectionRetryNeverReplaysSubmittedPost(t *testing.T) {
 			}
 			if upload.closed.Load() != 1 {
 				t.Fatalf("streaming body close count=%d", upload.closed.Load())
+			}
+			status := http.StatusBadGateway
+			if res != nil {
+				status = res.StatusCode
+			}
+			g.recordPriced(reservation, status, unsentImageUsage(err), "", false)
+			var admissions int
+			g.store.db.QueryRow("SELECT COUNT(*) FROM requests WHERE key_id=?", key.ID).Scan(&admissions)
+			if admissions != 1 {
+				t.Fatal("safe transport retry produced duplicate RPM or billing admissions")
+			}
+			if _, next := g.reserve(t.Context(), selected); rpmFailure(next) == nil {
+				t.Fatal("one logical transport attempt did not consume exactly one RPM slot")
 			}
 		})
 	}
