@@ -31,6 +31,24 @@ final class DirectImageApi {
 
     private DirectImageApi() {}
 
+    static String certificateFailureCause(Throwable failure) {
+        // Inspect a bounded cause chain; an ordinary TLS disconnect is still a transient network failure.
+        for (int depth = 0; failure != null && depth < 8; depth++, failure = failure.getCause()) {
+            String message = failure.getMessage();
+            String detail = failure.getClass().getSimpleName() + (message == null ? "" : ": " + message);
+            boolean certificate = failure instanceof java.security.cert.CertificateException
+                || failure instanceof java.security.cert.CertPathValidatorException
+                || failure instanceof javax.net.ssl.SSLPeerUnverifiedException;
+            if (failure instanceof javax.net.ssl.SSLHandshakeException) {
+                certificate |= detail.toLowerCase(java.util.Locale.ROOT).matches(
+                    "(?s).*(certificate|certpath|cert_path|pkix|trust anchor|hostname|subject alternative|unknown_ca|bad_certificate).*"
+                );
+            }
+            if (certificate) return detail.substring(0, Math.min(detail.length(), 800));
+        }
+        return "";
+    }
+
     static String redact(String value, String secret) {
         String clean = value == null ? "" : value;
         if (secret != null && !secret.isEmpty()) clean = clean.replace(secret, "[API Key]");

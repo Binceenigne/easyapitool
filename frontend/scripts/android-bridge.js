@@ -961,7 +961,7 @@
         const code = directSafeMessage(source.code || failure?.code || (status ? `http_${status}`
             : /Connection|Timeout/i.test(failure?.name || '') ? 'network_error' : 'request_failed'));
         const cancelled = failure?.name === 'AbortError' || code === 'cancelled';
-        const terminal = cancelled || /insufficient_quota|quota_exceeded|billing|usage_limit|rpm_limit|permission|content_filter|model_refusal|max_turns|guardrail|invalid_request|sdk_unavailable/i.test(code)
+        const terminal = cancelled || /tls_certificate_invalid|insufficient_quota|quota_exceeded|billing|usage_limit|rpm_limit|permission|content_filter|model_refusal|max_turns|guardrail|invalid_request|sdk_unavailable/i.test(code)
             || /MaxTurnsExceeded|ModelRefusal|UserError|Guardrail/.test(failure?.name || '')
             || /insufficient.quota|exceeded.your.current.quota|额度不足|余额不足|同一任务正在生成/i.test(cause);
         const network = /network_error|connection_error|timeout|ECONNRESET|ECONNREFUSED|ENETUNREACH|ETIMEDOUT/i.test(code)

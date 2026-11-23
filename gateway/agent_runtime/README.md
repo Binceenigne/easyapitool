@@ -4,7 +4,7 @@ OpenAI Agents SDK (`Agent`, `Runner`, `WebSearchTool`). It must never be publish
 through Nginx or listen outside loopback.
 
 Deploy the repository-root `mirra_agents/` package beside `agent_runtime/` in
-`/opt/imggen-agent-runtime/releases/sdk-1.2.4`, publish it through the
+`/opt/imggen-agent-runtime/releases/sdk-1.2.5`, publish it through the
 `/opt/imggen-agent-runtime/current` symlink, create the separate
 `/opt/imggen-agent-runtime/venv-sdk-0.25.0` virtualenv and install the shared
 package's pinned dependencies with `venv-sdk-0.25.0/bin/python -m pip install -r current/agent_runtime/requirements.txt`

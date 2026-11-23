@@ -464,9 +464,12 @@ public class AndroidStoragePlugin extends Plugin {
             } catch (Exception exception) {
                 String message = exception.getMessage();
                 if (message == null || message.isEmpty()) message = "请检查接口地址和设备网络";
+                String certificateCause = DirectImageApi.certificateFailureCause(exception);
+                if (!certificateCause.isEmpty() && !message.contains(certificateCause)) message += ": " + certificateCause;
                 message = DirectImageApi.redact(message, secret);
                 if (sdkTransport || "generate".equals(operation)) {
-                    String code = connection == null ? "invalid_request" : status >= 200 && status < 300 ? "invalid_response" : "network_error";
+                    String code = !certificateCause.isEmpty() ? "tls_certificate_invalid"
+                        : connection == null ? "invalid_request" : status >= 200 && status < 300 ? "invalid_response" : "network_error";
                     call.resolve(directFailure(sdkTransport ? "agent" : "image", code, message,
                         connection == null ? 400 : status, connection, secret));
                 } else {
