@@ -377,10 +377,6 @@
 
         function activeImageTier() { return activeImageProfile()?.tier || null; }
 
-        function imageCatalogModels(profile = activeImageProfile()) {
-            return profile?.catalog?.imageModels || availableImageModels(profile);
-        }
-
         function imageLockedItems(items, allowed, reason = '当前档位未开放') {
             return items.map(([value, label, tip]) => {
                 const locked = !allowed(value);
@@ -991,7 +987,7 @@
             state.imageModel = model;
             if (persist) state.preferredImageModel = model;
             const label = IMAGE_MODEL_LABELS[model];
-            const items = imageLockedItems(imageCatalogModels(profile).map(item => [item, IMAGE_MODEL_LABELS[item] || item, imageModelTip(item)]), item => models.includes(item));
+            const items = models.map(item => [item, IMAGE_MODEL_LABELS[item] || item, imageModelTip(item)]);
             renderImageChoices('imageModelChoices', items, model, setImageModel);
             if (!state.editSession) document.getElementById('imageEditHeading').textContent = label ? label + ' 生图' : model ? model + ' 生图' : '当前档位未开放生图';
             setImageQuality(state.preferredImageQuality ?? state.quality, false);
