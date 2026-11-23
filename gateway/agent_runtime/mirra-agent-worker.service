@@ -1,0 +1,26 @@
+[Unit]
+Description=Mirra private OpenAI Agents SDK worker
+After=network.target imggen-gateway.service
+
+[Service]
+Type=simple
+User=imggenapi
+Group=imggenapi
+WorkingDirectory=/opt/imggen-agent-runtime/current
+EnvironmentFile=/etc/imggen-agent-runtime.env
+Environment=PYTHONPATH=/opt/imggen-agent-runtime/current
+ExecStart=/opt/imggen-agent-runtime/venv-sdk-0.25.0/bin/python /opt/imggen-agent-runtime/current/agent_runtime/worker.py
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+MemoryHigh=160M
+MemoryMax=256M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

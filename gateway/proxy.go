@@ -9,11 +9,13 @@ import (
 	"log"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -28,6 +30,8 @@ type gateway struct {
 	modelMu        sync.Mutex
 	modelProfile   atomic.Pointer[modelSettings]
 	onModelsChange func(int64)
+	agentMu        sync.Mutex
+	agentLeases    map[string]*agentProxyLease
 }
 
 func newUpstreamClient(cfg config, transport http.RoundTripper) *http.Client {
@@ -56,6 +60,7 @@ func (g *gateway) upstreamRequest(ctx context.Context, u upstream, method, path,
 }
 
 func (g *gateway) registerProxy(mux *http.ServeMux) {
+	mux.HandleFunc("POST /internal/agent/v1/responses", g.agentProxy)
 	for _, path := range []string{"/images/generations", "/images/edits", "/images/variations", "/responses"} {
 		mux.HandleFunc("POST /v1"+path, g.proxy(path))
 	}
@@ -141,7 +146,7 @@ func (g *gateway) proxyUsage(w http.ResponseWriter, r *http.Request) {
 
 func (g *gateway) proxy(path string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		selected, err := g.resolveRoute(r.Context(), bearer(r), g.clientIP(r), true)
+		selected, err := g.proxyRoute(r)
 		if err != nil {
 			g.proxyError(w, err)
 			return
@@ -239,6 +244,17 @@ func (g *gateway) proxy(path string) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		kind := response.Header.Get("Content-Type")
+		if _, internal := r.Context().Value(agentRouteContextKey{}).(route); internal && status >= 400 {
+			problem := upstreamStatus(response).(*upstreamCallError)
+			message := problem.message
+			if u.Secret != "" {
+				message = strings.ReplaceAll(message, u.Secret, "[redacted]")
+			}
+			w.Header().Del("Content-Length")
+			w.Header().Set("X-Mirra-Diagnostic-Id", problem.diagnostic)
+			openAIError(w, status, problem.code, message)
+			return
+		}
 		stream := strings.HasPrefix(kind, "text/event-stream")
 		if stream {
 			w.Header().Set("X-Accel-Buffering", "no")
@@ -294,9 +310,10 @@ func (g *gateway) connectionError(u upstream, err error) error {
 	log.Printf("upstream connection error trace=%s upstream=%s reason=%s", trace, u.ID, upstreamFailureReason(err))
 	var rejection *proxyConnectError
 	if errors.As(err, &rejection) {
-		return fmt.Errorf("%s（诊断 ID %s）", rejection.Error(), trace)
+		return &upstreamCallError{status: rejection.status, code: "proxy_connect_" + strconv.Itoa(rejection.status), message: fmt.Sprintf("%s（诊断 ID %s）", rejection.Error(), trace), diagnostic: trace, cause: err}
 	}
-	return fmt.Errorf("无法连接上游服务（诊断 ID %s）", trace)
+	reason := upstreamFailureReason(err)
+	return &upstreamCallError{status: 502, code: reason, message: fmt.Sprintf("无法连接上游服务：%s（诊断 ID %s）", reason, trace), diagnostic: trace, cause: err}
 }
 
 func upstreamFailureReason(err error) string {
@@ -307,10 +324,22 @@ func upstreamFailureReason(err error) string {
 		return "canceled"
 	case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
 		return "unexpected_eof"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection_refused"
+	case errors.Is(err, syscall.ECONNRESET):
+		return "connection_reset"
+	case errors.Is(err, syscall.EHOSTUNREACH):
+		return "host_unreachable"
+	case errors.Is(err, syscall.ENETUNREACH):
+		return "network_unreachable"
 	}
 	var connect *proxyConnectError
 	if errors.As(err, &connect) {
 		return "proxy_connect_" + strconv.Itoa(connect.status)
+	}
+	var network net.Error
+	if errors.As(err, &network) && network.Timeout() {
+		return "timeout"
 	}
 	for cause := err; cause != nil; cause = errors.Unwrap(cause) {
 		switch cause.Error() {
@@ -420,7 +449,24 @@ func upstreamStatus(response *http.Response) error {
 	}
 	id := response.Header.Get("X-Request-Id")
 	if id == "" || len(id) > 128 {
-		return fmt.Errorf("上游返回 HTTP %d", response.StatusCode)
+		id = randomID(9)
 	}
-	return fmt.Errorf("上游返回 HTTP %d（请求 ID %s）", response.StatusCode, id)
+	data, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	var payload object
+	_ = json.Unmarshal(data, &payload)
+	detail := asObject(payload["error"])
+	code := objectString(detail, "code")
+	if code == "" {
+		code = fmt.Sprintf("upstream_http_%d", response.StatusCode)
+	}
+	message := objectString(detail, "message")
+	if message == "" {
+		message = objectString(payload, "detail")
+	}
+	if message == "" {
+		message = http.StatusText(response.StatusCode)
+	}
+	return &upstreamCallError{status: response.StatusCode, code: code, diagnostic: id,
+		message:    fmt.Sprintf("上游返回 HTTP %d：%s（请求 ID %s）", response.StatusCode, safeFailureCause(message), id),
+		retryAfter: parseRetryAfter(response.Header.Get("Retry-After"), time.Now())}
 }

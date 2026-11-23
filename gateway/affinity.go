@@ -27,11 +27,16 @@ func (g *gateway) resolveRoute(ctx context.Context, secret string, ip netip.Addr
 	if err != nil {
 		return route{}, err
 	}
+	return g.routeForKey(ctx, k, anchor, ip, dispatch)
+}
+
+func (g *gateway) routeForKey(ctx context.Context, k accessKey, anchor upstream, ip netip.Addr, dispatch bool) (route, error) {
 	now := time.Now()
 	if err := k.Policy.check(ip, now); err != nil {
 		return route{}, err
 	}
 	u := anchor
+	var err error
 	if anchor.Pool != "" {
 		if dispatch {
 			u, err = g.store.chooseUpstream(ctx, k, anchor, now)

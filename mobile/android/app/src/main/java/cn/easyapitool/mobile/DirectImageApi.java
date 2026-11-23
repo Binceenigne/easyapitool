@@ -31,6 +31,15 @@ final class DirectImageApi {
 
     private DirectImageApi() {}
 
+    static String redact(String value, String secret) {
+        String clean = value == null ? "" : value;
+        if (secret != null && !secret.isEmpty()) clean = clean.replace(secret, "[API Key]");
+        return clean.replaceAll("(?i)\\bsk-[A-Za-z0-9_\\-]{8,}", "[API Key]")
+            .replaceAll("(?i)Bearer\\s+[^\\s\\\",}]+", "Bearer [redacted]")
+            .replaceAll("(?i)(\\\"(?:api[_-]?key|authorization|password|secret)\\\"\\s*:\\s*)\\\"[^\\\"]*\\\"", "$1\\\"[redacted]\\\"")
+            .replaceAll("(?i)(https?://)[^/\\s@]+@", "$1[redacted]@");
+    }
+
     static String endpoint(String value) throws IOException {
         if (value == null || value.trim().isEmpty()) return "";
         String clean = value.trim().replaceAll("/+$", "");

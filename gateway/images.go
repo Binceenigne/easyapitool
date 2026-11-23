@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const maxImageEnvelope = (maxImageBytes*4/3 + 1<<20)
@@ -240,6 +241,10 @@ func (m *mobile) renderImage(ctx context.Context, id credentialID, key keyInput,
 	defer response.Body.Close()
 	status = response.StatusCode
 	if err := upstreamStatus(response); err != nil {
+		var problem *upstreamCallError
+		if errors.As(err, &problem) && selected.upstream.Secret != "" {
+			problem.message = strings.ReplaceAll(problem.message, selected.upstream.Secret, "[redacted]")
+		}
 		return nil, err
 	}
 	original, metered, err := m.readImageResponse(response, id, index, o.partial, o.format)
@@ -257,6 +262,42 @@ func (m *mobile) renderImage(ctx context.Context, id credentialID, key keyInput,
 		item["usage"], item["svgUsage"] = count.Detail["usage"], count.Detail["svg_usage"]
 	}
 	return item, nil
+}
+
+func (m *mobile) renderImageWithRetry(ctx context.Context, id credentialID, key keyInput, ip netip.Addr, prompt string, o imageOptions, refs []asset, index int) (object, error) {
+	maximum := m.g.cfg.imageAttempts
+	if maximum < 1 {
+		maximum = 3
+	}
+	ctx = context.WithValue(ctx, imageRetryOwnerContextKey{}, true)
+	for attempt := 1; attempt <= maximum; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, operationError("image", err, attempt-1, maximum)
+		}
+		item, err := m.renderImage(ctx, id, key, ip, prompt, o, refs, index)
+		if err == nil {
+			item["attempts"], item["maxAttempts"] = attempt, maximum
+			return item, nil
+		}
+		failure := operationError("image", err, attempt, maximum)
+		if ctx.Err() != nil {
+			return nil, operationError("image", ctx.Err(), attempt, maximum)
+		}
+		if !failure.Retryable || attempt == maximum {
+			return nil, failure
+		}
+		delay := retryDelay(failure, attempt)
+		if delay > 2*time.Minute {
+			failure.LastCause += "；上游要求的等待时间超过本任务自动等待上限"
+			return nil, failure
+		}
+		m.publish(id, object{"type": "request_retry", "stage": "image", "itemIndex": index, "attempt": attempt + 1, "maxAttempts": maximum,
+			"delayMs": delay.Milliseconds(), "cause": failure.LastCause, "status": failure.Status, "diagnosticId": failure.DiagnosticID, "resetPreview": true}, false)
+		if err := waitForRetry(ctx, delay); err != nil {
+			return nil, operationError("image", err, attempt, maximum)
+		}
+	}
+	return nil, operationError("image", errors.New("图片生成未完成"), maximum, maximum)
 }
 
 type multipartBody struct {
@@ -344,11 +385,14 @@ func (m *mobile) readImageResponse(response *http.Response, job credentialID, it
 	if !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
 		var e imageEnvelope
 		if err := json.NewDecoder(io.LimitReader(response.Body, maxImageEnvelope)).Decode(&e); err != nil {
-			return asset{}, nil, errors.New("上游图片响应无效或过大")
+			return asset{}, nil, &upstreamCallError{status: 502, code: "invalid_image_response", message: "上游图片响应无效或过大：" + safeFailureCause(err.Error()), cause: err}
 		}
 		count := usageMeter(e.Usage, e.SVGUsage)
+		if len(e.Err) > 0 && string(e.Err) != "null" {
+			return asset{}, count, imageStreamFailure(e.Err)
+		}
 		a, err := decode(e.encoded())
-		return a, count, err
+		return a, count, imageOutputError(err)
 	}
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64<<10), maxImageEnvelope)
@@ -395,7 +439,7 @@ func (m *mobile) readImageResponse(response *http.Response, job credentialID, it
 		}
 		pending, eventName = nil, ""
 		if e.Type == "error" || strings.HasSuffix(e.Type, ".error") || strings.HasSuffix(e.Type, ".failed") || (len(e.Err) > 0 && string(e.Err) != "null") {
-			return asset{}, count, errors.New("上游生图流报告生成失败")
+			return asset{}, count, imageStreamFailure(e.Err)
 		}
 		if strings.HasSuffix(e.Type, ".partial_image") && !completed && partialIndex < partialTotal {
 			data := e.encoded()
@@ -416,7 +460,7 @@ func (m *mobile) readImageResponse(response *http.Response, job credentialID, it
 			count = usageMeter(e.Usage, e.SVGUsage)
 			if encoded := e.encoded(); encoded != "" {
 				a, err := decode(encoded)
-				return a, count, err
+				return a, count, imageOutputError(err)
 			}
 		}
 	}
@@ -425,9 +469,37 @@ func (m *mobile) readImageResponse(response *http.Response, job credentialID, it
 		return last, count, nil
 	}
 	if scanner.Err() != nil || malformed || len(pending) != 0 {
-		return asset{}, count, errors.New("上游图片流中断或缺损，未收到完整成图")
+		return asset{}, count, &upstreamCallError{status: 502, code: "image_stream_incomplete", message: "上游图片流中断或缺损，未收到完整成图", cause: scanner.Err()}
 	}
-	return asset{}, count, errors.New("上游图片流未返回完成的图片")
+	return asset{}, count, &upstreamCallError{status: 502, code: "image_stream_incomplete", message: "上游图片流未返回完成的图片"}
+}
+
+func imageStreamFailure(raw json.RawMessage) error {
+	var detail object
+	_ = json.Unmarshal(raw, &detail)
+	code := objectString(detail, "code")
+	if code == "" {
+		code = "image_stream_failed"
+	}
+	message := objectString(detail, "message")
+	if message == "" {
+		message = safeFailureCause(string(raw))
+	}
+	if message == "" {
+		message = "未提供具体原因"
+	}
+	return &upstreamCallError{status: 502, code: code, message: "上游生图流报告生成失败：" + message}
+}
+
+func imageOutputError(err error) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	if strings.Contains(message, "上游未返回") || strings.Contains(message, "图片格式不受支持或内容无效") || strings.Contains(message, "图片内容无效或超过") {
+		return &upstreamCallError{status: 502, code: "invalid_image_output", message: message, cause: err}
+	}
+	return err
 }
 
 func (m *mobile) decodeImage(owner, encoded, format string) (asset, error) {

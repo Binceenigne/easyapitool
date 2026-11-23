@@ -15,19 +15,21 @@ import (
 const openAIBaseURL = "https://api.openai.com/v1"
 
 type config struct {
-	listen, adminListen, pin, token, storageSecret string
-	workDir, dataDir, legacyBase, openAIKey        string
-	androidReleases, windowsReleases, egressProxy  string
-	publicBase, openAIPool, assetDir               string
-	imageModel, svgAuthor, svgEffort, polishModel  string
-	reasoningModel, reasoningEffort                string
-	reasoningPresets                               map[string]string
-	allowedHosts                                   map[string]bool
-	svgEnabled                                     bool
-	trustLocalProxy                                bool
-	reserveMicroUSD                                int64
-	pricing                                        map[string]priceCard
-	upstreamTimeout                                time.Duration
+	listen, adminListen, pin, token, storageSecret   string
+	workDir, dataDir, legacyBase, openAIKey          string
+	androidReleases, windowsReleases, egressProxy    string
+	publicBase, openAIPool, assetDir                 string
+	imageModel, svgAuthor, svgEffort, polishModel    string
+	reasoningModel, reasoningEffort                  string
+	reasoningPresets                                 map[string]string
+	allowedHosts                                     map[string]bool
+	svgEnabled                                       bool
+	trustLocalProxy                                  bool
+	reserveMicroUSD                                  int64
+	pricing                                          map[string]priceCard
+	upstreamTimeout                                  time.Duration
+	agentWorkerURL, agentWorkerToken, agentProxyBase string
+	agentAttempts, imageAttempts                     int
 }
 
 func loadConfig(path string) (config, error) {
@@ -73,6 +75,33 @@ func loadConfig(path string) (config, error) {
 		allowedHosts: map[string]bool{"api.openai.com": true},
 	}
 	c.assetDir = get("MIRRA_ASSET_DIR", c.workDir)
+	c.agentWorkerURL = strings.TrimRight(get("MIRRA_AGENT_WORKER_URL", ""), "/")
+	c.agentWorkerToken = get("MIRRA_AGENT_WORKER_TOKEN", "")
+	c.agentProxyBase = strings.TrimRight(get("MIRRA_AGENT_PROXY_BASE_URL", ""), "/")
+	if c.agentWorkerURL != "" {
+		if !loopbackHTTPURL(c.agentWorkerURL) || len(c.agentWorkerToken) < 32 {
+			return c, fmt.Errorf("MIRRA_AGENT_WORKER_URL must be loopback HTTP and MIRRA_AGENT_WORKER_TOKEN must have at least 32 characters")
+		}
+		if c.agentProxyBase == "" {
+			_, port, splitErr := net.SplitHostPort(c.listen)
+			if splitErr != nil {
+				return c, fmt.Errorf("invalid MIRRA_LISTEN for Agent SDK proxy")
+			}
+			c.agentProxyBase = "http://127.0.0.1:" + port + "/internal/agent/v1"
+		}
+		if !loopbackHTTPURL(c.agentProxyBase) || !strings.HasSuffix(c.agentProxyBase, "/internal/agent/v1") {
+			return c, fmt.Errorf("MIRRA_AGENT_PROXY_BASE_URL must use the loopback internal Agent proxy")
+		}
+	}
+	var attemptsErr error
+	c.agentAttempts, attemptsErr = strconv.Atoi(get("MIRRA_AGENT_MAX_ATTEMPTS", "3"))
+	if attemptsErr != nil || c.agentAttempts < 1 || c.agentAttempts > 5 {
+		return c, fmt.Errorf("MIRRA_AGENT_MAX_ATTEMPTS must be 1–5")
+	}
+	c.imageAttempts, attemptsErr = strconv.Atoi(get("MIRRA_IMAGE_MAX_ATTEMPTS", "3"))
+	if attemptsErr != nil || c.imageAttempts < 1 || c.imageAttempts > 5 {
+		return c, fmt.Errorf("MIRRA_IMAGE_MAX_ATTEMPTS must be 1–5")
+	}
 	c.legacyBase = strings.TrimRight(c.legacyBase, "/")
 	if c.storageSecret == "" {
 		c.storageSecret = c.token

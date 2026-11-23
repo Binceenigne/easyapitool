@@ -452,12 +452,20 @@
             createdAt: result.createdAt || pending?.createdAt || new Date().toISOString(),
             status: result.cancelled ? 'cancelled' : result.ok ? 'completed' : 'failed',
             error: String(result.error || ''),
+            errorDetails: result.errorDetails || null,
+            reasoningMode: result.reasoningMode || 'instant',
+            reasoningModel: result.reasoningModel || '',
+            reasoningEffort: result.reasoningEffort || '',
+            reasoningSummary: result.reasoningSummary || '',
+            reasoningStatus: result.reasoningStatus || 'idle',
+            reasoningUsage: result.reasoningUsage || null,
             requestedCount: Number(result.requestedCount || pending?.requestedCount || 1),
             items: (result.items || []).map((item, itemIndex) => ({
                 itemIndex: Number(item.itemIndex ?? itemIndex),
                 ok: item.ok === true,
                 status: item.ok === true ? 'completed' : item.status || 'failed',
                 error: item.error || '',
+                errorDetails: item.errorDetails || null,
                 resourceId: String(item.resourceId || ''),
                 previewResourceId: String(item.previewResourceId || ''),
                 width: Number(item.width) || 0,
@@ -601,14 +609,14 @@
                     imageCount: pending?.requestedCount || 1
                 },
                 pending?.prompt || '',
-                new Error(event.error || '图片生成失败'),
+                Object.assign(new Error(event.error || '图片生成失败'), { errorDetails: event.errorDetails }),
                 pending
             );
             window.applyImageGenerationEvent?.({ ...failed, type: 'set_completed' });
             if (pending) {
                 pendingTasks.delete(requestId);
                 pending.failurePersisted = true;
-                pending.reject(new Error(event.error || '图片生成失败'));
+                pending.reject(Object.assign(new Error(event.error || '图片生成失败'), { errorDetails: event.errorDetails }));
             }
             return;
         }
@@ -858,11 +866,13 @@
             createdAt: pending?.createdAt || new Date().toISOString(),
             requestedCount,
             error: message,
+            errorDetails: error?.errorDetails || null,
             items: Array.from({ length: requestedCount }, (_, itemIndex) => ({
                 itemIndex,
                 ok: false,
                 status: 'failed',
-                error: message
+                error: message,
+                errorDetails: error?.errorDetails || null
             }))
         };
         persistLocalSet(result, pending);
@@ -932,30 +942,163 @@
             extra: ['terra', 'xhigh'], max: ['sol', 'xhigh']
         }[options.reasoningMode];
         const [slot, effort] = preset || [options.reasoningModel || 'luna', options.reasoningEffort || 'medium'];
-        return { model: slots[slot] || slots.luna, effort };
+        return { model: slots[slot] || slot || slots.luna, effort };
     }
 
-    async function prepareDirectPrompt(keyId, prompt, options = {}) {
-        const { model, effort } = directReasoning(options);
-        const result = await pluginCall('requestDirectApi', {
-            keyId, operation: 'respond', requestId: options.requestId || '',
-            body: {
-                model, reasoning: { effort }, input: prompt, store: false,
-                instructions: '将用户的图像需求整理为可直接生成或编辑图片的提示词。保留明确要求，仅返回改写后的提示词。'
-                    + (options.output_format === 'svg' ? '输出目标是静态SVG矢量图，组织为【主体与轮廓】【路径与分层】【色彩与留白】【矢量约束】文本块，不输出代码或动画要求。'
-                    : options.output_format === 'gif' ? `输出目标是GIF循环动图，共${options.frame_count || 9}帧。组织为【画面设定】【运动脚本】【分帧控制】【循环衔接】【稳定约束】，明确动作方向、幅度和关键阶段，保持跨帧主体与背景一致，让末帧自然接回首帧。帧数与时长由接口字段控制。` : ''),
-                ...(options.webSearchEnabled ? { tools: [{ type: 'web_search' }] } : {})
-            }
+    function directSafeMessage(value) {
+        return String(value || '').replace(/\bsk-[A-Za-z0-9_-]{8,}/gi, '[API Key]')
+            .replace(/Bearer\s+[^\s",}]+/gi, 'Bearer [redacted]')
+            .replace(/("?(?:api[_-]?key|authorization|password|secret)"?\s*[:=]\s*)"?[^\s",}]+"?/gi, '$1[redacted]')
+            .replace(/(https?:\/\/)[^/\s@]+@/gi, '$1[redacted]@').slice(0, 1200);
+    }
+
+    function directError(failure, stage, attempts) {
+        let nested = failure;
+        for (let depth = 0; depth < 8 && nested?.cause && !nested.errorDetails; depth += 1) nested = nested.cause;
+        const source = nested?.errorDetails || {};
+        const status = Number(source.status ?? failure?.status ?? failure?.cause?.status) || 0;
+        const cause = directSafeMessage(source.cause || failure?.message || failure || '请求失败');
+        const code = directSafeMessage(source.code || failure?.code || (status ? `http_${status}`
+            : /Connection|Timeout/i.test(failure?.name || '') ? 'network_error' : 'request_failed'));
+        const cancelled = failure?.name === 'AbortError' || code === 'cancelled';
+        const terminal = cancelled || /insufficient_quota|quota_exceeded|billing|usage_limit|rpm_limit|permission|content_filter|model_refusal|max_turns|guardrail|invalid_request|sdk_unavailable/i.test(code)
+            || /MaxTurnsExceeded|ModelRefusal|UserError|Guardrail/.test(failure?.name || '')
+            || /insufficient.quota|exceeded.your.current.quota|额度不足|余额不足|同一任务正在生成/i.test(cause);
+        const network = /network_error|connection_error|timeout|ECONNRESET|ECONNREFUSED|ENETUNREACH|ETIMEDOUT/i.test(code)
+            || /APIConnection|Timeout/.test(failure?.name || '');
+        const retryable = source.retryable !== false && !terminal && (network || status === 408 || status === 429 || status >= 500
+            || /^(server_error|internal_error|rate_limit_exceeded|temporarily_unavailable|invalid_response)$/.test(code));
+        const diagnosticId = directSafeMessage(source.diagnosticId || failure?.request_id || failure?.headers?.get?.('x-request-id') || '');
+        const details = { stage, code: cancelled ? 'cancelled' : code, attempts: Math.max(attempts, Number(source.attempts) || 0), maxAttempts: 3,
+            cause, lastCause: cause, status, diagnosticId, retryable };
+        const error = new Error(cause);
+        error.name = cancelled ? 'AbortError' : 'Error';
+        error.errorDetails = details;
+        error.retryAfter = failure?.retryAfter ?? failure?.headers?.['retry-after'] ?? failure?.headers?.get?.('retry-after');
+        return error;
+    }
+
+    function directAbort() { return new DOMException('生成已停止', 'AbortError'); }
+
+    function directRetryDelay(error, attempt) {
+        const value = error.retryAfter;
+        if (value != null && String(value).trim() !== '') {
+            const seconds = Number(value);
+            const milliseconds = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - Date.now();
+            if (Number.isFinite(milliseconds)) return Math.max(0, milliseconds);
+        }
+        return 750 * 2 ** (attempt - 1);
+    }
+
+    function waitDirectRetry(milliseconds, signal) {
+        return new Promise((resolve, reject) => {
+            if (signal.aborted) { reject(directAbort()); return; }
+            const abort = () => { clearTimeout(timer); reject(directAbort()); };
+            const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, milliseconds);
+            signal.addEventListener('abort', abort, { once: true });
         });
-        const text = String(result.output_text || (result.output || []).flatMap(item => item.content || [])
-            .filter(item => item.type === 'output_text').map(item => item.text || '').join('')).trim();
-        if (!text) throw new Error('思维模型没有返回提示词');
-        return text;
+    }
+
+    async function retryDirectRequest(run, { stage, progress, options, itemIndex }) {
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+            if (progress.controller.signal.aborted) throw directAbort();
+            try { return await run(attempt); }
+            catch (failure) {
+                if (progress.controller.signal.aborted) throw directAbort();
+                const error = directError(failure, stage, attempt);
+                if (!error.errorDetails.retryable || error.errorDetails.attempts >= 3) throw error;
+                const delayMs = directRetryDelay(error, attempt);
+                if (delayMs > 120000) {
+                    error.errorDetails = { ...error.errorDetails, code: 'retry_after_too_long', retryable: false,
+                        cause: `${error.errorDetails.cause}；上游要求等待 ${Math.ceil(delayMs / 1000)} 秒，超过 120 秒自动重试等待上限，请稍后重试` };
+                    error.errorDetails.lastCause = error.errorDetails.cause;
+                    error.message = error.errorDetails.cause;
+                    throw error;
+                }
+                window.applyImageGenerationEvent?.({ type: 'request_retry', ...options,
+                    setId: options.purpose === 'polish' ? '' : options.requestId,
+                    stage, itemIndex, attempt: attempt + 1, maxAttempts: 3, delayMs,
+                    cause: error.errorDetails.cause, status: error.errorDetails.status,
+                    diagnosticId: error.errorDetails.diagnosticId, resetPreview: stage === 'image' });
+                await waitDirectRetry(delayMs, progress.controller.signal);
+            }
+        }
+    }
+
+    async function requestNativeDirect(payload, signal) {
+        if (signal.aborted) throw directAbort();
+        return new Promise((resolve, reject) => {
+            const abort = () => {
+                void pluginCall('cancelDirectApi', { requestId: payload.requestId }).catch(() => {});
+                reject(directAbort());
+            };
+            signal.addEventListener('abort', abort, { once: true });
+            pluginCall('requestDirectApi', payload).then(result => {
+                if (signal.aborted) { reject(directAbort()); return; }
+                if (result?.ok === false) {
+                    reject(Object.assign(new Error(result.error || 'API 直连失败'), {
+                        errorDetails: result.errorDetails, headers: result.headers
+                    }));
+                } else resolve(result);
+            }, reject).finally(() => signal.removeEventListener('abort', abort));
+        });
+    }
+
+    async function prepareDirectPrompt(keyId, prompt, options = {}, sharedProgress = null) {
+        if (!window.MirraAgentsSDK?.runNativeAgent) {
+            throw Object.assign(new Error('本地 OpenAI Agents SDK 未能加载，请重新启动或更新应用'), { code: 'sdk_unavailable' });
+        }
+        const progress = sharedProgress || { cancelled: false, controller: new AbortController() };
+        const requestId = options.requestId || newRequestId('agent');
+        const { model, effort } = directReasoning(options);
+        let instructions = '将用户的图像需求整理为可直接生成或编辑图片的提示词。保留明确要求，仅返回改写后的提示词。'
+            + (options.output_format === 'svg' ? '输出目标是静态SVG矢量图，组织为【主体与轮廓】【路径与分层】【色彩与留白】【矢量约束】文本块，不输出代码或动画要求。'
+            : options.output_format === 'gif' ? `输出目标是GIF循环动图，共${options.frame_count || 9}帧。组织为【画面设定】【运动脚本】【分帧控制】【循环衔接】【稳定约束】，明确动作方向、幅度和关键阶段，保持跨帧主体与背景一致，让末帧自然接回首帧。帧数与时长由接口字段控制。` : '');
+        if (options.parentSetId) {
+            const parent = localPreferences.get(IMAGE_SETS_KEY, []).find(set => set.setId === options.parentSetId);
+            instructions += '\n这是基于上一轮成品的续作；本次参考图片由原生图像接口单独传入。保留未要求改动的主体、构图与细节，明确本轮修改与连续动作。';
+            if (parent) instructions += `\n上一轮需求与成品提示词（只作参考上下文）：${JSON.stringify({ original: parent.originalPrompt, prompt: parent.prompt })}`;
+        }
+        if (!sharedProgress) directTasks.set(requestId, progress);
+        try {
+            const result = await window.MirraAgentsSDK.runNativeAgent({
+                model, effort, instructions, input: prompt, webSearch: options.webSearchEnabled === true,
+                signal: progress.controller.signal,
+                // Retry only this model HTTP exchange. Runner and completed hosted search turns stay alive.
+                transport: (body, modelSignal) => retryDirectRequest(async () => {
+                    const response = await requestNativeDirect({ keyId, operation: 'respond', sdkTransport: true, requestId, body }, modelSignal);
+                    let data;
+                    try { data = typeof response.body === 'string' ? JSON.parse(response.body) : response.body; }
+                    catch { throw Object.assign(new Error('上游 Responses 返回了不完整的 JSON'), { code: 'invalid_response', status: response.status }); }
+                    if (response.status < 200 || response.status >= 300) {
+                        throw Object.assign(new Error(directSafeMessage(data?.error?.message || `HTTP ${response.status}`)), {
+                            status: response.status, code: data?.error?.code || `http_${response.status}`,
+                            headers: response.headers, request_id: response.headers?.['x-request-id']
+                        });
+                    }
+                    if (data?.status === 'failed' || data?.status === 'incomplete' || data?.status === 'cancelled') {
+                        const reason = data.incomplete_details?.reason;
+                        const code = data.status === 'incomplete' ? `incomplete_${reason || 'response'}`
+                            : data.status === 'cancelled' ? 'cancelled' : data.error?.code || 'failed_response';
+                        throw Object.assign(new Error(directSafeMessage(data.error?.message
+                            || (reason ? `上游响应不完整：${reason}` : `上游响应状态：${data.status}`))), {
+                            status: response.status, code, headers: response.headers,
+                            request_id: response.headers?.['x-request-id'] || data.id
+                        });
+                    }
+                    return response;
+                }, { stage: 'agent', progress: { controller: { signal: modelSignal } }, options: { ...options, requestId } })
+            });
+            return { ...result, model, effort };
+        } catch (failure) {
+            if (progress.controller.signal.aborted) throw directAbort();
+            throw directError(failure, 'agent', 1);
+        } finally { if (!sharedProgress) directTasks.delete(requestId); }
     }
 
     async function generateDirectImage(key, prompt, paths, options) {
         const { requestId } = options;
-        const progress = { cancelled: false };
+        const progress = { cancelled: false, controller: new AbortController() };
         directTasks.set(requestId, progress);
         const imageCount = Math.max(1, Math.min(9, Number(options.imageCount) || 1));
         const result = {
@@ -963,37 +1106,55 @@
             imageModel: options.imageModel, createdAt: new Date().toISOString(),
             prompt, originalPrompt: prompt, transparency: options.background || 'auto', requestedCount: imageCount, items: []
         };
+        const emit = event => window.applyImageGenerationEvent?.({ requestId, setId: requestId, sessionId: result.sessionId, ...event });
         const output = options.output_format || 'png';
         try {
-            if (options.reasoningMode && options.reasoningMode !== 'instant') {
-                result.prompt = await prepareDirectPrompt(key.id, prompt, options);
+            if (options.reasoningMode && options.reasoningMode !== 'instant' || options.continuation || options.parentSetId) {
+                const started = Date.now();
+                const reasoning = directReasoning(options);
+                emit({ type: 'react_started', mode: options.reasoningMode, model: reasoning.model,
+                    reasoningEffort: reasoning.effort, webSearchEnabled: options.webSearchEnabled === true });
+                const planned = await prepareDirectPrompt(key.id, prompt, options, progress);
+                Object.assign(result, { prompt: planned.prompt, reasoningModel: planned.model, reasoningEffort: planned.effort,
+                    reasoningDurationMs: Date.now() - started, reasoningSummary: planned.prompt, reasoningStatus: 'completed',
+                    reasoningUsage: planned.usage, webSearchUsed: planned.webSearchUsed });
+                emit({ type: 'react_completed', ...result, model: planned.model, summary: planned.prompt });
             }
             const body = { model: options.imageModel, prompt: result.prompt, size: options.size || 'auto',
                 quality: options.quality || 'medium', background: result.transparency, output_format: output, n: 1 };
             for (const field of ['complexity', 'output_compression', 'frame_count', 'frame_duration_ms']) {
                 if (options[field] != null) body[field] = options[field];
             }
-            let error = '';
             for (let itemIndex = 0; itemIndex < imageCount && !progress.cancelled; itemIndex += 1) {
                 try {
-                    const asset = await pluginCall('requestDirectApi', {
+                    emit({ type: 'item_started', itemIndex });
+                    const asset = await retryDirectRequest(() => requestNativeDirect({
                         keyId: key.id, operation: 'generate', requestId, body, paths: paths || [],
                         setId: requestId, sessionId: result.sessionId
-                    });
+                    }, progress.controller.signal), { stage: 'image', progress, options, itemIndex });
                     const uri = localImageUrl(asset.path);
                     result.items.push({ ...asset, ok: true, status: 'completed', itemIndex, uri, previewUri: uri,
                         format: asset.mimeType === 'image/svg+xml' ? 'svg' : asset.mimeType.split('/')[1] });
+                    emit({ type: 'item_completed', itemIndex, result: result.items[result.items.length - 1] });
                 } catch (failure) {
                     if (progress.cancelled) break;
-                    error = failure.message || String(failure);
-                    result.items.push({ ok: false, status: 'failed', itemIndex, error });
-                    // A provider-level validation or connection failure applies to the remaining identical requests.
-                    break;
+                    const error = failure.errorDetails ? failure : directError(failure, 'image', 1);
+                    result.error = error.message;
+                    result.errorDetails = error.errorDetails;
+                    result.items.push({ ok: false, status: 'failed', itemIndex, error: error.message, errorDetails: error.errorDetails });
+                    emit({ type: 'item_failed', itemIndex, error: error.message, errorDetails: error.errorDetails });
+                    if (!error.errorDetails.retryable) break;
                 }
             }
-            result.error = progress.cancelled ? '生成已停止' : error;
+            if (progress.cancelled) result.error = '生成已停止';
         } catch (error) {
             result.error = progress.cancelled ? '生成已停止' : error.message || String(error);
+            if (!progress.cancelled) {
+                result.errorDetails = error.errorDetails || directError(error, 'agent', 1).errorDetails;
+                result.reasoningStatus = 'failed';
+                result.reasoningSummary = result.error;
+                emit({ type: 'react_failed', error: result.error, errorDetails: result.errorDetails });
+            }
         } finally {
             directTasks.delete(requestId);
         }
@@ -1002,8 +1163,10 @@
         while (result.items.length < imageCount) {
             result.items.push({ ok: false, status: result.cancelled ? 'cancelled' : 'failed',
                 itemIndex: result.items.length, error: result.error });
+            result.items[result.items.length - 1].errorDetails = result.errorDetails || null;
         }
         persistLocalSet(result);
+        emit({ ...result, type: result.cancelled ? 'set_cancelled' : 'set_completed' });
         return result;
     }
 
@@ -1097,6 +1260,7 @@
             const direct = directTasks.get(requestId);
             if (direct) {
                 direct.cancelled = true;
+                direct.controller.abort();
                 return pluginCall('cancelDirectApi', { requestId });
             }
             return requestJson(`/api/v1/image-generations/${encodeURIComponent(requestId)}/cancel`, { method: 'POST' });
@@ -1110,7 +1274,10 @@
         export_image_sets: exportImageSets,
         polish_prompt: async (keyId, prompt, options = {}) => {
             const key = (await secureKeyMetadata()).find(item => String(item.id) === String(keyId));
-            if (usesDirectApi(key)) return { ok: true, prompt: await prepareDirectPrompt(key.id, prompt, options) };
+            if (usesDirectApi(key)) {
+                try { return { ok: true, ...(await prepareDirectPrompt(key.id, prompt, { ...options, purpose: 'polish' })) }; }
+                catch (error) { return { ok: false, error: directSafeMessage(error.message), errorDetails: error.errorDetails || directError(error, 'agent', 1).errorDetails }; }
+            }
             return requestJson('/api/v1/prompts/polish', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ keyId: String(keyId), prompt, options })

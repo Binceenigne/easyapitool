@@ -1,2 +1,3 @@
 *.sh text eol=lf
 deploy/easyapitool-pair text eol=lf
+frontend/scripts/agents-sdk.js linguist-generated=true whitespace=-blank-at-eol

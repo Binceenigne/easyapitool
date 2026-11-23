@@ -523,7 +523,7 @@
                 set.reasoningModel,
                 set.reasoningDepth || set.reasoningEffort
             );
-            const statusLabel = activeTool
+            const statusLabel = set.retry ? imageRequestRetryMessage(set.retry) : activeTool
                 ? reasoningToolLabel(activeTool)
                 : set.reasoningStatus === 'completed'
                     ? '方案已确定'
@@ -580,7 +580,9 @@
                 turnTitle.innerHTML = `<strong>${escapeHtml(turn.title || '正在完善方案')}</strong><span>${reasoningElapsed(set, turn)}</span>`;
                 const turnText = document.createElement('p');
                 turnText.dataset.reasoningTurnText = `${set.setId}:${turn.turn}`;
-                turnText.textContent = reasoningTurnDisplayText(turn);
+                turnText.textContent = turn.status === 'failed'
+                    ? imageRequestErrorMessage(turn.text || set.reasoningSummary, set.errorDetails)
+                    : reasoningTurnDisplayText(turn);
                 if (turn.status === 'running') turnText.classList.add('is-streaming');
                 turnBlock.append(turnTitle, turnText);
                 (turn.tools || []).forEach(tool => {
@@ -939,10 +941,17 @@
                             event.preventDefault();
                             void copyGeneratedImage(item.result);
                         });
+                    } else if (item.retry) {
+                        overlay.textContent = imageRequestRetryMessage(item.retry);
+                        overlay.title = item.retry.cause || '';
+                        overlay.setAttribute('role', 'status');
+                        overlay.setAttribute('aria-live', 'polite');
                     } else if (item.status === 'partial') {
                         overlay.innerHTML = `${iconMarkup('loader-circle', 'icon-16 is-spinning')}<em>生成中</em>`;
                     } else if (item.status === 'failed') {
-                        overlay.textContent = item.error || '生成失败';
+                        overlay.textContent = imageRequestErrorMessage(item.error || '生成失败', item.errorDetails || set.errorDetails);
+                        overlay.title = overlay.textContent;
+                        card.title = overlay.textContent;
                     } else if (item.status === 'cancelled') {
                         overlay.textContent = '已停止';
                     } else {
@@ -972,5 +981,6 @@
             if (latestSet && !latestSet.originalsLoaded && !latestSet.loadingOriginals) {
                 void loadImageGenerationSetOriginals(latestSet);
             }
+            container.querySelectorAll('button > [data-lucide], button > svg').forEach(icon => { icon.style.pointerEvents = 'none'; });
             renderLucideIcons();
         }

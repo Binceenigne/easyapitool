@@ -62,7 +62,10 @@ func (m *mobile) polish(w http.ResponseWriter, r *http.Request, owner string) {
 			m.g.proxyError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, object{"ok": false, "error": err.Error()})
+		failure := operationError("agent", err, 0, attemptLimit(m.g.cfg.agentAttempts))
+		payload := object{"ok": false, "error": failure.Error()}
+		attachOperationFailure(payload, failure)
+		writeJSON(w, http.StatusOK, payload)
 		return
 	}
 	writeJSON(w, http.StatusOK, object{"ok": true, "prompt": prompt})
@@ -70,6 +73,7 @@ func (m *mobile) polish(w http.ResponseWriter, r *http.Request, owner string) {
 
 func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInput, ip netip.Addr, input generationInput, settings *modelSettings) (string, object, error) {
 	mode := objectString(input.Options, "reasoningMode")
+	hiddenContinuation := (mode == "" || mode == "instant") && isContinuation(input.Options)
 	slot, ok := normalReasoningSlots[mode]
 	model, effort := "", ""
 	if mode == "advanced" {
@@ -77,7 +81,7 @@ func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInpu
 		if !oneOf(slot, "luna", "terra", "sol") || !oneOf(effort, "", "low", "medium", "high", "xhigh", "max") {
 			return "", nil, errors.New("思维模型或深度无效")
 		}
-	} else if !ok {
+	} else if !ok && !hiddenContinuation {
 		return "", nil, errors.New("思维模式无效")
 	}
 	selected, err := m.resolveKey(ctx, key, ip, true)
@@ -85,7 +89,9 @@ func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInpu
 		return "", nil, err
 	}
 	if settings != nil {
-		if mode == "advanced" {
+		if hiddenContinuation {
+			model, effort = settings.Continuation.Model, settings.Continuation.Effort
+		} else if mode == "advanced" {
 			model = settings.Reasoning[slot].Model
 		} else {
 			preset := settings.ReasoningModes[mode]
@@ -109,18 +115,42 @@ func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInpu
 			model = builtinReasoningModels[slot]
 		}
 	}
+	if hiddenContinuation {
+		if settings == nil {
+			model, effort = m.g.cfg.reasoningPresets["luna"], "low"
+			if model == "" {
+				model = m.g.cfg.reasoningModel
+			}
+			if model == "" {
+				model = builtinReasoningModels["luna"]
+			}
+		}
+		copy := object{}
+		for name, value := range input.Options {
+			copy[name] = value
+		}
+		copy["reasoningMode"] = "continuation"
+		input.Options = copy
+	}
 	effort = supportedReasoningEffort(model, effort)
 	web := input.Options["webSearchEnabled"] == true
 	start := time.Now()
 	m.publish(id, object{"type": "react_started", "model": model, "reasoningEffort": effort, "webSearchEnabled": web}, false)
+	ctx = context.WithValue(ctx, agentEventSinkKey{}, func(event object) { m.publish(id, event, false) })
 	prompt, usage, searched, err := m.g.rewrite(ctx, selected, model, effort, input.Prompt, web, input.Options)
 	if err != nil {
-		m.publish(id, object{"type": "react_failed", "error": err.Error()}, false)
+		failed := object{"type": "react_failed", "error": err.Error()}
+		attachOperationFailure(failed, err)
+		m.publish(id, failed, false)
 		return "", nil, err
 	}
 	m.publish(id, object{"type": "react_completed", "prompt": prompt, "model": model, "reasoningEffort": effort,
 		"reasoningDurationMs": time.Since(start).Milliseconds(), "reasoningUsage": usage, "webSearchEnabled": web, "webSearchUsed": searched}, false)
 	return prompt, usage, nil
+}
+
+func isContinuation(options object) bool {
+	return options["continuation"] == true || objectString(options, "parentSetId") != "" || objectString(options, "previousPrompt") != ""
 }
 
 func (g *gateway) rewrite(ctx context.Context, selected route, model, effort, prompt string, web bool, options ...object) (string, object, bool, error) {
@@ -134,6 +164,9 @@ func (g *gateway) rewrite(ctx context.Context, selected route, model, effort, pr
 	}
 	if err := g.checkReasoningTier(selected.key, model, effort, objectString(target, "reasoningMode"), web); err != nil {
 		return "", nil, false, err
+	}
+	if g.cfg.agentWorkerURL != "" {
+		return g.rewriteAgent(ctx, selected, model, effort, prompt, web, target)
 	}
 	fields := object{"model": model, "input": prompt, "store": false, "max_output_tokens": 8192,
 		"instructions": imagePromptInstructions(target)}

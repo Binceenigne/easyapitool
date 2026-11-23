@@ -391,6 +391,7 @@ public class AndroidStoragePlugin extends Plugin {
         String keyId = safeId(call.getString("keyId"));
         String requestId = safeId(call.getString("requestId"));
         String operation = call.getString("operation", "");
+        boolean sdkTransport = Boolean.TRUE.equals(call.getBoolean("sdkTransport", false));
         JSArray paths = call.getArray("paths", new JSArray());
         JSObject body = call.getObject("body", new JSObject());
         if (keyId.isEmpty() || paths.length() > MAX_REFERENCE_COUNT) {
@@ -400,7 +401,11 @@ public class AndroidStoragePlugin extends Plugin {
         apiExecutor.execute(() -> {
             HttpURLConnection connection = null;
             String secret = "";
+            int status = 0;
             try {
+                if (sdkTransport && (!"respond".equals(operation) || body.optBoolean("stream", false))) {
+                    throw new IOException("SDK 仅支持非流式 Responses 请求");
+                }
                 JSObject key = database.key(keyId);
                 if (key == null) throw new IOException("安全密钥不存在");
                 String base = DirectImageApi.endpoint(key.getString("baseUrl", ""));
@@ -431,14 +436,27 @@ public class AndroidStoragePlugin extends Plugin {
                     if (references.isEmpty()) DirectImageApi.writeJson(connection, body);
                     else DirectImageApi.writeEdit(connection, body, references);
                 }
+                if (sdkTransport) {
+                    status = connection.getResponseCode();
+                    String payload = readDirectPayload(connection, status);
+                    call.resolve(new JSObject().put("status", status).put("body", DirectImageApi.redact(payload, secret))
+                        .put("headers", directResponseHeaders(connection)));
+                    return;
+                }
                 if (!"generate".equals(operation)) {
                     call.resolve(new JSObject(readResponse(connection)));
                     return;
                 }
-                int status = connection.getResponseCode();
+                status = connection.getResponseCode();
                 if (status < 200 || status >= 300) {
-                    readResponse(connection);
-                    throw new IOException("HTTP " + status);
+                    String payload = readDirectPayload(connection, status);
+                    JSObject upstream;
+                    try { upstream = new JSObject(payload); } catch (JSONException ignored) { upstream = new JSObject(); }
+                    org.json.JSONObject error = upstream.optJSONObject("error");
+                    String message = DirectImageApi.redact(error == null ? payload : error.optString("message", payload), secret);
+                    String code = error == null ? "http_" + status : error.optString("code", "http_" + status);
+                    call.resolve(directFailure("image", code, "HTTP " + status + ": " + message, status, connection, secret));
+                    return;
                 }
                 byte[] bytes = DirectImageApi.readImage(connection.getInputStream(), MAX_ASSET_BYTES);
                 DirectImageApi.Image image = DirectImageApi.validateImage(bytes, body.getString("output_format", "png"));
@@ -446,8 +464,14 @@ public class AndroidStoragePlugin extends Plugin {
             } catch (Exception exception) {
                 String message = exception.getMessage();
                 if (message == null || message.isEmpty()) message = "请检查接口地址和设备网络";
-                if (!secret.isEmpty()) message = message.replace(secret, "[API Key]");
-                call.reject("API 直连失败：" + message.substring(0, Math.min(message.length(), 400)));
+                message = DirectImageApi.redact(message, secret);
+                if (sdkTransport || "generate".equals(operation)) {
+                    String code = connection == null ? "invalid_request" : status >= 200 && status < 300 ? "invalid_response" : "network_error";
+                    call.resolve(directFailure(sdkTransport ? "agent" : "image", code, message,
+                        connection == null ? 400 : status, connection, secret));
+                } else {
+                    call.reject("API 直连失败：" + message.substring(0, Math.min(message.length(), 400)));
+                }
             } finally {
                 if (connection != null) {
                     if (!requestId.isEmpty()) directRequests.remove(requestId, connection);
@@ -455,6 +479,38 @@ public class AndroidStoragePlugin extends Plugin {
                 }
             }
         });
+    }
+
+    // One HTTP exchange only. The JS runner owns the shared, cancellable three-attempt budget.
+    private JSObject directResponseHeaders(HttpURLConnection connection) {
+        JSObject headers = new JSObject();
+        if (connection != null) {
+            for (String name : new String[] { "retry-after", "x-request-id" }) {
+                String value = connection.getHeaderField(name);
+                if (value != null) headers.put(name, DirectImageApi.redact(value, ""));
+            }
+        }
+        return headers;
+    }
+
+    private JSObject directFailure(String stage, String code, String message, int status,
+                                   HttpURLConnection connection, String secret) {
+        String cause = DirectImageApi.redact(message, secret);
+        cause = cause.substring(0, Math.min(cause.length(), 1200));
+        JSObject headers = directResponseHeaders(connection);
+        return new JSObject().put("ok", false).put("error", cause).put("headers", headers)
+            .put("errorDetails", new JSObject().put("stage", stage).put("code", DirectImageApi.redact(code, secret))
+                .put("status", status).put("cause", cause).put("lastCause", cause)
+                .put("diagnosticId", headers.optString("x-request-id", "")));
+    }
+
+    private String readDirectPayload(HttpURLConnection connection, int status) throws IOException {
+        InputStream stream = status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream();
+        if (stream == null) return "";
+        try (InputStream input = stream; java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
+            copy(input, output, 2 * 1024 * 1024);
+            return output.toString(StandardCharsets.UTF_8.name());
+        }
     }
 
     @PluginMethod

@@ -159,8 +159,12 @@ func (m *mobile) createGeneration(w http.ResponseWriter, r *http.Request, owner 
 
 func (m *mobile) publish(id credentialID, data object, terminal bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	accepted := m.tasks[id] != nil && m.tasks[id].cancel != nil
 	m.publishLocked(id, data, terminal)
+	m.mu.Unlock()
+	if terminal && accepted {
+		m.persistTerminal(id, data)
+	}
 }
 
 func (m *mobile) publishLocked(id credentialID, data object, terminal bool) {
@@ -196,6 +200,9 @@ func (m *mobile) taskState(w http.ResponseWriter, r *http.Request, owner string)
 		data = task.lastEvent
 	}
 	m.mu.Unlock()
+	if data == nil {
+		data, _ = m.g.store.terminalEvent(r.Context(), credentialID{owner, r.PathValue("id")})
+	}
 	if data == nil {
 		jsonError(w, http.StatusNotFound, "任务不存在")
 		return
@@ -292,6 +299,9 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 		if ctx.Err() != nil {
 			result["cancelled"] = true
 			result["error"] = "生成已取消"
+			if details := asObject(result["errorDetails"]); details == nil {
+				attachOperationFailure(result, operationError("image", ctx.Err(), 0, attemptLimit(m.g.cfg.imageAttempts)))
+			}
 		}
 		event := object{"type": "task_result", "result": result}
 		if key.BaseURL == m.g.cfg.publicBase {
@@ -314,14 +324,20 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 	m.publish(id, object{"type": "set_started", "setId": id.id, "requestedCount": opts.n, "prompt": req.Prompt, "imageModel": opts.model}, false)
 	prompt := req.Prompt
 	mode := objectString(req.Options, "reasoningMode")
-	if mode != "" && (mode != "instant" || settings != nil && settings.ReasoningModes[mode].Model != "") {
+	if isContinuation(req.Options) || mode != "" && (mode != "instant" || settings != nil && settings.ReasoningModes[mode].Model != "") {
 		var usage object
 		var err error
 		prompt, usage, err = m.preparePrompt(ctx, id, key, ip, req, settings)
 		if err != nil {
+			err = operationError("agent", err, 0, attemptLimit(m.g.cfg.agentAttempts))
 			result["error"] = err.Error()
 			attachRPMFailure(result, err)
-			result["items"] = failedItems(opts.n, err.Error())
+			attachOperationFailure(result, err)
+			failed := failedItems(opts.n, err.Error())
+			for _, item := range failed {
+				attachOperationFailure(item, err)
+			}
+			result["items"] = failed
 			return
 		}
 		result["prompt"], result["reasoningUsage"] = prompt, usage
@@ -329,14 +345,17 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 	items := make([]object, 0, opts.n)
 	for i := 0; i < opts.n && ctx.Err() == nil; i++ {
 		m.publish(id, object{"type": "item_started", "itemIndex": i}, false)
-		item, err := m.renderImage(ctx, id, key, ip, prompt, opts, refs, i)
+		item, err := m.renderImageWithRetry(ctx, id, key, ip, prompt, opts, refs, i)
 		if err != nil {
 			item = object{"ok": false, "itemIndex": i, "error": err.Error()}
 			result["error"] = err.Error()
 			attachRPMFailure(result, err)
 			attachRPMFailure(item, err)
+			attachOperationFailure(result, err)
+			attachOperationFailure(item, err)
 			failure := object{"type": "item_failed", "itemIndex": i, "error": err.Error()}
 			attachRPMFailure(failure, err)
+			attachOperationFailure(failure, err)
 			m.publish(id, failure, false)
 		} else {
 			result["ok"] = true

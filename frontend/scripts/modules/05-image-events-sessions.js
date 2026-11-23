@@ -1,3 +1,35 @@
+        function imageRequestErrorDetails(value) {
+            if (!value || typeof value !== 'object') return null;
+            const text = input => String(input || '').replace(/\bsk-[A-Za-z0-9_-]{8,}/gi, '[API Key]')
+                .replace(/Bearer\s+[^\s",}]+/gi, 'Bearer [redacted]').slice(0, 1200);
+            return { stage: text(value.stage), code: text(value.code), message: text(value.message),
+                attempts: Math.max(0, Number(value.attempts) || 0), maxAttempts: Math.max(0, Number(value.maxAttempts) || 0),
+                cause: text(value.cause || value.lastCause), lastCause: text(value.lastCause || value.cause),
+                status: Math.max(0, Number(value.status) || 0), diagnosticId: text(value.diagnosticId), retryable: value.retryable === true };
+        }
+
+        function imageRequestErrorMessage(message, value) {
+            const details = imageRequestErrorDetails(value);
+            const parts = [String(message || details?.message || details?.cause || '请求失败')];
+            if (!details) return parts[0];
+            const metadata = [];
+            if (details.stage) metadata.push(details.stage === 'image' ? '图片生成' : details.stage === 'agent' ? 'Agent' : details.stage);
+            if (details.attempts) metadata.push(`尝试 ${details.attempts}/${details.maxAttempts || details.attempts}`);
+            if (details.status) metadata.push(`HTTP ${details.status}`);
+            if (details.code) metadata.push(details.code);
+            if (metadata.length) parts.push(metadata.join(' · '));
+            if (details.cause && !parts[0].includes(details.cause)) parts.push(`具体原因：${details.cause}`);
+            if (details.diagnosticId && !parts[0].includes(details.diagnosticId)) parts.push(`诊断 ID：${details.diagnosticId}`);
+            return parts.join('\n');
+        }
+
+        function imageRequestRetryMessage(retry) {
+            if (!retry) return '';
+            const stage = retry.stage === 'image' ? '图片' : 'Agent';
+            const prefix = retry.waiting ? `等待 ${Math.max(1, Math.ceil(retry.delayMs / 1000))} 秒后` : '正在';
+            return `${stage} ${prefix}进行第 ${retry.attempt}/${retry.maxAttempts} 次尝试`;
+        }
+
         function confirmImageSubmission(requestId) {
             const pending = window.imageEditState.pendingSubmission;
             if (!pending || pending.requestId !== requestId) return;
@@ -24,6 +56,11 @@
                 }
                 return;
             }
+            if (event?.type === 'request_retry' && !event.setId) {
+                const status = document.getElementById('imageEditStatus');
+                if (status) status.textContent = imageRequestRetryMessage({ ...event, waiting: Number(event.delayMs) > 0 });
+                return;
+            }
             if (!event?.setId) return;
             const eventRequestId = String(event.requestId || '');
             const set = imageGenerationSetById(event.setId)
@@ -36,7 +73,28 @@
                 );
             if (eventRequestId) set.requestId = eventRequestId;
             confirmImageSubmission(eventRequestId || set.requestId);
-            if (event.type === 'set_started') {
+            if (event.type === 'request_retry') {
+                const retry = { stage: event.stage || 'image', attempt: Math.max(1, Number(event.attempt) || 1),
+                    maxAttempts: Math.max(1, Number(event.maxAttempts) || 3), delayMs: Math.max(0, Number(event.delayMs) || 0),
+                    cause: String(event.cause || ''), waiting: Number(event.delayMs) > 0 };
+                const item = Number.isInteger(event.itemIndex) ? set.items[event.itemIndex] : null;
+                const target = item || set;
+                target.retry = retry;
+                target.errorDetails = null;
+                if (item && item.status !== 'completed') {
+                    item.status = 'running';
+                    item.error = '';
+                    if (event.resetPreview) {
+                        Object.assign(item, { uri: '', previewUri: '', fullUri: '', path: '', result: null,
+                            revealFrames: [], partialIndex: 0, originalLoadAttempted: false });
+                    }
+                } else if (!item) set.reasoningStatus = 'running';
+                if (retry.waiting) setTimeout(() => {
+                    if (target.retry !== retry) return;
+                    retry.waiting = false;
+                    renderImageGenerationSets();
+                }, Math.min(2147483647, retry.delayMs));
+            } else if (event.type === 'set_started') {
                 set.requestedCount = Number(event.requestedCount) || set.requestedCount;
                 set.imageModel = event.imageModel || set.imageModel;
                 set.aspectRatio = event.aspectRatio || set.aspectRatio;
@@ -73,6 +131,7 @@
                     set.items.push({ itemIndex: set.items.length, status: 'queued', uri: '', previewUri: '', path: '', result: null, error: '', revealFrames: [], partialIndex: 0, partialTotal: 3 });
                 }
             } else if (event.type === 'react_started') {
+                if (set.retry) set.retry.waiting = false;
                 set.reasoningStatus = 'running';
                 set.reasoningMode = normalizeImageReasoningMode(event.mode || set.reasoningMode);
                 set.reasoningModel = event.model || '';
@@ -93,6 +152,7 @@
                 turn.completedAt = 0;
                 set.reasoningStatus = 'running';
             } else if (event.type === 'react_turn_delta') {
+                set.retry = null;
                 const turn = reasoningTurnByNumber(set, event.turn);
                 turn.text += event.delta || '';
                 set.reasoningSummary += event.delta || '';
@@ -145,6 +205,8 @@
                 if (!reasoningTurnsForSet(set).length) set.reasoningSummary += event.delta || '';
                 return;
             } else if (event.type === 'react_completed') {
+                set.retry = null;
+                set.errorDetails = null;
                 set.reasoningStatus = 'completed';
                 set.reasoningSummary = event.summary || set.reasoningSummary;
                 set.reasoningDurationMs = Math.max(0, Number(event.reasoningDurationMs) || set.reasoningDurationMs);
@@ -179,10 +241,13 @@
                 });
             } else if (event.type === 'react_failed') {
                 set.reasoningStatus = 'failed';
+                set.retry = null;
+                set.errorDetails = imageRequestErrorDetails(event.errorDetails);
                 set.reasoningSummary = event.error || '思维处理失败';
                 set.reasoningCompletedAt ||= Date.now();
                 const turn = activeReasoningTurn(set) || reasoningTurnByNumber(set, 1);
                 turn.status = 'failed';
+                turn.text = set.reasoningSummary;
                 turn.completedAt ||= Date.now();
             } else if (Number.isInteger(event.itemIndex) && set.items[event.itemIndex]) {
                 const item = set.items[event.itemIndex];
@@ -190,7 +255,8 @@
                     setId: set.setId,
                     itemIndex: event.itemIndex
                 });
-                if (event.type === 'item_started') item.status = 'running';
+                if (event.type === 'item_started') { item.status = 'running'; if (item.retry) item.retry.waiting = false; }
+                if (['item_partial', 'item_completed', 'item_failed'].includes(event.type)) item.retry = null;
                 if (event.type === 'item_partial' && item.status !== 'completed') {
                     const previousPartialIndex = Number(item.partialIndex) || 0;
                     const incomingPartialIndex = Number(event.partialIndex) || previousPartialIndex + 1;
@@ -233,10 +299,15 @@
                 if (event.type === 'item_failed') {
                     item.status = 'failed';
                     item.error = event.error || '生成失败';
+                    item.errorDetails = imageRequestErrorDetails(event.errorDetails);
                 }
             }
             if (event.type === 'set_completed') {
                 const wasRunning = set.status === 'running';
+                set.retry = null;
+                set.errorDetails = imageRequestErrorDetails(event.errorDetails) || set.errorDetails;
+                set.items.forEach(item => { item.retry = null; });
+                if (set.reasoningStatus === 'running') set.reasoningStatus = event.errorDetails?.stage === 'agent' ? 'failed' : 'completed';
                 set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage);
                 if (Array.isArray(event.webReferences)) {
                     set.webReferences = event.webReferences.map(reference => ({ ...reference }));
@@ -266,6 +337,7 @@
                         } else {
                             set.items[itemIndex].status = 'failed';
                             set.items[itemIndex].error = result.error || '生成失败';
+                            set.items[itemIndex].errorDetails = imageRequestErrorDetails(result.errorDetails || event.errorDetails);
                         }
                     });
                 }
@@ -274,11 +346,13 @@
             }
             if (event.type === 'set_cancelled') {
                 set.status = 'cancelled';
+                set.retry = null;
                 set.reasoningStatus = set.reasoningStatus === 'running' ? 'cancelled' : set.reasoningStatus;
                 set.reasoningCompletedAt ||= Date.now();
                 set.items.forEach(item => {
                     if (item.status === 'completed') return;
                     item.status = 'cancelled';
+                    item.retry = null;
                     item.error = event.error || '生成已停止';
                 });
             }
@@ -306,7 +380,13 @@
                 || createImageGenerationSet(resultSetId, result.requestedCount || 1, result.prompt || '', result);
             const wasRunning = set.status === 'running';
             set.requestId ||= String(result?.requestId || requestId || resultSetId);
+            set.retry = null;
+            set.errorDetails = imageRequestErrorDetails(result.errorDetails) || set.errorDetails;
             set.status = result.cancelled ? 'cancelled' : result.ok ? 'completed' : 'failed';
+            if (set.reasoningStatus === 'running' || result.errorDetails?.stage === 'agent') {
+                set.reasoningStatus = result.cancelled ? 'cancelled' : result.errorDetails?.stage === 'agent' ? 'failed' : 'completed';
+                if (set.reasoningStatus === 'failed') set.reasoningSummary = result.error || result.errorDetails?.cause || '思维处理失败';
+            }
             set.sessionId = result.sessionId || set.sessionId;
             set.parentSetId = result.parentSetId || set.parentSetId;
             set.roundNumber = Number(result.roundNumber) || set.roundNumber;
@@ -357,6 +437,8 @@
                     ? { ...(item.result || {}), ...resultItem, fullUri: item.fullUri }
                     : null;
                 item.error = resultItem.error || '';
+                item.retry = null;
+                item.errorDetails = imageRequestErrorDetails(resultItem.errorDetails || result.errorDetails);
             });
             set.items.forEach(item => {
                 if (result.cancelled && item.status !== 'completed') {
@@ -1006,7 +1088,8 @@
                     finalStatus = '任务已停止，已完成图片已保留';
                     return;
                 }
-                if (!result.ok) throw new Error(result.error || '图片生成失败');
+                syncImageGenerationResult(result, requestId);
+                if (!result.ok) throw Object.assign(new Error(result.error || '图片生成失败'), { errorDetails: result.errorDetails });
                 syncImageGenerationResult(result, requestId);
                 const currentSession = window.imageEditState.editSession;
                 if (session
@@ -1020,15 +1103,19 @@
                 const failedSet = imageGenerationSetById(requestId);
                 if (failedSet) {
                     failedSet.status = 'failed';
+                    failedSet.retry = null;
+                    failedSet.errorDetails = imageRequestErrorDetails(error.errorDetails) || failedSet.errorDetails;
                     failedSet.items.forEach(item => {
                         if (!['completed', 'failed'].includes(item.status)) {
                             item.status = 'failed';
                             item.error = error.message || String(error);
+                            item.retry = null;
+                            item.errorDetails = imageRequestErrorDetails(error.errorDetails) || failedSet.errorDetails;
                         }
                     });
                     renderImageGenerationSets();
                 }
-                finalStatus = error.message || String(error);
+                finalStatus = imageRequestErrorMessage(error.message || String(error), error.errorDetails);
                 showToast(finalStatus, 'error');
             } finally {
                 confirmImageSubmission(requestId);

@@ -108,6 +108,9 @@ func openStore(path, secret string) (*store, error) {
 		  PRIMARY KEY (pool,hour,key_id)
 		);
 		CREATE TABLE IF NOT EXISTS gateway_settings (name TEXT PRIMARY KEY, value BLOB NOT NULL);
+		CREATE TABLE IF NOT EXISTS task_terminal_events (owner TEXT NOT NULL, task_id TEXT NOT NULL,
+		  created INTEGER NOT NULL, value BLOB NOT NULL, PRIMARY KEY(owner,task_id));
+		CREATE INDEX IF NOT EXISTS terminal_events_created ON task_terminal_events(created);
 		CREATE TABLE IF NOT EXISTS quota_periods (
 		  key_id TEXT NOT NULL REFERENCES access_keys(id), window TEXT NOT NULL, start_ms INTEGER NOT NULL,
 		  after_request INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(key_id,window)

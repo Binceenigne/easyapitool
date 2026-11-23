@@ -66,6 +66,8 @@ func (pendingImageBody) Close() error { return nil }
 
 type upstreamNotSentError struct{ error }
 
+type imageRetryOwnerContextKey struct{}
+
 func (e *upstreamNotSentError) Unwrap() error { return e.error }
 
 func unsentImageUsage(err error) *meter {
@@ -94,7 +96,8 @@ func (t *egressTransport) imageRoundTrip(req *http.Request) (*http.Response, err
 			return response, err
 		}
 		unsent := &upstreamNotSentError{err}
-		if attempt != 0 || req.Context().Err() != nil || !retryImageConnection(err) {
+		owned, _ := req.Context().Value(imageRetryOwnerContextKey{}).(bool)
+		if owned || attempt != 0 || req.Context().Err() != nil || !retryImageConnection(err) {
 			return nil, unsent
 		}
 		log.Printf("retrying unsent image connection path=%s reason=%s", req.URL.Path, upstreamFailureReason(err))
