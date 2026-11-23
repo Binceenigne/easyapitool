@@ -82,7 +82,7 @@ class PairingTests(unittest.TestCase):
 
         self.assertIn('android:allowBackup="false"', manifest)
         self.assertIn('"CREATE TABLE IF NOT EXISTS api_keys ("', plugin)
-        self.assertIn("database.upsertKey(keyId, name, encrypt(value));", plugin)
+        self.assertIn("database.upsertKey(keyId, name, encrypt(value), endpoint);", plugin)
         self.assertIn("getSecureKeyStore().edit().clear().apply();", plugin)
         self.assertNotIn("migrateSecureKeys", plugin)
         self.assertIn('Environment.DIRECTORY_DCIM + "/API_TOOLS"', plugin)
@@ -102,7 +102,7 @@ class PairingTests(unittest.TestCase):
         self.assertNotIn("dataset.promptFocused", initializer)
         self.assertIn("resetKeyboardLayoutScroll", initializer)
         self.assertIn("pageZoomViewport').scrollTop = 0", initializer)
-        self.assertIn("dataset.keyboardVisible === 'true'", image_controls)
+        self.assertIn("textarea.scrollHeight > textarea.clientHeight + 1", image_controls)
         self.assertIn("self.service.events.wait_since", asgi)
         self.assertIn("owner,", asgi)
         self.assertIn('"X-Event-Epoch": self.service.events.epoch', asgi)
@@ -339,7 +339,7 @@ class PairingTests(unittest.TestCase):
             PROJECT_ROOT / "frontend" / "scripts" / "modules" / "02-image-controls.js"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("const aspectRatio = window.imageEditState.aspectRatio;", events)
+        self.assertIn("const aspectRatio = effectiveImageRatio();", events)
         self.assertIn("function visibleImagePrompt(prompt)", controls)
         self.assertIn("const finalPrompt = visibleImagePrompt(prompt);", events)
         self.assertNotIn("imageGenerationConstraintSuffixes", events)

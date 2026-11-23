@@ -12,13 +12,13 @@
             extra: '延长思维链，持续推演与优化',
             max: '使用顶级模型持续反思，获得最优结果'
         };
-        const IMAGE_REASONING_TRACK_GRADIENTS = [
-            'linear-gradient(90deg, #64748b 0%, #94a3b8 100%)',
-            'linear-gradient(90deg, #a9dcff 0%, #86ceff 42%, #a8c9ff 100%)',
-            'linear-gradient(90deg, #9fcaff 0%, #8fddff 48%, #b5e8ff 100%)',
-            'linear-gradient(90deg, #6b95f4 0%, #5d6ff2 48%, #8170f5 100%)',
-            'linear-gradient(90deg, #aeaaff 0%, #c4b7ff 50%, #dfd3ff 100%)',
-            'linear-gradient(90deg, #aebcff 0%, #c2b0ff 32%, #dfcdff 64%, #b7ddff 100%)'
+        const IMAGE_REASONING_TRACK_COLORS = [
+            ['#64748b', '#74849a', '#8494a9', '#94a3b8'],
+            ['#a9dcff', '#90d3ff', '#91cdff', '#a8c9ff'],
+            ['#9fcaff', '#92d6ff', '#9ce1ff', '#b5e8ff'],
+            ['#6b95f4', '#5d6ff2', '#6c70f4', '#8170f5'],
+            ['#aeaaff', '#bdb3ff', '#d0c4ff', '#dfd3ff'],
+            ['#aebcff', '#c2b0ff', '#dfcdff', '#b7ddff']
         ];
         const IMAGE_REASONING_PULSE_PALETTES = {
             flash: ['#8fd3ff', '#b9e6ff', '#79c7ff', '#9fbfff', '#d8f3ff'],
@@ -80,10 +80,8 @@
             max: '在所选模型支持时使用最高思考档，适合最难的任务，等待时间可能更长。'
         };
         const IMAGE_REASONING_HOVER_PLAYBACK_RATE = 2.5;
-        let imageReasoningGradientTimer = 0;
         let imageReasoningPulseTimer = 0;
         let imageReasoningMaxTransitionTimer = 0;
-        let activeImageReasoningGradient = IMAGE_REASONING_TRACK_GRADIENTS[0];
 
         function normalizeImageReasoningMode(mode) {
             const cleanMode = String(mode || 'instant').toLowerCase();
@@ -594,7 +592,6 @@
             const sliderFill = document.getElementById('sliderTrackFill');
             const sliderThumb = document.getElementById('sliderThumb');
             const sliderCurrent = document.getElementById('sliderGradientCurrent');
-            const sliderNext = document.getElementById('sliderGradientNext');
             sliderFill.style.transform = `translate3d(0, 0, 0) scaleX(${percentage / 100})`;
             sliderThumb.style.left = `${percentage}%`;
             sliderTrack.setAttribute('aria-valuenow', String(modeIndex));
@@ -617,21 +614,9 @@
             } else if (!sliderTrack.classList.contains('is-max-entering')) {
                 sliderTrack.classList.add('is-max-settled');
             }
-            const nextGradient = IMAGE_REASONING_TRACK_GRADIENTS[modeIndex];
-            window.clearTimeout(imageReasoningGradientTimer);
-            if (nextGradient !== activeImageReasoningGradient) {
-                sliderNext.style.background = nextGradient;
-                sliderNext.classList.remove('is-blending');
-                void sliderNext.offsetWidth;
-                sliderNext.classList.add('is-blending');
-                imageReasoningGradientTimer = window.setTimeout(() => {
-                    sliderCurrent.style.background = nextGradient;
-                    sliderNext.classList.remove('is-blending');
-                    activeImageReasoningGradient = nextGradient;
-                }, 540);
-            } else {
-                sliderNext.classList.remove('is-blending');
-            }
+            IMAGE_REASONING_TRACK_COLORS[modeIndex].forEach((color, index) => {
+                sliderCurrent.style.setProperty('--reasoning-track-color-' + index, color);
+            });
             const badge = document.getElementById('reasoningBadge');
             badge.textContent = IMAGE_REASONING_LABELS[cleanMode];
             badge.dataset.mode = cleanMode;

@@ -13,7 +13,7 @@
             document.documentElement.dataset.themeMode = ['light', 'dark', 'system'].includes(theme) ? theme : 'system';
         })();
     </script>
-    <link rel="stylesheet" href="styles/app.css?v=47">
+    <link rel="stylesheet" href="styles/app.css?v=48">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -179,6 +179,11 @@
                     <div class="image-generation-footer">
                         <span id="imageEditStatus" role="status">填写提示词即可生成，参考图可选</span>
                         <div class="image-generation-command-bar">
+                            <div id="imageModelControl" class="image-model-control">
+                                <span id="imageModelLabel" hidden data-image-tip="选择负责生成或编辑图片的模型。模型决定可用的画质、构图复杂度和输出格式。">图片模型</span>
+                                <i data-lucide="image" aria-hidden="true"></i>
+                                <div id="imageModelChoices" class="image-choice" aria-labelledby="imageModelLabel"></div>
+                            </div>
                             <div class="image-generation-controls-wrap">
                                 <button type="button" id="imageGenerationControlsButton" aria-expanded="false" onclick="toggleImageGenerationControls()">
                                     <i data-lucide="settings-2" aria-hidden="true"></i>
@@ -186,19 +191,13 @@
                                         <strong id="imageGenerationQualitySummary" data-quality="auto">自动细节</strong>
                                         <span aria-hidden="true">·</span>
                                         <span id="imageGenerationRatioSummary">智能</span>
-                                        <span aria-hidden="true">·</span>
-                                            <span id="imageGenerationModelSummary">2.0</span>
-                                            <span aria-hidden="true">·</span>
-                                        <span id="imageGenerationCountSummary">1 张</span>
+                                        <span id="imageGenerationResolutionDivider" aria-hidden="true">·</span>
+                                        <span id="imageGenerationResolutionSummary" data-resolution="sd">标清</span>
                                     </span>
                                     <i data-lucide="chevron-up" aria-hidden="true"></i>
                                 </button>
                                 <div id="imageGenerationControlPanel" class="image-generation-popover" hidden>
                                     <div class="image-generation-control-grid image-generation-model-row">
-                                        <div class="image-control-section">
-                                            <span id="imageModelLabel" tabindex="0" data-image-tip="选择负责生成或编辑图片的模型。模型决定可用的画质、规划深度和输出格式。">模型</span>
-                                            <div id="imageModelChoices" class="image-choice" aria-labelledby="imageModelLabel"></div>
-                                        </div>
                                         <div id="imageComplexitySection" class="image-control-section" hidden>
                                             <span id="imageComplexityLabel" tabindex="0" data-image-tip="控制模型在渲染前用于规划画面的思考量，影响构图、文字排版和指令遵循。较高档位通常需要更久。">复杂度</span>
                                             <div id="imageComplexityChoices" class="image-choice" aria-labelledby="imageComplexityLabel"></div>
@@ -232,12 +231,12 @@
                                                 </div>
                                             </div>
                                         </div>
-                                        <section class="image-control-section">
+                                        <section id="imageBackgroundSection" class="image-control-section">
                                         <span tabindex="0" data-image-tip="指定背景是否透明。选择 PNG 或 WebP 才能用透明背景参数；JPEG、GIF 和 SVG 遵循各自的格式设置。">背景</span>
                                         <div id="imageTransparencyButtons" class="image-control-segmented" role="group" aria-label="图片透明度">
-                                            <button type="button" class="is-active" data-transparency="auto" data-image-tip="由模型根据提示词和画面决定是否生成透明背景。" aria-pressed="true" onclick="setImageTransparency('auto')">自动</button>
-                                            <button type="button" data-transparency="opaque" data-image-tip="输出不透明图片，适合完整场景、照片和带背景的插画。" aria-pressed="false" onclick="setImageTransparency('opaque')">不透明</button>
-                                            <button type="button" data-transparency="transparent" data-image-tip="要求模型保留透明通道，适合抠图、贴纸、标志和可叠放素材。" aria-pressed="false" onclick="setImageTransparency('transparent')">透明</button>
+                                            <button type="button" class="is-active" data-transparency="auto" data-image-tip="由模型根据提示词和画面决定是否生成透明背景。" aria-pressed="true" onclick="setImageTransparency('auto')"><i data-lucide="circle-dashed" aria-hidden="true"></i><span>自动</span></button>
+                                            <button type="button" data-transparency="opaque" data-image-tip="输出不透明图片，适合完整场景、照片和带背景的插画。" aria-pressed="false" onclick="setImageTransparency('opaque')"><i data-lucide="square" aria-hidden="true"></i><span>不透明</span></button>
+                                            <button type="button" data-transparency="transparent" data-image-tip="要求模型保留透明通道，适合抠图、贴纸、标志和可叠放素材。" aria-pressed="false" onclick="setImageTransparency('transparent')"><i data-lucide="blend" aria-hidden="true"></i><span>透明</span></button>
                                         </div>
                                     </section>
                                     </div>
@@ -291,7 +290,6 @@
                                                 <div class="slider-track-bg">
                                                     <div id="sliderTrackFill" class="slider-track-fill" style="transform: translate3d(0, 0, 0) scaleX(0);">
                                                         <span id="sliderGradientCurrent" class="slider-gradient-layer slider-gradient-current"></span>
-                                                        <span id="sliderGradientNext" class="slider-gradient-layer slider-gradient-next"></span>
                                                     </div>
                                                 </div>
                                                 <div class="slider-dots" aria-hidden="true">
@@ -933,8 +931,8 @@
     <script src="scripts/modules/00-core-ui.js?v=2"></script>
     <script src="scripts/android-bridge.js?v=8"></script>
     <script src="scripts/modules/01-app-state.js?v=4"></script>
-    <script src="scripts/modules/02-image-controls.js?v=8"></script>
-    <script src="scripts/modules/03-image-reasoning.js?v=3"></script>
+    <script src="scripts/modules/02-image-controls.js?v=9"></script>
+    <script src="scripts/modules/03-image-reasoning.js?v=4"></script>
     <script src="scripts/modules/04-image-stream-rendering.js?v=1"></script>
     <script src="scripts/modules/05-image-events-sessions.js?v=7"></script>
     <script src="scripts/modules/06-backend-bridge.js?v=3"></script>
