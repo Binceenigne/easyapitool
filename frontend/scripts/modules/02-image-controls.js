@@ -407,7 +407,14 @@
             if (tierLocked) {
                 button.dataset.imageTip = button.dataset.imageTip?.includes(reason) ? button.dataset.imageTip : `${reason}。${button.dataset.imageTip || ''}`;
                 button.title = reason;
-                if (!button.querySelector('.image-tier-lock')) button.insertAdjacentHTML('beforeend', '<span class="image-tier-lock" aria-hidden="true">' + iconMarkup('lock-keyhole') + '</span>');
+                const host = button.matches('.web-search-row') ? button.querySelector('.web-search-label')
+                    : button.matches('.advanced-entry-row') ? button.querySelector('.advanced-entry-hint') : button;
+                let lock = button.querySelector('.image-tier-lock');
+                if (!lock) {
+                    lock = document.createElement('span'); lock.className = 'image-tier-lock'; lock.setAttribute('aria-hidden', 'true');
+                    lock.innerHTML = iconMarkup('lock-keyhole');
+                }
+                if (host && lock.parentElement !== host) host.append(lock);
             } else {
                 button.querySelector('.image-tier-lock')?.remove();
                 if (button.title === reason) button.removeAttribute('title');
@@ -665,6 +672,7 @@
             button.setAttribute('aria-expanded', 'false');
 
             const label = document.createElement('span');
+            label.className = 'image-choice-label';
             label.id = container.id + 'Value';
             button.append(label);
             button.insertAdjacentHTML('beforeend', iconMarkup('chevron-down'));
@@ -690,7 +698,8 @@
                 option.tabIndex = -1;
                 option.setAttribute('role', 'option');
                 option.dataset.value = value;
-                option.textContent = text;
+                const words = document.createElement('span'); words.className = 'image-choice-label'; words.textContent = text;
+                option.append(words);
                 if (tip) option.dataset.imageTip = tip;
                 applyImageChoiceAvailability(option, disabled || availability.disabled, availability.tierLocked);
                 return option;
@@ -784,7 +793,8 @@
                         const button = document.createElement('button');
                         button.type = 'button';
                         button.dataset.value = item;
-                        button.textContent = label;
+                        const words = document.createElement('span'); words.className = 'image-choice-label'; words.textContent = label;
+                        button.append(words);
                         if (icons[item]) button.insertAdjacentHTML('afterbegin', iconMarkup(icons[item]));
                         if (tip) button.dataset.imageTip = tip;
                         applyImageChoiceAvailability(button, disabled || availability.disabled, availability.tierLocked);

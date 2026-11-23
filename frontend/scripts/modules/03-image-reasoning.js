@@ -261,8 +261,8 @@
             const entry = document.getElementById('advancedEntryButton');
             entry.hidden = false;
             const advanced = imageAdvancedAllowed();
-            applyImageChoiceAvailability(entry, !advanced, !advanced);
             entry.querySelector('.advanced-entry-hint').textContent = advanced ? '矩阵调控' : '当前档位未开放';
+            applyImageChoiceAvailability(entry, !advanced, !advanced);
             entry.dataset.imageTip = advanced ? '进入模型和深度矩阵，只能选择当前模型与档位允许的节点。' : '当前档位未开放高级模式或没有可用的模型与深度组合。';
             if (state.reasoningAdvanced && !advanced) { returnToNormalImageReasoningMode(false); }
             if (!state.reasoningAdvanced && !availableImageReasoningModes().includes(mode)) { setImageReasoningMode('instant', false); }
