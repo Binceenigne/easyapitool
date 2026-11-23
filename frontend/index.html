@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="styles/app.css?v=38">
+    <link rel="stylesheet" href="styles/app.css?v=39">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -188,14 +188,7 @@
                                     <div class="image-generation-control-grid image-generation-model-row">
                                         <div class="image-control-section">
                                             <span id="imageModelLabel">模型</span>
-                                            <div id="imageModelChoices" class="image-choice" aria-labelledby="imageModelLabel" hidden></div>
-                                            <div id="imageModelPicker" class="image-model-picker">
-                                                <button id="imageModelButton" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="imageModelMenu" aria-labelledby="imageModelLabel imageModelValue">
-                                                    <span id="imageModelValue">2.0</span>
-                                                    <i data-lucide="chevron-down" aria-hidden="true"></i>
-                                                </button>
-                                                <div id="imageModelMenu" class="image-model-menu" role="listbox" aria-labelledby="imageModelLabel" hidden></div>
-                                            </div>
+                                            <div id="imageModelChoices" class="image-choice" aria-labelledby="imageModelLabel"></div>
                                         </div>
                                         <div class="image-control-section">
                                             <span id="imageComplexityLabel" tabindex="0" data-image-tip="模型的内部思考深度，影响构图和指令遵循">复杂度</span>
@@ -949,12 +942,12 @@
     <script src="vendor/lucide/lucide.min.js"></script>
     <script src="scripts/modules/00-core-ui.js?v=2"></script>
     <script src="scripts/modules/01-app-state.js?v=3"></script>
-    <script src="scripts/modules/02-image-controls.js?v=4"></script>
+    <script src="scripts/modules/02-image-controls.js?v=5"></script>
     <script src="scripts/modules/03-image-reasoning.js?v=3"></script>
     <script src="scripts/modules/04-image-stream-rendering.js?v=1"></script>
     <script src="scripts/modules/05-image-events-sessions.js?v=4"></script>
     <script src="scripts/modules/06-backend-bridge.js?v=2"></script>
-    <script src="scripts/modules/07-page-initializer.js?v=3"></script>
+    <script src="scripts/modules/07-page-initializer.js?v=4"></script>
     <script src="scripts/modules/08-window-settings-updates.js?v=4"></script>
     <script src="scripts/modules/09-modals-input-refresh.js?v=1"></script>
     <script src="scripts/modules/10-dashboard-rendering.js?v=3"></script>

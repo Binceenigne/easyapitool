@@ -2449,7 +2449,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("function visibleImagePrompt(prompt)", controls)
         self.assertIn("const finalPrompt = visibleImagePrompt(prompt);", page)
         self.assertNotIn("imageGenerationConstraintSuffixes", page)
-        self.assertIn('id="imageModelPicker"', page)
+        self.assertIn('id="imageModelChoices"', page)
         self.assertIn('id="imageTransparencyButtons"', page)
         self.assertIn("is-transparency-preview", rendering)
         self.assertIn("createImageGenerationSet(requestId, imageCount, finalPrompt", page)

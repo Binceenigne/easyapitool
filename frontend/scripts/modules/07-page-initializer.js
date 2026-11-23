@@ -10,7 +10,7 @@
             initializeImageReasoningSlider();
             initializeImageAdvancedReasoningMatrix();
             initializeImageReasoningHoverPlayback();
-            initializeImageModelPicker();
+            initializeImageOptionTooltips();
             restoreImageGenerationPreferences();
             window.setInterval(updateReasoningTimers, 1000);
 
@@ -109,7 +109,7 @@
             });
             document.addEventListener('pointerdown', event => {
                 if (!event.target.closest('#keySwitcher, #keySwitcherMenu')) closeKeySwitcher();
-                if (!event.target.closest('#imageModelPicker')) closeImageModelPicker();
+                if (activeImagePicker && !activeImagePicker.contains(event.target)) closeImagePicker();
                 if (!event.target.closest('#imageGenerationControlPanel, #imageGenerationControlsButton')) {
                     closeImageGenerationControls();
                 }
