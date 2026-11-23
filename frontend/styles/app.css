@@ -1429,10 +1429,64 @@ html.dark #keySwitcherMenu {
 
 .image-generation-command-bar {
   position: relative;
+  display: grid;
+  grid-template-columns: clamp(82px, 23%, 108px) minmax(0, 1fr) auto;
+  align-items: stretch;
   width: 100%;
   min-width: 0;
-  justify-content: space-between;
   gap: 6px;
+}
+
+.image-model-control {
+  position: relative;
+  min-width: 0;
+}
+
+.image-model-control > svg, .image-model-control > i {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 9px;
+  width: 13px;
+  height: 13px;
+  color: var(--image-purple);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+#imageModelChoices {
+  --image-choice-height: 40px;
+  --image-choice-shadow: 0 1px 3px rgba(15, 23, 42, .08);
+}
+
+#imageModelChoices > .image-choice-trigger {
+  min-height: 34px;
+  padding: 5px 8px 5px 28px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: linear-gradient(180deg, var(--bg), var(--surface));
+  color: var(--text-soft);
+  font-size: 10px;
+}
+
+#imageModelChoices .image-choice-menu {
+  z-index: 56;
+  min-width: min(210px, 100vw - 32px);
+}
+
+#imageModelChoices .image-choice-menu [aria-selected=true] {
+  color: var(--image-purple);
+}
+
+html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, #imageModelControl, .image-generation-controls-wrap) {
+  --bg: #334155;
+  --surface: #1e293b;
+  --surface-strong: #263449;
+  --border: #475569;
+  --border-soft: #3b4b63;
+  --text: #e2e8f0;
+  --text-soft: #cbd5e1;
+  --muted: #9aaec8;
 }
 
 .image-generation-controls-wrap {
@@ -1509,6 +1563,18 @@ html.dark #keySwitcherMenu {
   color: var(--image-purple);
 }
 
+#imageGenerationResolutionSummary[data-resolution=sd] {
+  color: var(--image-blue);
+}
+
+#imageGenerationResolutionSummary[data-resolution=hd] {
+  color: #6874c9;
+}
+
+#imageGenerationResolutionSummary[data-resolution=uhd] {
+  color: var(--image-purple);
+}
+
 #imageGenerationControlPanel {
   --image-choice-height: 40px;
   --image-choice-shadow: 0 1px 5px rgba(2, 6, 23, .14);
@@ -1521,12 +1587,12 @@ html.dark #keySwitcherMenu {
   display: grid;
   width: var(--image-popover-width, 100%);
   padding: 16px;
-  gap: 12px;
+  gap: 6px;
   max-height: var(--image-popover-max-height);
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 13px;
   background: var(--surface);
   box-shadow: 0 18px 52px rgba(2, 6, 23, 0.2), 0 2px 10px rgba(2, 6, 23, 0.1);
   opacity: 0;
@@ -1569,7 +1635,7 @@ html.dark #keySwitcherMenu {
 .image-generation-control-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 #imageGenerationControlPanel [hidden] {
@@ -1580,16 +1646,12 @@ html.dark #keySwitcherMenu {
   min-width: 0;
 }
 
-.image-generation-model-row {
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.8fr) minmax(0, 1fr);
-}
-
-.image-generation-model-row:has(#imageComplexitySection[hidden]) {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.image-generation-model-row:has(> [hidden]) {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .image-generation-model-row:has(#imageComplexitySection[hidden]):has(#imageResolutionSection[hidden]) {
-  grid-template-columns: minmax(0, 1fr);
+  display: none;
 }
 
 .image-output-row {
@@ -1640,7 +1702,7 @@ html.dark #keySwitcherMenu {
   max-width: min(240px, 100vw - 14px);
   padding: 6px 8px;
   border-radius: 5px;
-  background: #111;
+  background: #27303d;
   color: #fff;
   font: 12px/1.4 system-ui, sans-serif;
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.24);
@@ -1833,6 +1895,10 @@ html.dark #keySwitcherMenu {
 }
 
 .image-control-segmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   min-width: 0;
   min-height: calc(var(--image-choice-height) - 6px);
   padding: 4px 1px;
@@ -1844,6 +1910,12 @@ html.dark #keySwitcherMenu {
   color: var(--muted);
   font-size: 10px;
   transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.image-control-segmented button > :is(svg, i) {
+  flex: none;
+  width: 12px;
+  height: 12px;
 }
 
 .image-control-segmented button:hover:not(:disabled) {
@@ -1875,8 +1947,7 @@ html.dark #keySwitcherMenu {
   color: color-mix(in srgb, var(--warn) 64%, var(--text));
 }
 
-#imageQualityChoices .is-active:is([data-value=high], [data-value=xhigh], [data-value=max]),
-#imageOutputChoices :is(.is-active, .image-choice-trigger, [aria-selected=true])[data-value=png] {
+#imageQualityChoices .is-active:is([data-value=high], [data-value=xhigh], [data-value=max]) {
   color: var(--image-purple);
 }
 
@@ -1886,6 +1957,55 @@ html.dark #keySwitcherMenu {
 
 #imageQualityChoices:has(.is-active:is([data-value=high], [data-value=xhigh], [data-value=max])) {
   --choice-marker-fill: var(--image-purple-soft);
+}
+
+#imageGenerationControlPanel :is(.image-choice-trigger, .image-aspect-options button.is-active),
+#imageGenerationControlPanel .image-choice-menu button {
+  color: color-mix(in srgb, var(--text) 82%, var(--muted));
+}
+
+#imageResolutionChoices .is-active[data-value=sd] {
+  color: var(--image-blue);
+}
+
+#imageResolutionChoices .is-active[data-value=hd] {
+  color: color-mix(in srgb, var(--image-blue) 50%, var(--image-purple));
+}
+
+#imageResolutionChoices .is-active[data-value=uhd] {
+  color: var(--image-purple);
+}
+
+#imageTransparencyButtons .is-active[data-transparency=auto] {
+  color: color-mix(in srgb, var(--text) 72%, var(--muted));
+}
+
+#imageTransparencyButtons .is-active[data-transparency=opaque] {
+  color: var(--text-soft);
+}
+
+#imageTransparencyButtons .is-active[data-transparency=transparent] {
+  color: color-mix(in srgb, var(--image-blue) 55%, var(--good));
+}
+
+#imageGenerationControlPanel #imageOutputChoices :is(.is-active, .image-choice-trigger, [aria-selected=true])[data-value=png] {
+  color: var(--image-purple);
+}
+
+#imageGenerationControlPanel #imageOutputChoices :is(.is-active, .image-choice-trigger, [aria-selected=true])[data-value=jpeg] {
+  color: color-mix(in srgb, var(--warn) 65%, var(--text));
+}
+
+#imageGenerationControlPanel #imageOutputChoices :is(.is-active, .image-choice-trigger, [aria-selected=true])[data-value=webp] {
+  color: color-mix(in srgb, var(--good) 64%, var(--text));
+}
+
+#imageGenerationControlPanel #imageOutputChoices :is(.is-active, .image-choice-trigger, [aria-selected=true])[data-value=gif] {
+  color: var(--image-blue);
+}
+
+#imageGenerationControlPanel #imageOutputChoices :is(.is-active, .image-choice-trigger, [aria-selected=true])[data-value=svg] {
+  color: var(--image-purple);
 }
 
 .image-control-segmented, .image-aspect-options {
@@ -2326,7 +2446,7 @@ html.dark #keySwitcherMenu {
   gap: 12px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.94);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
   box-shadow: 0 12px 30px rgba(2, 6, 23, 0.18);
   opacity: 0;
   pointer-events: none;
@@ -2404,7 +2524,7 @@ html.dark #keySwitcherMenu {
   position: absolute;
   inset: 0;
   border-radius: 20px;
-  background-color: #cbd5e1;
+  background-color: var(--border);
   cursor: pointer;
   transition: background-color 200ms ease;
 }
@@ -2454,7 +2574,7 @@ html.dark #keySwitcherMenu {
   display: flex;
   align-items: center;
   gap: 4px;
-  color: #64748b;
+  color: var(--text-soft);
   font-size: 11px;
   font-weight: 600;
 }
@@ -2465,7 +2585,7 @@ html.dark #keySwitcherMenu {
 }
 
 .reasoning-current-badge {
-  color: #5b8def;
+  color: var(--image-blue);
   font-size: 10px;
   font-weight: 700;
   transition: color 300ms ease;
@@ -2523,7 +2643,7 @@ html.dark #keySwitcherMenu {
   height: 16px;
   overflow: hidden;
   border-radius: 999px;
-  background-color: #e2e8f0;
+  background-color: var(--border-soft);
   backface-visibility: hidden;
   transform: translate3d(0, 0, 0);
   will-change: transform;
@@ -2554,18 +2674,29 @@ html.dark #keySwitcherMenu {
   will-change: opacity;
 }
 
+@property --reasoning-track-color-0 {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #64748b;
+}
+@property --reasoning-track-color-1 {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #74849a;
+}
+@property --reasoning-track-color-2 {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #8494a9;
+}
+@property --reasoning-track-color-3 {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #94a3b8;
+}
 .slider-gradient-current {
-  background: linear-gradient(90deg, #b7c5ff 0%, #c9baff 34%, #e1d4ff 66%, #b8dcff 100%);
-}
-
-.slider-gradient-next {
-  background: linear-gradient(90deg, #b7c5ff 0%, #c9baff 34%, #e1d4ff 66%, #b8dcff 100%);
-  opacity: 0;
-  transition: opacity 520ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.slider-gradient-next.is-blending {
-  opacity: 1;
+  background: linear-gradient(90deg, var(--reasoning-track-color-0) 0%, var(--reasoning-track-color-1) 32%, var(--reasoning-track-color-2) 64%, var(--reasoning-track-color-3) 100%);
+  transition: --reasoning-track-color-0 520ms cubic-bezier(0.22, 1, 0.36, 1), --reasoning-track-color-1 520ms cubic-bezier(0.22, 1, 0.36, 1), --reasoning-track-color-2 520ms cubic-bezier(0.22, 1, 0.36, 1), --reasoning-track-color-3 520ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .slider-dots {
@@ -5872,7 +6003,7 @@ html.dark #avgMinVal {
   .update-progress,
   .reasoning-bg-layer,
   .slider-track-fill,
-  .slider-gradient-next,
+  .slider-gradient-current,
   .slider-thumb,
   .toggle-slider,
   .toggle-slider::before {
@@ -6327,8 +6458,29 @@ html.dark #toast {
   flex-basis: 76px;
 }
 
-.width-micro .image-generation-control-grid {
-  grid-template-columns: minmax(0, 1fr);
+.width-micro #imageGenerationControlSummary > span {
+  display: none;
+}
+
+.width-micro #imageGenerationControlsButton {
+  gap: 4px;
+  padding-inline: 6px;
+}
+
+.width-micro #imageGenerationControlSummary {
+  font-size: 9px;
+}
+
+.width-micro #imageModelChoices > .image-choice-trigger {
+  padding-left: 24px;
+  gap: 3px;
+  font-size: 9px;
+}
+
+.width-micro .image-model-control > svg {
+  left: 7px;
+  width: 11px;
+  height: 11px;
 }
 
 .width-micro #imageGenerationCountButtons {
@@ -6336,7 +6488,7 @@ html.dark #toast {
 }
 
 .width-micro #generateEditedImageButton {
-  min-width: 102px;
+  min-width: 78px;
 }
 
 :is(.height-summary-2, .height-summary-4, .height-summary-countdown, .height-details, .height-details-metrics).image-edit-mode #appMain {

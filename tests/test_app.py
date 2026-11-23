@@ -1712,7 +1712,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("id=\"imageFrameChoices\"", page)
         self.assertIn('id="imageGenerationQualitySummary" data-quality="auto"', page)
         self.assertNotIn('id="imageGenerationOutputSummary"', page)
-        self.assertIn('id="imageGenerationModelSummary"', page)
+        self.assertIn('id="imageModelControl"', page)
+        self.assertIn('id="imageGenerationResolutionSummary"', page)
         self.assertIn('#imageGenerationQualitySummary[data-quality="auto"]', scss_source)
         self.assertIn('#imageGenerationQualitySummary[data-quality="high"]', scss_source)
         self.assertIn('id="imageAspectRatioButtons"', page)
@@ -2055,7 +2056,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("function initializeImageReasoningSlider()", page)
         self.assertIn("sliderTrack.addEventListener('keydown'", page)
         self.assertIn("if (window.imageEditState.busy) return;", page)
-        self.assertIn("window.clearTimeout(imageReasoningGradientTimer);\n            if (nextGradient !== activeImageReasoningGradient)", page)
+        self.assertIn("IMAGE_REASONING_TRACK_COLORS[modeIndex].forEach", page)
         self.assertIn("createImageReasoningColorPulse(window.imageEditState.reasoningMode)", page)
         self.assertIn("reasoningMode: window.imageEditState.reasoningMode", page)
         self.assertIn("event.type === 'prompt_polish_delta'", page)
@@ -2232,8 +2233,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn("mix-blend-mode: screen", stylesheet)
         self.assertIn(".toggle-switch input:checked + .toggle-slider", stylesheet)
         self.assertIn(".horizontal-slider-container", stylesheet)
-        self.assertIn(".slider-gradient-next.is-blending", stylesheet)
-        self.assertIn("transition: opacity 520ms cubic-bezier(0.22, 1, 0.36, 1)", stylesheet)
+        self.assertIn("@property --reasoning-track-color-0", stylesheet)
+        self.assertIn("--reasoning-track-color-0 520ms", stylesheet)
         self.assertIn(
             'id="sliderTrackFill" class="slider-track-fill" '
             'style="transform: translate3d(0, 0, 0) scaleX(0);"',

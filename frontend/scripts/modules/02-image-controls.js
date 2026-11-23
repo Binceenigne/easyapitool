@@ -396,7 +396,8 @@
         }
 
         function positionImagePicker(button, menu) {
-            const panel = document.getElementById('imageGenerationControlPanel').getBoundingClientRect();
+            const bounds = button.closest('#imageGenerationControlPanel') || pageZoomMetrics().layer;
+            const panel = bounds.getBoundingClientRect();
             const picker = button.parentElement;
             const anchor = picker.getBoundingClientRect();
             const scale = anchor.height / picker.offsetHeight || 1;
@@ -450,7 +451,7 @@
         }
 
         function initializeImageOptionTooltips() {
-            const panels = ['imageGenerationControlPanel', 'imageReasoningMenu'].map(id => document.getElementById(id));
+            const panels = ['imageGenerationControlPanel', 'imageReasoningMenu', 'imageModelChoices'].map(id => document.getElementById(id));
             const bubble = document.createElement('div');
             bubble.id = 'imageOptionTooltip';
             bubble.setAttribute('role', 'tooltip');
@@ -471,7 +472,7 @@
                 hide();
                 target = element;
                 timer = setTimeout(() => {
-                    if (!element.getClientRects().length || !panel.classList.contains('is-open')) return hide();
+                    if (!element.getClientRects().length || (panel.id !== 'imageModelChoices' && !panel.classList.contains('is-open'))) return hide();
                     bubble.textContent = element.dataset.imageTip;
                     bubble.hidden = false;
                     element.setAttribute('aria-describedby', bubble.id);
@@ -511,7 +512,7 @@
                 }, true);
                 panel.addEventListener('click', hide);
                 new MutationObserver(() => {
-                    if (target && panel.contains(target) && (panel.hidden || !panel.classList.contains('is-open'))) hide();
+                    if (target && panel.contains(target) && (panel.hidden || (panel.id !== 'imageModelChoices' && !panel.classList.contains('is-open')))) hide();
                 }).observe(panel, { attributes: true, attributeFilter: ['hidden', 'class'] });
             }
         }
@@ -588,6 +589,10 @@
             }
 
             function open() {
+                if (container.id === 'imageModelChoices') {
+                    closeImageGenerationControls();
+                    closeImageReasoningMenu();
+                }
                 closeImagePicker();
                 activeImagePicker = container;
                 container.classList.add('is-picker-open');
@@ -637,10 +642,10 @@
             };
         }
 
-        function renderImageChoices(id, items, value, onSelect, { segmented = false, disabled = false } = {}) {
+        function renderImageChoices(id, items, value, onSelect, { segmented = false, picker = false, disabled = false, icons = {} } = {}) {
             const container = document.getElementById(id);
-            const inline = segmented || items.length <= 3;
-            const signature = JSON.stringify([items, inline, disabled]);
+            const inline = !picker && (segmented || items.length <= 3);
+            const signature = JSON.stringify([items, inline, disabled, icons]);
             if (container.dataset.signature !== signature) {
                 const hadFocus = container.contains(document.activeElement);
                 if (activeImagePicker === container) closeImagePicker();
@@ -655,11 +660,13 @@
                         button.type = 'button';
                         button.dataset.value = item;
                         button.textContent = label;
+                        if (icons[item]) button.insertAdjacentHTML('afterbegin', iconMarkup(icons[item]));
                         if (tip) button.dataset.imageTip = tip;
                         button.disabled = disabled;
                         button.addEventListener('click', () => onSelect(item));
                         container.append(button);
                     }
+                    renderLucideIcons();
                 } else {
                     container.removeAttribute('role');
                     buildImagePicker(container, items, onSelect, disabled);
@@ -802,7 +809,7 @@
             renderImageChoices('imageResolutionChoices', [['sd', '标清', '最长边 1536 像素'],
                 ['hd', '高清', '最长边目标 2560 像素，适合需要保留更多细节的图片。'],
                 ['uhd', '超清', '最长边目标 3840 像素，会按总像素上限调整。2.5 系列的超高分辨率为实验支持。']],
-                resolution, setImageResolution);
+                resolution, setImageResolution, { icons: { sd: 'monitor', hd: 'scan-line', uhd: 'sparkles' } });
             updateImageGenerationControlSummary();
             if (persist) persistImageGenerationPreferences();
         }
@@ -854,7 +861,7 @@
             const label = IMAGE_MODEL_LABELS[model];
             renderImageChoices('imageModelChoices', models.map(item => [
                 item, IMAGE_MODEL_LABELS[item] || item, imageModelTip(item)
-            ]), model, setImageModel);
+            ]), model, setImageModel, { picker: true, disabled: models.length === 1 });
             if (!state.editSession) {
                 document.getElementById('imageEditHeading').textContent = label ? 'GPT Image ' + label + ' 生图' : model + ' 生图';
             }
@@ -897,8 +904,11 @@
             qualitySummary.textContent = qualityLabels[window.imageEditState.quality];
             qualitySummary.dataset.quality = window.imageEditState.quality;
             document.getElementById('imageGenerationRatioSummary').textContent = ratio === 'auto' ? '智能' : ratio;
-            document.getElementById('imageGenerationModelSummary').textContent = IMAGE_MODEL_LABELS[window.imageEditState.imageModel] || window.imageEditState.imageModel;
-            document.getElementById('imageGenerationCountSummary').textContent = `${window.imageEditState.imageCount} 张`;
+            const resolutionSummary = document.getElementById('imageGenerationResolutionSummary');
+            resolutionSummary.textContent = { sd: '标清', hd: '高清', uhd: '超清' }[resolution];
+            resolutionSummary.dataset.resolution = resolution;
+            resolutionSummary.hidden = mode !== 'flexible';
+            document.getElementById('imageGenerationResolutionDivider').hidden = mode !== 'flexible';
             const buttonLabel = document.querySelector('#generateEditedImageButton span');
             if (buttonLabel && !window.imageEditState.busy) {
                 buttonLabel.textContent = `生成 ${window.imageEditState.imageCount} 张`;
