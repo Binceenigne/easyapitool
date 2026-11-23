@@ -1,13 +1,13 @@
 [Unit]
 Description=Mirra private OpenAI egress through Seoul Squid
-After=network-online.target squid.service mirra-seoul-egress-route.service
-Wants=network-online.target mirra-seoul-egress-route.service
+After=network-online.target squid.service
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=mirra-egress-tunnel
 Group=mirra-egress-tunnel
-ExecStart=/usr/bin/ssh -NT -i /etc/mirra-egress-tunnel/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/mirra-egress-tunnel/known_hosts -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ConnectTimeout=10 -o IPQoS=none -R 127.0.0.1:18792:172.29.0.4:3128 mirra-seoul-tunnel@39.105.74.222
+ExecStart=/usr/bin/ssh -NT -i /etc/mirra-egress-tunnel/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/mirra-egress-tunnel/known_hosts -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ConnectTimeout=10 -o IPQoS=none -R 127.0.0.1:18794:172.29.0.4:3128 mirra-seoul-tunnel@146.56.217.193
 Restart=always
 RestartSec=3
 TimeoutStopSec=10
