@@ -1710,7 +1710,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("['webp', 'WebP',", page)
         self.assertIn('id="imageCountChoices"', page)
         self.assertIn("id=\"imageFrameChoices\"", page)
-        self.assertIn('id="imageGenerationQualitySummary" data-quality="auto"', page)
+        self.assertIn('id="imageGenerationQualitySummary" data-quality="medium"', page)
         self.assertNotIn('id="imageGenerationOutputSummary"', page)
         self.assertIn('id="imageModelSection"', page)
         self.assertIn('id="imageGenerationResolutionSummary"', page)
@@ -2117,13 +2117,13 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("persistedDuration && set.reasoningStatus !== 'running'", page)
         self.assertIn("reasoningToolLabel(activeTool)", page)
         self.assertIn("flash: 'Flash'", page)
-        self.assertIn("instant: '直接快速获得结果'", page)
-        self.assertIn("flash: '快速思考，优化生成质量'", page)
-        self.assertIn("medium: '增强推理，丰富画面细节'", page)
-        self.assertIn("high: '深入编排方案，强化视觉表现'", page)
+        self.assertIn("instant: '直接生成，适合目标明确、希望快速看到结果的任务。'", page)
+        self.assertIn("flash: '快速整理提示词，适合简单构思和多次尝试。'", page)
+        self.assertIn("medium: '兼顾思考与速度，适合需要补充画面细节的任务。'", page)
+        self.assertIn("high: '深入整理构图与约束，适合较复杂的视觉方案。'", page)
         self.assertIn("extra: 'Extra'", page)
-        self.assertIn("extra: '延长思维链，持续推演与优化'", page)
-        self.assertIn("max: '使用顶级模型持续反思，获得最优结果'", page)
+        self.assertIn("extra: '进一步推演并优化方案，适合多条件任务，等待可能更长。'", page)
+        self.assertIn("max: '使用预设的更高思考档处理困难任务，等待可能更长。'", page)
         for mode_label in ("Instant", "Flash", "Medium", "High", "Extra", "Max"):
             self.assertNotIn(f"{mode_label} 模式：", page)
         self.assertIn("high: ['#5865f2', '#6478f5', '#7185f7', '#8170f5']", page)
@@ -2177,7 +2177,7 @@ class StaticAssetCacheTests(unittest.TestCase):
             r"\.image-reasoning-control\[data-mode=extra\]\s*\{[^}]*background: #6d5dfc;",
         )
         self.assertIn("Math.round(fraction * (IMAGE_REASONING_MODES.length - 1))", page)
-        self.assertIn("Math.min(IMAGE_REASONING_MODES.length - 1, nextIndex)", page)
+        self.assertIn("Math.min(permitted.length - 1, nextIndex)", page)
         self.assertIn("@keyframes flashFluidGradient", stylesheet)
         self.assertIn("@keyframes mediumSeamlessFlow", stylesheet)
         self.assertIn("@keyframes highGlowPulse", stylesheet)
@@ -2497,7 +2497,7 @@ class ControllerTests(unittest.TestCase):
             reopened = app.AppController(asset_cache=Mock())
             self.assertEqual(reopened.get_state()["keys"], direct["state"]["keys"])
 
-    def test_reasoning_retries_five_times_with_incremental_delays(self):
+    def test_reasoning_never_replays_an_ambiguous_submitted_request(self):
         from backend.controller_mixins.image_reasoning import ImageReasoningMixin, ImageTaskContext
         controller = ImageReasoningMixin()
         controller.client = SimpleNamespace(stream_response=Mock(side_effect=RuntimeError('overloaded')))
@@ -2505,17 +2505,20 @@ class ControllerTests(unittest.TestCase):
         context.cancel_event.wait = Mock(return_value=False)
         with self.assertRaisesRegex(RuntimeError, 'overloaded'):
             controller._call_reasoning_with_retries(task_context=context)
-        self.assertEqual(controller.client.stream_response.call_count, 6)
-        self.assertEqual([entry.args[0] for entry in context.cancel_event.wait.call_args_list], [5, 10, 15, 20, 25])
+        self.assertEqual(controller.client.stream_response.call_count, 1)
+        context.cancel_event.wait.assert_not_called()
 
-    def test_reasoning_retry_can_succeed_and_cancel(self):
+    def test_reasoning_only_retries_unsent_connection_once_and_can_cancel(self):
         from backend.controller_mixins.image_reasoning import ImageReasoningMixin, ImageTaskContext, ImageGenerationCancelled
+        from backend.transport import UnsentConnectionError
         controller = ImageReasoningMixin()
-        controller.client = SimpleNamespace(stream_response=Mock(side_effect=[RuntimeError('overloaded'), 'ok']))
+        controller.client = SimpleNamespace(stream_response=Mock(side_effect=[UnsentConnectionError('refused before send'), 'ok']))
         context = ImageTaskContext()
         context.cancel_event.wait = Mock(return_value=False)
         self.assertEqual(controller._call_reasoning_with_retries(task_context=context), 'ok')
-        controller.client.stream_response = Mock(side_effect=RuntimeError('overloaded'))
+        self.assertEqual(controller.client.stream_response.call_count, 2)
+        context.cancel_event.wait.assert_called_once_with(0.35)
+        controller.client.stream_response = Mock(side_effect=UnsentConnectionError('refused before send'))
         context.cancel_event.wait = Mock(side_effect=lambda delay: context.cancel())
         with self.assertRaises(ImageGenerationCancelled):
             controller._call_reasoning_with_retries(task_context=context)
@@ -2677,12 +2680,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(
             {call.args[3] for call in service.generate.call_args_list},
             {
-                root
-                / "Pictures"
-                / app.APP_NAME
-                / "sessions"
-                / result["sessionId"]
-                / "round-001-request-1"
+                Path(result["items"][0]["path"]).parent.parent
                 / "process-images"
                 / f"item-{item_index:03d}"
                 for item_index in (1, 2)
@@ -2926,7 +2924,7 @@ class ControllerTests(unittest.TestCase):
 
             generated_request = service.generate.call_args.args[2]
             manifest = json.loads(
-                (pictures_root / "sessions" / "world-session" / "manifest.json").read_text(
+                session_store._manifest_path("world-session").read_text(
                     encoding="utf-8"
                 )
             )
@@ -3047,7 +3045,7 @@ class ControllerTests(unittest.TestCase):
             generated_paths = {str(path) for path in service.generate.call_args.args[2].image_paths}
             planner_content = planner_inputs[0][0]["content"]
             manifest = json.loads(
-                (pictures_root / "sessions" / "world-session" / "manifest.json").read_text(
+                session_store._manifest_path("world-session").read_text(
                     encoding="utf-8"
                 )
             )
@@ -3062,8 +3060,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["selectedAssetIds"], [parent_result["assetId"]])
         self.assertEqual(sum(item["type"] == "input_image" for item in planner_content), 2)
         self.assertIn(added_asset["assetId"], planner_content[0]["text"])
-        self.assertIn(str(pictures_root / "sessions" / "world-session" / added_asset["original"]), generated_paths)
-        self.assertIn(str(pictures_root / "sessions" / "world-session" / parent_asset["original"]), generated_paths)
+        self.assertIn(str(Path(parent_result["path"]).parents[2] / added_asset["original"]), generated_paths)
+        self.assertIn(str(Path(parent_result["path"]).parents[2] / parent_asset["original"]), generated_paths)
 
     def test_continuation_planner_and_image_request_exclude_sibling_branch_assets(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -5523,6 +5521,7 @@ class ControllerTests(unittest.TestCase):
                 "open_benchmark",
                 "open_devtools",
                 "open_generated_pictures",
+                "open_image_session_folder",
                 "polish_prompt",
                 "refresh_now",
                 "report_startup",

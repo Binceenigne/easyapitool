@@ -64,6 +64,7 @@ class WindowCommandsMixin:
             if hwnd and user32.IsZoomed(hwnd):
                 self.window.restore()
             else:
+                update_window_maximized_bounds(self.window)
                 self.window.maximize()
             hwnd = self._window_handle()
             self.maximized = bool(hwnd and user32.IsZoomed(hwnd))

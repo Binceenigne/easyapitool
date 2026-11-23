@@ -6,6 +6,8 @@ from ..usage import *
 from ..web_search import WebSearchService
 from ..store import Store
 from ..client import EasyClinClient
+from ..transport import UnsentConnectionError
+from ..prompt_targets import (format_prompt_instructions, choose_reasoning_pair, stored_model_profile, apply_reasoning_profile)
 
 class ImageGenerationCancelled(Exception):
     pass
@@ -47,7 +49,7 @@ class ImageTaskContext:
 
 class ImageReasoningMixin:
     def _call_reasoning_with_retries(self, *args: Any, task_context: ImageTaskContext | None, on_retry: Any = None, **kwargs: Any) -> Any:
-        for attempt in range(6):
+        for attempt in range(2):
             if task_context is not None:
                 task_context.check_cancelled()
             try:
@@ -56,18 +58,18 @@ class ImageReasoningMixin:
                 )
             except ImageGenerationCancelled:
                 raise
-            except (RuntimeError, OSError) as exc:
+            except UnsentConnectionError as exc:
                 if task_context is not None:
                     task_context.check_cancelled()
-                if attempt == 5:
+                if attempt:
                     raise
                 if on_retry is not None:
-                    on_retry(attempt + 1, 5 * (attempt + 1), str(exc))
+                    on_retry(1, 0.35, str(exc))
                 if task_context is not None:
-                    task_context.cancel_event.wait(5 * (attempt + 1))
+                    task_context.cancel_event.wait(0.35)
                     task_context.check_cancelled()
                 else:
-                    time.sleep(5 * (attempt + 1))
+                    time.sleep(0.35)
 
     @staticmethod
     def _call_with_task_context(
@@ -83,9 +85,29 @@ class ImageReasoningMixin:
             parameter.kind is inspect.Parameter.VAR_KEYWORD
             for parameter in parameters.values()
         )
+        if "reasoning_mode" in kwargs and "reasoning_mode" not in parameters and not any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+        ):
+            kwargs.pop("reasoning_mode")
         if task_context is not None and accepts_task_context:
             kwargs["task_context"] = task_context
         return method(*args, **kwargs)
+
+    def _tier_reference_limit(self, record: Any) -> int:
+        try:
+            key_id = record["id"]
+        except (KeyError, IndexError):
+            return 16
+        profile = stored_model_profile(getattr(self, "store", None), key_id)
+        tier = profile.get("tier") if isinstance(profile, dict) else None
+        if not isinstance(tier, dict):
+            return 16
+        if not tier.get("imageEditing"):
+            return 0
+        try:
+            return max(0, min(16, int(tier.get("maxReferences", 16))))
+        except (TypeError, ValueError):
+            return 0
 
     def _register_image_task(self, request_id: str) -> ImageTaskContext:
         task_lock = getattr(self, "image_task_lock", None)
@@ -156,10 +178,19 @@ class ImageReasoningMixin:
             for asset in visible_assets
             if Path(str(asset.get("path") or "")).is_file()
         )
+        try:
+            record_id = record["id"]
+        except (KeyError, IndexError):
+            record_id = ""
+        profile = stored_model_profile(getattr(self, "store", None), record_id)
+        planner_model, planner_effort = choose_reasoning_pair(
+            profile, IMAGE_CONTINUATION_PLANNER_MODEL, IMAGE_CONTINUATION_PLANNER_EFFORT,
+            purpose="continuation",
+        )
         output = self._call_reasoning_with_retries(
             record["base_url"],
             secret,
-            IMAGE_CONTINUATION_PLANNER_MODEL,
+            planner_model,
             (
                 "你是图片续作的隐藏轻量路由器。只判断本轮应做局部 edit 还是 generate 延续创作，"
                 "并从素材目录中选择真正需要送给图片模型的 assetId。edit 必须选图；generate 可选图"
@@ -173,7 +204,8 @@ class ImageReasoningMixin:
                 '[{"asset_id":"...","description":"..."}],"rationale":"..."}'
             ),
             self._agent_input(planning_input, visible_paths),
-            reasoning_effort=IMAGE_CONTINUATION_PLANNER_EFFORT,
+            reasoning_effort=planner_effort,
+            reasoning_mode="continuation",
             task_context=task_context,
         )
         return parse_image_continuation_plan(
@@ -200,10 +232,19 @@ class ImageReasoningMixin:
         )
         if len(image_paths) != len(assets) or any(not asset_id for asset_id in asset_ids):
             raise ValueError("待描述素材不可用")
+        try:
+            record_id = record["id"]
+        except (KeyError, IndexError):
+            record_id = ""
+        profile = stored_model_profile(getattr(self, "store", None), record_id)
+        planner_model, planner_effort = choose_reasoning_pair(
+            profile, IMAGE_CONTINUATION_PLANNER_MODEL, IMAGE_CONTINUATION_PLANNER_EFFORT,
+            purpose="continuation",
+        )
         output = self._call_reasoning_with_retries(
             record["base_url"],
             secret,
-            IMAGE_CONTINUATION_PLANNER_MODEL,
+            planner_model,
             (
                 "你是图片素材描述器。按输入 assetIds 与随后图片的相同顺序，为每张图写一条客观、"
                 "紧凑、可跨轮复用的视觉描述，覆盖主体身份特征、构图、环境和关键风格；不要推测"
@@ -214,7 +255,8 @@ class ImageReasoningMixin:
                 json.dumps({"assetIds": asset_ids}, ensure_ascii=False),
                 image_paths,
             ),
-            reasoning_effort=IMAGE_CONTINUATION_PLANNER_EFFORT,
+            reasoning_effort=planner_effort,
+            reasoning_mode="continuation",
             task_context=task_context,
         )
         return parse_image_asset_descriptions(output, asset_ids)
@@ -238,8 +280,11 @@ class ImageReasoningMixin:
             and asset.get("assetId") not in visible_asset_ids
             and not str(asset.get("description") or "").strip()
         ]
-        for batch_start in range(0, len(undescribed_assets), 16):
-            batch = undescribed_assets[batch_start:batch_start + 16]
+        reference_limit = self._tier_reference_limit(record)
+        if undescribed_assets and reference_limit == 0:
+            raise ValueError("当前密钥档位不允许参考图片")
+        for batch_start in range(0, len(undescribed_assets), max(1, reference_limit)):
+            batch = undescribed_assets[batch_start:batch_start + reference_limit]
             descriptions = (
                 self._describe_image_asset_batch(record, secret, batch, task_context)
                 if task_context is not None
@@ -386,12 +431,13 @@ class ImageReasoningMixin:
                 "角色、物体和世界观一致性。必须为 descriptionRequiredAssetIds 中每张首次读取图片"
                 "提供客观、可复用的描述。更早素材先依据缓存描述筛选；工具返回被选素材原图后再检查"
                 "其画面。上一轮及更早轮次用户上传的图片会保留在图片池中，不会默认附带或优先占用"
-                "最终 16 个参考图槽位；若它们有助于保持角色、物体、材质、风格或世界观一致性，鼓励"
+                "当前档位允许的参考图槽位；若它们有助于保持角色、物体、材质、风格或世界观一致性，鼓励"
                 "通过 plan_image_continuation 主动选入，再把操作和素材选择纳入后续搜索、反思及最终提示词。"
             )
         instructions += (
             f"摘要结束后单独输出标记 {PROMPT_RESULT_MARKER}，标记后只写可直接提交给图片模型的最终提示词。"
         )
+        instructions += "\n" + format_prompt_instructions(config.get("outputOptions"))
         initial_prompt = (
             image_continuation_prompt(prompt, continuation_context or {}, clean_visible_assets)
             if continuation_enabled
@@ -422,7 +468,7 @@ class ImageReasoningMixin:
                 complete_text = turn_prefix
                 published_length = current_turn_start
                 completed_payloads.clear()
-                emit("react_turn_started", turn=current_turn, title=f"服务异常，{delay} 秒后重试（{retry}/5）", reset=True, summary=turn_prefix)
+                emit("react_turn_started", turn=current_turn, title="连接尚未建立，正在重新连接", reset=True, summary=turn_prefix)
 
             if continuation_enabled and not plan_submitted:
                 tools = [IMAGE_CONTINUATION_PLAN_TOOL]
@@ -435,6 +481,8 @@ class ImageReasoningMixin:
                     and not selection_submitted
                     else None
                 )
+                if tools and max_reference_count == 0:
+                    tools = [tool for tool in tools if tool.get("name") == "search_web"]
                 tool_choice = "auto" if tools else None
             output = self._call_reasoning_with_retries(
                 record["base_url"],
@@ -444,6 +492,7 @@ class ImageReasoningMixin:
                 current_input,
                 on_delta=on_delta,
                 reasoning_effort=reasoning_effort,
+                reasoning_mode=reasoning_mode,
                 tools=tools,
                 tool_choice=tool_choice,
                 parallel_tool_calls=True if tools else None,
@@ -923,28 +972,16 @@ class ImageReasoningMixin:
         def prepare_request(text, paths, requested_options):
             return prepare_image_generation(text, paths, requested_options, app_models=profile)
 
-        if profile:
-            slots = profile.get("reasoning") or {}
-            if reasoning_mode == "advanced":
-                model = (slots.get(reasoning_config["modelKey"]) or {}).get("model")
-                if model:
-                    reasoning_config["model"] = model
-                    capabilities = profile.get("reasoningCapabilities") or {}
-                    model_capability = capabilities.get(model) or {}
-                    if clean_options.get("reasoningEffort") == "":
-                        reasoning_config["effort"] = ""
-                    elif model_capability and reasoning_config["effort"] not in model_capability.get("efforts", []):
-                        reasoning_config["effort"] = model_capability["default"]
-            else:
-                modes = profile.get("reasoningModes") or {}
-                slot = {"flash": "luna", "medium": "luna", "high": "terra", "extra": "terra", "max": "sol"}.get(reasoning_mode)
-                preset = modes.get(reasoning_mode) or slots.get(slot) or {}
-                if preset.get("model"):
-                    if reasoning_config is None:
-                        reasoning_config = {**resolve_image_reasoning_config("flash"), "mode": "instant"}
-                    reasoning_config["model"] = preset["model"]
-                    if "effort" in preset:
-                        reasoning_config["effort"] = str(preset["effort"] or "")
+        try:
+            reasoning_config = apply_reasoning_profile(
+                profile, reasoning_mode, reasoning_config, resolve_image_reasoning_config("flash"),
+            )
+            if continuation_enabled and isinstance(profile, dict):
+                tier = profile.get("tier") or {}
+                if tier and not tier.get("imageEditing"):
+                    raise ValueError("当前密钥档位未开放图片续作")
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
         use_reasoning = reasoning_config is not None
         requested_web_search = clean_options.get("webSearchEnabled")
         web_search_enabled = (
@@ -954,6 +991,13 @@ class ImageReasoningMixin:
                 or requested_web_search is not False
             )
         )
+        tier = profile.get("tier") if isinstance(profile, dict) else None
+        if isinstance(tier, dict) and not tier.get("webSearch"):
+            web_search_enabled = False
+        reference_limit = self._tier_reference_limit(record)
+        if reasoning_config is not None:
+            reasoning_config["outputOptions"] = dict(clean_options)
+            reasoning_config["max_references"] = min(int(reasoning_config["max_references"]), reference_limit)
         clean_options.update(
             {
                 "moderation": "auto" if record["base_url"] == OPENAI_API_URL else "low",
@@ -1066,16 +1110,18 @@ class ImageReasoningMixin:
                         parent_set_id,
                         registered_input_asset_ids,
                     )
+                if len(registered_input_asset_ids) > reference_limit:
+                    raise ValueError(f"当前档位最多允许 {reference_limit} 张参考图")
                 visible_asset_ids = list(
                     dict.fromkeys(
                         [
-                            *list(continuation_context.get("parentOutputAssetIds") or []),
+                            *list(continuation_context.get("parentOutputAssetIds") or [])[:max(0, reference_limit - len(registered_input_asset_ids))],
                             *registered_input_asset_ids,
                         ]
                     )
                 )
-                if len(visible_asset_ids) > 16:
-                    raise ValueError("父轮输出与本轮新参考图合计不能超过 16 张")
+                if len(visible_asset_ids) > reference_limit:
+                    raise ValueError(f"父轮输出与本轮新参考图合计不能超过 {reference_limit} 张")
                 continuation_context = self._cache_undescribed_image_assets(
                     record,
                     secret,
@@ -1179,7 +1225,7 @@ class ImageReasoningMixin:
             ]
             final_reference_asset_ids = list(
                 dict.fromkeys([*required_input_asset_ids, *selected_asset_ids])
-            )[:16]
+            )[:reference_limit]
             selected_asset_paths = [
                 str(asset_by_id[asset_id]["path"])
                 for asset_id in final_reference_asset_ids
@@ -1212,7 +1258,7 @@ class ImageReasoningMixin:
             )
         if use_reasoning:
             try:
-                available_slots = 0 if request.output_format == "svg" else max(0, 16 - len(request.image_paths))
+                available_slots = 0 if request.output_format == "svg" else max(0, reference_limit - len(request.image_paths))
                 web_candidates = list(agent_result.get("webCandidates") or [])
                 if web_candidates and available_slots:
                     staged_web_references = self._call_with_task_context(
@@ -1377,9 +1423,7 @@ class ImageReasoningMixin:
                     record["base_url"],
                     secret,
                     request,
-                    session_store.root
-                    / session_store._safe_id(session_id)
-                    / str(round_data["directory"])
+                    session_store.folder_for_set(session_id, request_id)
                     / "process-images"
                     / f"item-{item_index + 1:03d}",
                     on_partial=on_partial,

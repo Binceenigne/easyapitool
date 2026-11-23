@@ -132,7 +132,7 @@ class ImageEditorTests(unittest.TestCase):
             store.begin_round(
                 "legacy-tree", "set-a-child", "A3", 1, 0, {}, parent_set_id="set-a"
             )
-            manifest_path = store.root / "legacy-tree" / "manifest.json"
+            manifest_path = store._manifest_path("legacy-tree")
             legacy_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             legacy_manifest["schemaVersion"] = 2
             for sequential_number, round_data in enumerate(legacy_manifest["rounds"], 1):
@@ -166,7 +166,7 @@ class ImageEditorTests(unittest.TestCase):
                 [1, 2, 3],
             )
             self.assertEqual(branch_b_child["roundNumber"], 3)
-            self.assertEqual(migrated_manifest["schemaVersion"], 3)
+            self.assertEqual(migrated_manifest["schemaVersion"], 4)
             self.assertEqual(
                 [item["roundNumber"] for item in migrated_manifest["rounds"]],
                 [1, 2, 2, 3, 3],
@@ -176,7 +176,7 @@ class ImageEditorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             store = image_editor.ImageSessionStore(Path(temp) / "pictures")
             store.begin_round("parent-check", "set-root", "根", 1, 0, {})
-            manifest_path = store.root / "parent-check" / "manifest.json"
+            manifest_path = store._manifest_path("parent-check")
             manifest_before = manifest_path.read_bytes()
 
             with self.assertRaisesRegex(ValueError, "来源轮次不存在"):
@@ -856,7 +856,7 @@ class ImageEditorTests(unittest.TestCase):
             )
             store.complete_round("session-1", "set-2")
 
-            manifest_path = root / "pictures" / "sessions" / "session-1" / "manifest.json"
+            manifest_path = store._manifest_path("session-1")
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             restored = store.list_sets()
 
@@ -930,7 +930,7 @@ class ImageEditorTests(unittest.TestCase):
                 1,
                 {"originalPrompt": "修改旧图"},
             )
-            manifest_path = store.root / "session-legacy" / "manifest.json"
+            manifest_path = store._manifest_path("session-legacy")
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["rounds"][0]["options"].pop("operation", None)
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -1042,7 +1042,7 @@ class ImageEditorTests(unittest.TestCase):
                 {"width": 8, "height": 8, "format": "png"},
             )
             store.complete_round("session-atomic", "set-2")
-            manifest_path = store.root / "session-atomic" / "manifest.json"
+            manifest_path = store._manifest_path("session-atomic")
             manifest_before = manifest_path.read_bytes()
             manifest = json.loads(manifest_before)
             leaf_round_dir = manifest_path.parent / manifest["rounds"][1]["directory"]
@@ -1086,7 +1086,7 @@ class ImageEditorTests(unittest.TestCase):
                 {"width": 8, "height": 8, "format": "png"},
             )
             store.complete_round("session-last", "set-only")
-            manifest_path = store.root / "session-last" / "manifest.json"
+            manifest_path = store._manifest_path("session-last")
             manifest_before = manifest_path.read_bytes()
 
             with __import__("unittest.mock").mock.patch.object(
@@ -1159,13 +1159,13 @@ class ImageEditorTests(unittest.TestCase):
 
             self.assertEqual(attempts, 3)
             self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.04, 0.08])
-            self.assertTrue((store.root / "session-lock" / "manifest.json").is_file())
+            self.assertTrue((store._manifest_path("session-lock")).is_file())
 
     def test_begin_round_never_overwrites_unreadable_or_corrupt_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
             store = image_editor.ImageSessionStore(Path(temp) / "pictures")
             store.begin_round("session-read", "set-1", "第一轮", 1, 0, {})
-            manifest_path = store.root / "session-read" / "manifest.json"
+            manifest_path = store._manifest_path("session-read")
             manifest_before = manifest_path.read_bytes()
 
             real_read_text = Path.read_text

@@ -24,6 +24,7 @@ from typing import Any, Callable
 from PIL import Image
 
 from .network_log import log_network_error, new_network_request_id
+from .transport import open_request
 
 
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -122,6 +123,55 @@ def image_preview_data_url(
     return image_data_url(image_preview_bytes(image_bytes, max_side, optimize))
 
 
+def reference_preview_bytes(image_bytes: bytes, max_side: int = 1024) -> bytes:
+    """A static raster for model input, distinct from animated/vector previews."""
+    maximum = min(4096, max(16, int(max_side)))
+    dimensions = svg_size(image_bytes)
+    if dimensions is not None:
+        import resvg_py
+        width, height = dimensions
+        edge = min(maximum, max(width, height)) if max(width, height) else maximum
+        try:
+            image_bytes = resvg_py.svg_to_bytes(
+                svg_string=image_bytes.decode("utf-8-sig"),
+                width=edge if width >= height else None,
+                height=edge if height > width else None,
+            )
+        except Exception as exc:
+            raise ValueError("SVG 无法转换为静态参考图") from exc
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        image.seek(0)
+        if dimensions is None and image.format != "GIF":
+            return image_preview_bytes(image_bytes, maximum)
+        frame = image.convert("RGBA")
+    frame.thumbnail((maximum, maximum), Image.Resampling.LANCZOS)
+    buffer = io.BytesIO()
+    frame.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def reference_preview_data_url(image_bytes: bytes, max_side: int = 1024) -> str:
+    return image_data_url(reference_preview_bytes(image_bytes, max_side))
+
+
+def reference_raster_path(source: Path) -> Path:
+    if source.suffix.lower() not in {".gif", ".svg"}:
+        return source
+    data = source.read_bytes()
+    cache_root = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "API_TOOLS" / "image-references" / "raster-cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    target = cache_root / (hashlib.sha256(data).hexdigest() + ".png")
+    if not target.is_file():
+        raster = reference_preview_bytes(data, 4096)
+        temporary = cache_root / ("." + uuid.uuid4().hex + ".tmp")
+        try:
+            temporary.write_bytes(raster)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return target
+
+
 def image_data_url(image_bytes: bytes) -> str:
     mime_type = CONTENT_TYPES[image_file_suffix(image_bytes)]
     encoded = base64.b64encode(image_bytes).decode("ascii")
@@ -136,8 +186,9 @@ def image_file_suffix(image_bytes: bytes) -> str:
 
 
 class ImageSessionStore:
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
     _manifest_lock = threading.RLock()
+    _directory_cache: dict[tuple[str, str], Path] = {}
 
     def __init__(self, pictures_root: Path) -> None:
         self.root = pictures_root / "sessions"
@@ -195,7 +246,190 @@ class ImageSessionStore:
         }
 
     def _session_dir(self, session_id: str) -> Path:
-        return self.root / self._safe_id(session_id)
+        clean = self._safe_id(session_id)
+        key = (str(self.root.resolve()), clean)
+        with self._manifest_lock:
+            cached = self._directory_cache.get(key)
+            if cached is not None and cached.is_dir():
+                return self._within_root(cached)
+            legacy = self.root / clean
+            if legacy.is_dir():
+                legacy = self._within_root(legacy)
+                try:
+                    identity = json.loads((legacy / "manifest.json").read_text(encoding="utf-8"))
+                    if isinstance(identity, dict) and identity.get("sessionId") == clean:
+                        self._directory_cache[key] = legacy
+                        return legacy
+                except (OSError, ValueError, TypeError):
+                    pass
+            for manifest_path in self.root.glob("*/manifest.json"):
+                try:
+                    folder = self._within_root(manifest_path.parent)
+                    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if not isinstance(data, dict):
+                        continue
+                    found_id = str(data.get("sessionId") or "")
+                except (OSError, ValueError, TypeError):
+                    continue
+                if found_id:
+                    self._directory_cache[(key[0], found_id)] = folder
+                if found_id == clean:
+                    return folder
+            return self._unique_folder(self.root, clean) if legacy.exists() else self._within_root(legacy)
+
+    def _within_root(self, path: Path) -> Path:
+        resolved, root = path.resolve(), self.root.resolve()
+        if resolved == root or not resolved.is_relative_to(root):
+            raise ValueError("项目路径超出图片会话目录")
+        return resolved
+
+    @staticmethod
+    def _prompt_folder(prompt: Any, maximum: int = 40) -> str:
+        text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', " ", str(prompt or ""))
+        text = re.sub(r"\s+", " ", text).strip(" .")
+        # Bound UTF-16 code units as well as Python characters for Windows paths.
+        text = text.encode("utf-16-le")[:maximum * 2].decode("utf-16-le", "ignore").rstrip(" .")
+        if not text:
+            return "未命名创作"
+        if re.fullmatch(r"(?i)(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", text):
+            text = "创作 " + text
+        return text
+
+    def _unique_folder(self, parent: Path, name: str, current: Path | None = None) -> Path:
+        for index in range(1, 100_001):
+            target = self._within_root(parent / (name if index == 1 else f"{name} ({index})"))
+            if current is not None and target == current.resolve():
+                return target
+            if not target.exists():
+                return target
+        raise OSError("同名项目过多，请整理图片目录后重试")
+
+    def _ensure_layout(self, manifest: dict[str, Any]) -> bool:
+        rounds = manifest.get("rounds") or []
+        if not rounds:
+            return False
+        session_id = str(manifest["sessionId"])
+        current = self._session_dir(session_id)
+        changed = False
+        if not manifest.get("folderName"):
+            title = (rounds[0].get("options") or {}).get("originalPrompt") or rounds[0].get("prompt")
+            target = self._unique_folder(self.root, self._prompt_folder(title), current)
+            current.mkdir(parents=True, exist_ok=True)
+            if current != target:
+                # Both absolute paths have been checked against this exact root.
+                current.rename(target)
+                current = target
+            self._directory_cache[(str(self.root.resolve()), session_id)] = current
+            manifest["folderName"] = current.name
+            changed = True
+        for index, round_data in enumerate(rounds, 1):
+            directory = self._within_root(current / str(round_data.get("directory") or ""))
+            if directory.parent != current:
+                raise ValueError("图片集目录无效")
+            if not round_data.get("folderName"):
+                prompt = (round_data.get("options") or {}).get("originalPrompt") or round_data.get("prompt")
+                name = f"第{index}组 {self._prompt_folder(prompt, 24)}"
+                set_id = str(round_data.get("setId") or "")
+                marker_name = ".mirra-project.json"
+                if directory.is_dir():
+                    marker = directory / marker_name
+                    if not marker.exists():
+                        marker.write_text(json.dumps({"setId": set_id}, ensure_ascii=False), encoding="utf-8")
+                target = None
+                for candidate in current.iterdir():
+                    marker = candidate / marker_name
+                    try:
+                        candidate = self._within_root(candidate)
+                        if candidate.is_dir() and json.loads(marker.read_text(encoding="utf-8")).get("setId") == set_id:
+                            if candidate != directory:
+                                target = self._within_root(candidate)
+                                break
+                    except (OSError, ValueError, TypeError):
+                        continue
+                target = target or self._unique_folder(current, name, directory)
+                if directory.is_dir() and directory != target:
+                    directory.rename(target)
+                old_prefix = str(round_data.get("directory") or "") + "/"
+                new_prefix = target.relative_to(current).as_posix() + "/"
+                # All manifest media paths are relative to the session root.
+                def relocate(value: Any) -> Any:
+                    if isinstance(value, dict):
+                        return {key: relocate(item) for key, item in value.items()}
+                    if isinstance(value, list):
+                        return [relocate(item) for item in value]
+                    if isinstance(value, str) and value.startswith(old_prefix):
+                        return new_prefix + value[len(old_prefix):]
+                    return value
+                for round_entry in rounds:
+                    for field in ("items", "webReferences"):
+                        round_entry[field] = relocate(round_entry.get(field) or [])
+                manifest["assets"] = relocate(manifest.get("assets") or [])
+                round_data["directory"] = target.relative_to(current).as_posix()
+                round_data["folderName"] = target.name
+                directory = target
+                changed = True
+            directory.mkdir(parents=True, exist_ok=True)
+            marker = directory / ".mirra-project.json"
+            if not marker.exists():
+                marker.write_text(json.dumps({"setId": str(round_data.get("setId") or "")}, ensure_ascii=False), encoding="utf-8")
+            output = self._within_root(directory / "Output")
+            output.mkdir(exist_ok=True)
+            mapping_path = directory / ".mirra-output-map.json"
+            try:
+                output_mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+                if not isinstance(output_mapping, dict):
+                    raise ValueError("成品迁移记录无效")
+            except FileNotFoundError:
+                output_mapping = {}
+            for item in round_data.get("items") or []:
+                if item.get("status") != "completed" or not item.get("original"):
+                    continue
+                source = self._within_root(current / str(item["original"]))
+                if source.parent == output:
+                    continue
+                if source.suffix.lower() not in OUTPUT_IMAGE_SUFFIXES:
+                    continue
+                old = str(item["original"])
+                mapped = output_mapping.get(old)
+                target = self._within_root(directory / str(mapped.get("target") or "")) if isinstance(mapped, dict) else self._within_root(output / source.name)
+                if target.parent != output:
+                    raise ValueError("成品迁移目标无效")
+                source_bytes = source.read_bytes() if source.is_file() else None
+                if isinstance(mapped, dict):
+                    expected_hash = str(mapped.get("sha256") or "")
+                    current_bytes = source_bytes if source_bytes is not None else target.read_bytes()
+                    if hashlib.sha256(current_bytes).hexdigest() != expected_hash:
+                        raise OSError("成品迁移文件内容已改变")
+                if source.exists():
+                    if target.exists() and source_bytes != target.read_bytes():
+                        if mapped is not None:
+                            raise OSError("成品迁移遇到同名文件冲突")
+                        target = self._within_root(output / f"{source.stem}-{hashlib.sha256(source_bytes).hexdigest()[:8]}{source.suffix}")
+                    if target.exists() and source_bytes != target.read_bytes():
+                        raise OSError("成品迁移遇到同名文件冲突")
+                    if mapped is None:
+                        output_mapping[old] = {"target": target.relative_to(directory).as_posix(), "sha256": hashlib.sha256(source_bytes).hexdigest()}
+                        temporary = mapping_path.with_name(f".{mapping_path.name}.{uuid.uuid4().hex}.tmp")
+                        try:
+                            temporary.write_text(json.dumps(output_mapping, ensure_ascii=False), encoding="utf-8")
+                            os.replace(temporary, mapping_path)
+                        finally:
+                            temporary.unlink(missing_ok=True)
+                    if target.exists():
+                        source.unlink()
+                    else:
+                        source.rename(target)
+                elif mapped is None or not target.is_file():
+                    continue
+                item["original"] = target.relative_to(current).as_posix()
+                for asset in manifest.get("assets") or []:
+                    if asset.get("original") == old:
+                        asset["original"] = item["original"]
+                changed = True
+        if manifest.get("layoutVersion") != 1:
+            manifest["layoutVersion"] = 1
+            changed = True
+        return changed
 
     def _manifest_path(self, session_id: str) -> Path:
         return self._session_dir(session_id) / "manifest.json"
@@ -255,6 +489,9 @@ class ImageSessionStore:
         if not isinstance(payload, dict):
             raise RuntimeError("图片会话清单格式无效")
         self._normalize_round_depths(payload)
+        if payload.get("layoutVersion") != 1:
+            if self._ensure_layout(payload):
+                self._write_manifest(payload)
         return payload
 
     def _write_manifest(self, manifest: dict[str, Any]) -> None:
@@ -348,7 +585,11 @@ class ImageSessionStore:
                     "aspectRatio": str(options.get("aspectRatio") or "auto"),
                     "transparency": str(options.get("transparency") or "auto"),
                     "imageModel": str(options.get("imageModel") or "gpt-image-2"),
-                    "quality": str(options.get("quality") or "auto"),
+                    "quality": str(options.get("quality") or "medium"),
+                    "output_format": str(options.get("output_format") or ""),
+                    "complexity": str(options.get("complexity") or ""),
+                    "resolution": str(options.get("resolution") or "sd"),
+                    "frame_count": int(options.get("frame_count") or 9),
                     "outputPreset": str(options.get("outputPreset") or "lossless"),
                     "operation": str(options.get("operation") or "generate"),
                     "continuation": bool(options.get("continuation")),
@@ -379,7 +620,8 @@ class ImageSessionStore:
                 ],
             }
             manifest["rounds"].append(round_data)
-            (self._session_dir(clean_session_id) / directory_name).mkdir(parents=True, exist_ok=True)
+            self._ensure_layout(manifest)
+            (self._session_dir(clean_session_id) / str(round_data["directory"])).mkdir(parents=True, exist_ok=True)
             self._write_manifest(manifest)
             return dict(round_data)
 
@@ -444,7 +686,7 @@ class ImageSessionStore:
         asset_dir = session_dir / "assets"
         asset_dir.mkdir(parents=True, exist_ok=True)
         original_path = asset_dir / f"{asset_id}{suffix}"
-        preview_path = asset_dir / f"{asset_id}-preview.jpg"
+        preview_path = asset_dir / f"{asset_id}-preview{image_file_suffix(preview_bytes)}"
         if source_path.resolve() != original_path.resolve():
             original_path.write_bytes(image_bytes)
         preview_path.write_bytes(preview_bytes)
@@ -742,8 +984,10 @@ class ImageSessionStore:
                 raise RuntimeError("图片生成轮次不存在")
             round_dir = self._session_dir(clean_session_id) / str(round_data["directory"])
             round_dir.mkdir(parents=True, exist_ok=True)
+            output_dir = self._within_root(round_dir / "Output")
+            output_dir.mkdir(exist_ok=True)
             suffix = source_path.suffix.lower() if source_path.suffix.lower() in OUTPUT_IMAGE_SUFFIXES else ".png"
-            original_path = round_dir / f"image-{item_index + 1:02d}-original{suffix}"
+            original_path = output_dir / f"image-{item_index + 1:02d}{suffix}"
             shutil.copy2(source_path, original_path)
             original_bytes = original_path.read_bytes()
             preview_bytes = image_preview_bytes(original_bytes)
@@ -916,12 +1160,25 @@ class ImageSessionStore:
             )
             for manifest_path in manifest_paths:
                 try:
-                    manifest = self._read_manifest(manifest_path.parent.name)
-                except (OSError, RuntimeError):
+                    folder = self._within_root(manifest_path.parent)
+                    identity = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if not isinstance(identity, dict):
+                        continue
+                    session_id = str(identity.get("sessionId") or "")
+                    if not session_id or self._safe_id(session_id) != session_id:
+                        continue
+                    self._directory_cache[(str(self.root.resolve()), session_id)] = folder
+                    manifest = self._read_manifest(session_id)
+                    if manifest is not None and manifest.get("layoutVersion") != 1 and not any(
+                        item.get("status") == "running" for item in manifest.get("rounds") or []
+                    ):
+                        if self._ensure_layout(manifest):
+                            self._write_manifest(manifest)
+                except (OSError, RuntimeError, ValueError, TypeError):
                     continue
                 if manifest is None:
                     continue
-                session_dir = manifest_path.parent
+                session_dir = self._session_dir(session_id)
                 for round_data in manifest.get("rounds") or []:
                     options = round_data.get("options")
                     if not isinstance(options, dict):
@@ -932,8 +1189,10 @@ class ImageSessionStore:
                     for reference in round_data.get("webReferences") or []:
                         original_path = session_dir / str(reference.get("original") or "")
                         preview_path = session_dir / str(reference.get("preview") or "")
-                        if not original_path.is_file() or not preview_path.is_file():
+                        if not original_path.is_file():
                             continue
+                        if not preview_path.is_file():
+                            preview_path = original_path
                         web_references.append(
                             {
                                 "id": str(reference.get("id") or ""),
@@ -964,8 +1223,10 @@ class ImageSessionStore:
                             continue
                         original_path = session_dir / str(item_data.get("original") or "")
                         preview_path = session_dir / str(item_data.get("preview") or "")
-                        if not original_path.is_file() or not preview_path.is_file():
+                        if not original_path.is_file():
                             continue
+                        if not preview_path.is_file():
+                            preview_path = original_path
                         result = {
                             "ok": True,
                             "itemIndex": item_index,
@@ -1008,6 +1269,11 @@ class ImageSessionStore:
                             "imageModel": str(options.get("imageModel") or "gpt-image-2"),
                             "aspectRatio": str(options.get("aspectRatio") or "auto"),
                             "transparency": str(options.get("transparency") or "auto"),
+                            "quality": str(options.get("quality") or "medium"),
+                            "outputFormat": str(options.get("output_format") or next((item.get("format") for item in round_data.get("items") or [] if item.get("format")), "png")),
+                            "complexity": str(options.get("complexity") or "auto"),
+                            "resolution": str(options.get("resolution") or "sd"),
+                            "frameCount": int(options.get("frame_count") or 9),
                             "operation": str(options.get("operation") or ("edit" if round_data.get("referenceCount") else "generate")),
                             "continuation": bool(options.get("continuation")),
                             "continuationRationale": str(options.get("continuationRationale") or ""),
@@ -1069,6 +1335,23 @@ class ImageSessionStore:
                 )
             return originals
 
+    def folder_for_set(self, session_id: str, set_id: str = "") -> Path:
+        with self._manifest_lock:
+            manifest = self._read_manifest(self._safe_id(session_id))
+            if manifest is None:
+                raise ValueError("图片项目不存在或尚未保存")
+            session = self._within_root(self._session_dir(str(manifest["sessionId"])))
+            if not set_id:
+                return session
+            clean_set_id = self._safe_id(set_id)
+            project = next((item for item in manifest.get("rounds") or [] if item.get("setId") == clean_set_id), None)
+            if project is None:
+                raise ValueError("图片集不存在")
+            folder = self._within_root(session / str(project.get("directory") or ""))
+            if folder.parent != session or not folder.is_dir():
+                raise ValueError("图片集目录无效")
+            return folder
+
     def _prune_assets_locked(
         self,
         manifest: dict[str, Any],
@@ -1123,10 +1406,10 @@ class ImageSessionStore:
         manifest["assets"] = retained_assets
         return cleanup_paths
 
-    @staticmethod
-    def _cleanup_committed_paths(paths: list[Path]) -> None:
+    def _cleanup_committed_paths(self, paths: list[Path]) -> None:
         for path in paths:
             try:
+                path = self._within_root(path)
                 if path.is_dir():
                     shutil.rmtree(path, ignore_errors=True)
                 else:
@@ -1243,11 +1526,12 @@ def prepare_image_generation(
         image_path = Path(str(raw_path or "")).expanduser().resolve()
         if not image_path.is_file():
             raise ValueError(f"找不到参考图片：{image_path.name}")
-        if image_path.suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES:
+        if image_path.suffix.lower() not in OUTPUT_IMAGE_SUFFIXES:
             raise ValueError(f"不支持的图片格式：{image_path.name}")
         if image_path.stat().st_size > 50 * 1024 * 1024:
             raise ValueError(f"参考图片不能超过 50 MB：{image_path.name}")
         try:
+            image_path = reference_raster_path(image_path)
             with Image.open(image_path) as source_image:
                 source_image.verify()
         except (OSError, ValueError):
@@ -1263,7 +1547,7 @@ def prepare_image_generation(
     if operation == "edit" and not valid_paths:
         raise ValueError("图片编辑至少需要一张参考图")
     output_preset = str(clean_options.get("outputPreset") or "lossless").lower()
-    quality = str(clean_options.get("quality") or "auto").lower()
+    quality = str(clean_options.get("quality") or "medium").lower()
     size = str(clean_options.get("size") or "auto").lower()
     ratio = str(clean_options.get("aspectRatio") or "auto")
     if ratio != "auto" and ratio not in IMAGE_SIZES_BY_RATIO:
@@ -1579,7 +1863,7 @@ class ImageGenerationClient:
             method="POST",
         )
         try:
-            response_context = cls._opener().open(request, timeout=timeout)
+            response_context = open_request(request, timeout=timeout, opener=cls._opener().open)
         except urllib.error.HTTPError as exc:
             response_body = exc.read().decode("utf-8", "replace")
             log_network_error(
@@ -1712,9 +1996,7 @@ class ImageGenerationClient:
             method="POST",
         )
         try:
-            response_context = ImageGenerationClient._opener().open(
-                request, timeout=timeout
-            )
+            response_context = open_request(request, timeout=timeout, opener=ImageGenerationClient._opener().open)
         except urllib.error.HTTPError as exc:
             response_body = exc.read().decode("utf-8", "replace")
             log_network_error(

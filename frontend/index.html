@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="styles/app.css?v=43">
+    <link rel="stylesheet" href="styles/app.css?v=44">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -174,7 +174,7 @@
                                 <button type="button" id="imageGenerationControlsButton" aria-expanded="false" aria-controls="imageGenerationControlPanel" onclick="toggleImageGenerationControls()">
                                     <i data-lucide="settings-2" aria-hidden="true"></i>
                                     <span id="imageGenerationControlSummary">
-                                        <strong id="imageGenerationQualitySummary" data-quality="auto">自动细节</strong>
+                                        <strong id="imageGenerationQualitySummary" data-quality="medium">中质量</strong>
                                         <span aria-hidden="true">·</span>
                                         <span id="imageGenerationRatioSummary">智能</span>
                                         <span id="imageGenerationResolutionDivider" aria-hidden="true">·</span>
@@ -234,7 +234,6 @@
                                         <div class="image-control-section">
                                             <div class="image-quality-heading">
                                                 <span id="imageQualityLabel" tabindex="0" data-image-tip="控制最终渲染质量，独立于构图复杂度与图片分辨率。低档更快，细节、纹理或文字可能出现伪影。">质量</span>
-                                                <button id="imageQualityAuto" type="button" data-image-tip="由模型按任务决定渲染质量。适合希望兼顾效果和用量的通用请求。" aria-pressed="true" onclick="setImageQuality('auto')">自动</button>
                                             </div>
                                             <div id="imageQualityChoices" class="image-choice" aria-labelledby="imageQualityLabel"></div>
                                         </div>
@@ -306,13 +305,13 @@
                                         <div class="advanced-header">
                                             <button type="button" id="advancedBackButton" class="advanced-back">返回</button>
                                             <span class="advanced-title">高级调控</span>
-                                            <span id="advancedStateBadge" class="advanced-state">luna · low</span>
+                                            <span id="advancedStateBadge" class="advanced-state">gpt-6-luna · low</span>
                                         </div>
                                         <div id="advancedMatrix" class="advanced-matrix" tabindex="0" role="application" aria-label="模型与思维深度矩阵">
                                             <div class="advanced-y-labels">
-                                                <span class="advanced-y-label" data-y-label="2"><span>gpt6.1sol</span></span>
-                                                <span class="advanced-y-label" data-y-label="1"><span>gpt6.1terra</span></span>
-                                                <span class="advanced-y-label" data-y-label="0"><span>gpt6luna</span></span>
+                                                <span class="advanced-y-label" data-y-label="2"><span>gpt-6.1-sol</span></span>
+                                                <span class="advanced-y-label" data-y-label="1"><span>gpt-6.1-terra</span></span>
+                                                <span class="advanced-y-label" data-y-label="0"><span>gpt-6-luna</span></span>
                                             </div>
                                             <div id="advancedPad" class="advanced-pad">
                                                 <span id="advancedPadBgA" class="advanced-pad-bg" aria-hidden="true"></span>
@@ -331,7 +330,7 @@
                                                 <span class="advanced-x-label" data-x-label="4">max</span>
                                             </div>
                                         </div>
-                                        <div id="advancedDesc" class="advanced-desc">gpt6luna · 轻快响应 · 日常问答首选</div>
+                                        <div id="advancedDesc" class="advanced-desc">gpt-6-luna · 轻快响应 · 日常问答首选</div>
                                     </div>
                                 </div>
                             </div>
@@ -934,11 +933,11 @@
 
     <script src="vendor/lucide/lucide.min.js"></script>
     <script src="scripts/modules/00-core-ui.js?v=2"></script>
-    <script src="scripts/modules/01-app-state.js?v=4"></script>
-    <script src="scripts/modules/02-image-controls.js?v=9"></script>
-    <script src="scripts/modules/03-image-reasoning.js?v=5"></script>
-    <script src="scripts/modules/04-image-stream-rendering.js?v=1"></script>
-    <script src="scripts/modules/05-image-events-sessions.js?v=5"></script>
+    <script src="scripts/modules/01-app-state.js?v=5"></script>
+    <script src="scripts/modules/02-image-controls.js?v=10"></script>
+    <script src="scripts/modules/03-image-reasoning.js?v=6"></script>
+    <script src="scripts/modules/04-image-stream-rendering.js?v=2"></script>
+    <script src="scripts/modules/05-image-events-sessions.js?v=6"></script>
     <script src="scripts/modules/06-backend-bridge.js?v=2"></script>
     <script src="scripts/modules/07-page-initializer.js?v=4"></script>
     <script src="scripts/modules/08-window-settings-updates.js?v=4"></script>

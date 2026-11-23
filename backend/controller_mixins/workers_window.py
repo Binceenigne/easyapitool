@@ -18,6 +18,8 @@ class WorkersWindowMixin:
         native_form = getattr(self.window, "native", None) if self.window else None
         if native_form is not None:
             native_form.VisibleChanged += self._on_native_visibility_changed
+            native_form.Move += self._on_native_window_moved
+            update_window_maximized_bounds(self.window)
         self._set_window_corner(False)
         threading.Thread(target=self._refresh_loop, name="usage-refresh", daemon=True).start()
         threading.Thread(target=self._start_tray, name="tray-initializer", daemon=True).start()
@@ -282,6 +284,7 @@ class WorkersWindowMixin:
             threading.Timer(0.25, self.push_state_to_ui).start()
 
     def _on_maximized(self) -> None:
+        update_window_maximized_bounds(self.window)
         self.visible = True
         self.maximized = True
         self._set_window_corner(True)
@@ -301,7 +304,11 @@ class WorkersWindowMixin:
         self._schedule_window_size_save()
 
     def _on_resized(self, width: Any = None, height: Any = None) -> None:
+        update_window_maximized_bounds(self.window)
         self._schedule_window_size_save(width, height)
+
+    def _on_native_window_moved(self, *_args: Any) -> None:
+        update_window_maximized_bounds(self.window)
 
     def _on_closing(self) -> bool | None:
         self._flush_window_size()

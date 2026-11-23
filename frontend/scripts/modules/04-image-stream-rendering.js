@@ -416,7 +416,14 @@
                     }
                     recoveredUri ||= failedFrame.fallbackUri;
                     const safeRecoveredUri = browserImageSource(recoveredUri);
-                    if (safeRecoveredUri && safeRecoveredUri !== failedFrame.uri) image.src = safeRecoveredUri;
+                    if (safeRecoveredUri && safeRecoveredUri !== failedFrame.uri) {
+                        failedFrame.uri = safeRecoveredUri;
+                        if (failedFrame.kind === 'final' && context.item) {
+                            context.item.fullUri = safeRecoveredUri;
+                            if (context.item.result) context.item.result.fullUri = safeRecoveredUri;
+                        }
+                        image.src = safeRecoveredUri;
+                    }
                 });
                 imageRevealElementCache.set(frame, image);
             }
@@ -435,6 +442,12 @@
             } else if (frame.startedAt) {
                 applyImageRevealAnimation(image, frame, frameIndex);
                 scheduleFinalImageFrameCleanup(item, frame);
+            }
+            if (image.complete && image.naturalWidth > 0 && !frame.startedAt) {
+                requestAnimationFrame(() => {
+                    const current = imageRevealElementContext.get(image);
+                    if (image.isConnected && current) startImageRevealFrame(current.item, current.frame, image, current.frameIndex);
+                });
             }
             return image;
         }
@@ -776,7 +789,7 @@
                     : set.status === 'failed'
                         ? `第 ${set.roundNumber || 1} 轮 · 生成失败 · 保留 ${completedCount} 张`
                         : `第 ${set.roundNumber || 1} 轮 · ${completedCount}/${set.requestedCount} 张 · 已保存`;
-                meta.textContent += ' · Image ' + (IMAGE_MODEL_LABELS[set.imageModel] || set.imageModel || '2.0');
+                meta.textContent += ' · ' + (IMAGE_MODEL_LABELS[set.imageModel] || set.imageModel || 'GPT Image 2.0');
                 heading.append(titleRow, meta);
                 const actions = document.createElement('div');
                 actions.className = 'image-generation-set-actions';
@@ -795,7 +808,7 @@
                 continueButton.type = 'button';
                 continueButton.title = '基于此轮继续创作';
                 continueButton.setAttribute('aria-label', continueButton.title);
-                continueButton.disabled = set.status === 'running' || completedCount === 0;
+                continueButton.disabled = set.status === 'running' || completedCount === 0 || !imageTierFeature('imageEditing') || !imageReferenceLimit();
                 continueButton.innerHTML = `${iconMarkup('corner-down-left', 'icon-12')}<span>继续编辑</span>`;
                 continueButton.addEventListener('click', () => enterImageEditSession(set.setId));
                 const deleteButton = document.createElement('button');
@@ -806,6 +819,21 @@
                 deleteButton.disabled = set.status === 'running';
                 deleteButton.innerHTML = iconMarkup('trash-2', 'icon-12');
                 deleteButton.addEventListener('click', () => deleteImageGenerationSet(set.setId));
+                if (window.pywebview?.api?.open_image_session_folder) {
+                    const folderButton = document.createElement('button');
+                    folderButton.type = 'button'; folderButton.className = 'image-set-folder-button';
+                    folderButton.title = '打开该项目集文件夹'; folderButton.setAttribute('aria-label', folderButton.title);
+                    folderButton.innerHTML = iconMarkup('folder-open', 'icon-12');
+                    folderButton.addEventListener('click', async () => {
+                        folderButton.disabled = true;
+                        try {
+                            const result = await window.pywebview.api.open_image_session_folder(set.sessionId || set.setId, set.setId);
+                            if (!result?.ok) throw new Error(result?.error || '无法打开项目集文件夹');
+                        } catch (error) { showToast(error.message || String(error), 'error'); }
+                        finally { folderButton.disabled = false; }
+                    });
+                    actions.append(folderButton);
+                }
                 actions.append(continueButton, deleteButton);
                 const toggleButton = document.createElement('button');
                 toggleButton.type = 'button';
@@ -853,12 +881,14 @@
                     applyImageGenerationItemAspectRatio(card, item);
                     const displayUri = completed
                         ? browserImageSource(
-                            set.history ? item.result?.previewUri : item.fullUri || item.result?.fullUri,
+                            set.history && !isLatestImageGenerationSet(set) ? item.result?.previewUri : item.fullUri || item.result?.fullUri,
                             set.history ? item.previewUri : item.uri,
                             item.result?.previewUri,
                             item.previewUri,
                             item.result?.uri,
-                            item.uri
+                            item.uri,
+                            item.fullUri,
+                            item.result?.fullUri
                         )
                         : browserImageSource(item.previewUri, item.uri);
                     const revealFrames = Array.isArray(item.revealFrames) ? item.revealFrames : [];
@@ -878,12 +908,15 @@
                                 ? item.result?.previewUri || item.previewUri
                                 : item.result?.previewUri || item.previewUri || item.result?.uri || item.uri
                             : item.uri;
-                        if (fallbackUri && fallbackUri !== displayUri) {
+                        if (completed || fallbackUri && fallbackUri !== displayUri) {
                             image.addEventListener('error', async () => {
                                 if (completed && item.result?.path && window.pywebview?.api?.load_generated_image) {
                                     try {
                                         const loaded = await window.pywebview.api.load_generated_image(item.result.path);
                                         if (loaded.ok && loaded.dataUrl) {
+                                            item.fullUri = loaded.dataUrl;
+                                            if (item.result) item.result.fullUri = loaded.dataUrl;
+                                            if (set.history) { item.previewUri = loaded.dataUrl; if (item.result) item.result.previewUri = loaded.dataUrl; }
                                             image.src = loaded.dataUrl;
                                             return;
                                         }

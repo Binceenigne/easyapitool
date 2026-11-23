@@ -382,8 +382,6 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
 }
 .image-quality-heading { display: flex; align-items: center; justify-content: space-between; gap: 3px; }
 .image-quality-heading > span { color: var(--muted); font-size: 10px; font-weight: 700; }
-#imageQualityAuto { padding: 1px 5px; border-radius: 5px; background: transparent; color: var(--muted); font-size: 10px; }
-#imageQualityAuto[aria-pressed='true'] { background: var(--image-blue-soft); color: var(--image-blue); font-weight: 700; }
 .image-choice-picker {
     position: relative;
     min-height: var(--image-choice-height);
@@ -1668,3 +1666,26 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
 .image-edit-mode #microSummary,
 .image-edit-mode #dashboardGrid,
 .image-edit-mode #appFooter { display: none !important; }
+
+/* Keep complete model names and distinguish unavailable controls. */
+#imageModelChoices .image-choice-trigger > span,
+#imageModelChoices .image-choice-menu button,
+#imageModelChoices > button,
+.advanced-y-label > span,
+.slider-desc, .advanced-desc {
+    overflow: visible; text-overflow: clip; white-space: normal;
+    overflow-wrap: anywhere; line-height: 1.45;
+}
+#imageModelChoices > button { padding-inline: 6px; }
+#imageGenerationControlPanel .image-control-segmented > button:not(.is-active):not(:disabled) { color: var(--text-soft); }
+#imageGenerationControlPanel .image-control-segmented > button:disabled:not(.is-active) {
+    border: 1px dashed color-mix(in srgb, var(--muted) 65%, transparent);
+    background: repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in srgb, var(--muted) 12%, transparent) 4px 5px);
+    color: var(--muted); opacity: .55; cursor: not-allowed; filter: grayscale(1);
+}
+#imageTransparencyButtons > button:disabled:not(.is-active)::after { content: "×"; font-size: 12px; font-weight: 500; }
+#imageGenerationControlPanel .image-control-segmented > button:disabled.is-active { opacity: 1; cursor: default; }
+#reasoningSliderTrack .slider-dot.is-unavailable { opacity: .38; background: transparent; border: 1px solid currentColor; }
+.image-set-folder-button { flex: none; }
+
+.advanced-state { max-width: 54%; overflow-wrap: anywhere; text-align: right; }
