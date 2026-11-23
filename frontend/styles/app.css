@@ -954,6 +954,22 @@ html.dark #keySwitcherMenu {
   gap: 6px;
 }
 
+#keyForm > div[hidden] {
+  display: none;
+}
+
+.key-endpoint-presets {
+  display: flex;
+  gap: 6px;
+}
+
+.key-endpoint-presets button {
+  padding: 4px 7px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-size: 11px;
+}
+
 #keyForm > div:first-child {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -1504,7 +1520,7 @@ html.dark #keySwitcherMenu {
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--border);
-  border-radius: 0;
+  border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 18px 52px rgba(2, 6, 23, 0.2), 0 2px 10px rgba(2, 6, 23, 0.1);
   opacity: 0;
@@ -1565,8 +1581,94 @@ html.dark #keySwitcherMenu {
   opacity: 0.6;
 }
 
-#imageEditCompressionLabel {
-  grid-column: 1/-1;
+#imageGenerationControlPanel [hidden] {
+  display: none !important;
+}
+
+.image-choice {
+  min-width: 0;
+}
+
+.image-generation-model-row {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.8fr) minmax(0, 1fr);
+}
+
+.image-output-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.image-output-row > .image-choice {
+  flex: 1;
+}
+
+.image-gif-frames {
+  width: 0;
+  flex: none;
+  overflow: hidden;
+  opacity: 0;
+  transform: scale(0.92);
+  transform-origin: center;
+  transition: width 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease, transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.image-gif-frames.is-open {
+  width: 62px;
+  opacity: 1;
+  transform: scale(1);
+}
+
+.image-gif-frames > div {
+  width: 62px;
+}
+
+.image-gif-frames > div > select {
+  padding: 3px 1px 3px 4px !important;
+  border-left: 0 !important;
+}
+
+#imageOptionTooltip {
+  position: fixed;
+  z-index: 5000;
+  max-width: min(240px, 100vw - 14px);
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: #111;
+  color: #fff;
+  font: 12px/1.4 system-ui, sans-serif;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.24);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-gif-frames {
+    transition: none;
+  }
+}
+.image-quality-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 3px;
+}
+
+.image-quality-heading > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+#imageQualityAuto {
+  padding: 0 3px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+#imageQualityAuto[aria-pressed=true] {
+  color: var(--brand);
+  font-weight: 700;
 }
 
 .image-model-picker {
@@ -1642,31 +1744,42 @@ html.dark #keySwitcherMenu {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
-  padding: 3px;
-  gap: 2px;
-  background: var(--surface-strong);
+  min-height: 32px;
+  border: 1px solid var(--border);
+  background: var(--bg);
 }
 
 .image-control-segmented button {
   min-width: 0;
   min-height: 30px;
-  padding: 5px 3px;
+  padding: 4px 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   background: transparent;
   color: var(--muted);
   font-size: 10px;
   transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
-.image-control-segmented button:hover {
+.image-control-segmented button + button {
+  border-left: 1px solid var(--border);
+}
+
+.image-control-segmented button:hover:not(:disabled) {
   color: var(--text);
 }
 
+.image-control-segmented button:disabled {
+  color: var(--muted);
+  opacity: 0.55;
+  cursor: default;
+}
+
 .image-control-segmented button.is-active {
-  background: var(--bg);
+  background: var(--brand-soft);
   color: var(--text);
   font-weight: 700;
-  box-shadow: 0 1px 5px rgba(2, 6, 23, 0.14);
-  transform: translateY(-1px);
 }
 
 .image-aspect-options {
@@ -5182,6 +5295,24 @@ html.dark #avgMinVal {
   background: var(--surface);
   color: var(--muted);
   font-size: var(--fs-8, 8px);
+}
+
+.settings-api-endpoint [hidden] {
+  display: none !important;
+}
+
+.settings-api-endpoint form {
+  display: flex;
+  gap: 6px;
+}
+
+.settings-api-endpoint input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--border);
+  padding: 5px 7px;
+  background: var(--bg);
+  color: var(--text);
 }
 
 /* Model modal */

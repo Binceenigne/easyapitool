@@ -129,3 +129,14 @@
     to { transform: translateX(510%); }
 }
 #settingsFooter { display: flex; flex: 0 0 auto; align-items: center; padding: 12px; gap: 5px; border-top: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: var(--fs-8, 8px); }
+
+.settings-api-endpoint [hidden] { display: none !important; }
+.settings-api-endpoint form { display: flex; gap: 6px; }
+.settings-api-endpoint input {
+    min-width: 0;
+    flex: 1;
+    border: 1px solid var(--border);
+    padding: 5px 7px;
+    background: var(--bg);
+    color: var(--text);
+}

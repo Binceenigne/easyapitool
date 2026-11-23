@@ -34,8 +34,8 @@ class WebApi:
     def open_generated_pictures(self) -> dict[str, Any]:
         return self._controller.open_generated_pictures()
 
-    def add_key(self, name: str, value: str) -> dict[str, Any]:
-        return self._controller.add_key(name, value)
+    def add_key(self, name: str, value: str, base_url: str = "") -> dict[str, Any]:
+        return self._controller.add_key(name, value, base_url)
 
     def delete_key(self, key_id: str) -> dict[str, Any]:
         return self._controller.delete_key(key_id)

@@ -1,17 +1,17 @@
         function persistImageGenerationPreferences() {
             const state = window.imageEditState;
             localStorage.setItem(IMAGE_GENERATION_PREFERENCES_KEY, JSON.stringify({
-                quality: state.quality,
+                quality: state.preferredImageQuality ?? state.quality,
                 complexity: state.preferredImageComplexity,
                 outputFormat: state.preferredImageFormat,
                 outputCompression: state.outputCompression,
                 frameCount: state.frameCount,
-                frameDuration: state.frameDuration,
+                resolution: state.resolution,
                 aspectRatio: state.aspectRatio,
                 transparency: state.transparency,
                 imageModel: state.imageModel,
                 imageModelPreference: state.preferredImageModel || '',
-                imageCount: state.imageCount,
+                imageCount: state.preferredImageCount ?? state.imageCount,
                 reasoningMode: state.reasoningMode,
                 reasoningAdvanced: state.reasoningAdvanced,
                 reasoningAdvancedModel: state.reasoningAdvancedModel,
@@ -34,11 +34,12 @@
             state.preferredImageComplexity = saved.complexity || 'auto';
             const legacyCompression = { small: 55, medium: 75, large: 90 }[saved.outputPreset];
             state.preferredImageFormat = saved.outputFormat || (legacyCompression ? 'jpeg' : 'png');
+            state.preferredImageQuality = saved.quality || 'auto';
             syncManagedImageControls();
-            setImageQuality(saved.quality || 'auto', false);
             setImageTransparency(saved.transparency || 'auto', false);
-            setImageOutputCompression(saved.outputCompression ?? legacyCompression, false);
-            setImageAnimationOptions(saved.frameCount ?? 9, saved.frameDuration ?? 200, false);
+            setImageOutputCompression(saved.outputCompression ?? legacyCompression ?? 75, false);
+            setImageFrameCount(saved.frameCount ?? 9, false);
+            setImageResolution(saved.resolution || 'sd', false);
             setImageAspectRatio(saved.aspectRatio || 'auto', false);
             setImageGenerationCount(saved.imageCount || 1, false);
             setImageWebSearchEnabled(saved.webSearchEnabled !== false, false);
@@ -390,7 +391,15 @@
         };
 
         function activeImageProfile() {
-            return getActiveKey()?.appModels || null;
+            const key = getActiveKey();
+            if (key?.appModels) return key.appModels;
+            if (!key?.directApi) return null;
+            const usable = (key.models || []).filter(model => /^gpt-image-/.test(model));
+            if (!usable.length) return null;
+            const known = Object.keys(IMAGE_MODEL_LABELS).filter(model => usable.includes(model));
+            const images = [...known, ...usable.filter(model => !known.includes(model)).sort()];
+            return { imageModels: images, defaultImage: images.includes('gpt-image-2') ? 'gpt-image-2' : images[0],
+                svg: { enabled: true } };
         }
 
         function imageModelFeatures() {
@@ -409,7 +418,64 @@
             if (restoreFocus) button.focus({ preventScroll: true });
         }
 
+        const IMAGE_MODEL_TIPS = {
+            'gpt-image-2.6-flare': '强大且经济的轻量级模型，适合快速出图',
+            'gpt-image-2.6-sunburst': '最强大的模型，适合最复杂的任务'
+        };
+        const PNG_TIP = '无损格式，最常用，支持透明背景';
+
+        function initializeImageOptionTooltips() {
+            const panel = document.getElementById('imageGenerationControlPanel');
+            const bubble = document.createElement('div');
+            bubble.id = 'imageOptionTooltip';
+            bubble.setAttribute('role', 'tooltip');
+            bubble.hidden = true;
+            document.body.append(bubble);
+            let target = null;
+            let timer;
+            function hide() {
+                clearTimeout(timer);
+                if (target?.getAttribute('aria-describedby') === bubble.id) target.removeAttribute('aria-describedby');
+                target = null;
+                bubble.hidden = true;
+            }
+            function show(element) {
+                if (!element?.dataset.imageTip || panel.hidden) return;
+                if (target === element) return;
+                hide();
+                target = element;
+                timer = setTimeout(() => {
+                    if (!element.isConnected || !panel.classList.contains('is-open')) return hide();
+                    bubble.textContent = element.dataset.imageTip;
+                    bubble.hidden = false;
+                    element.setAttribute('aria-describedby', bubble.id);
+                    const box = element.getBoundingClientRect();
+                    const width = bubble.offsetWidth;
+                    const height = bubble.offsetHeight;
+                    const left = Math.max(7, Math.min(innerWidth - width - 7, box.left + (box.width - width) / 2));
+                    const top = box.top >= height + 12 ? box.top - height - 6 : box.bottom + 6;
+                    bubble.style.left = left + 'px';
+                    bubble.style.top = top + 'px';
+                }, 280);
+            }
+            panel.addEventListener('pointerover', event => {
+                if (event.pointerType !== 'touch') show(event.target.closest('[data-image-tip]'));
+            });
+            panel.addEventListener('pointerout', event => {
+                if (target && target.contains(event.target) && !target.contains(event.relatedTarget)) hide();
+            });
+            panel.addEventListener('focusin', event => {
+                if (event.target.matches(':focus-visible')) show(event.target.closest('[data-image-tip]'));
+            });
+            panel.addEventListener('focusout', hide);
+            panel.addEventListener('scroll', hide, true);
+            panel.addEventListener('click', hide);
+            new MutationObserver(() => { if (panel.hidden || !panel.classList.contains('is-open')) hide(); })
+                .observe(panel, { attributes: true, attributeFilter: ['hidden', 'class'] });
+        }
+
         function initializeImageModelPicker() {
+            initializeImageOptionTooltips();
             const picker = document.getElementById('imageModelPicker');
             const button = document.getElementById('imageModelButton');
             const menu = document.getElementById('imageModelMenu');
@@ -462,6 +528,11 @@
             const profile = activeImageProfile();
             const models = profile?.imageModels?.length ? profile.imageModels : Object.keys(IMAGE_MODEL_LABELS);
             const fallback = profile?.defaultImage || 'gpt-image-2';
+            const inline = models.length <= 3;
+            const picker = document.getElementById('imageModelPicker');
+            const segments = document.getElementById('imageModelChoices');
+            picker.hidden = inline;
+            segments.hidden = !inline;
             const signature = JSON.stringify([fallback, models]);
             if (state.modelSignature !== signature) {
                 const menu = document.getElementById('imageModelMenu');
@@ -473,7 +544,7 @@
                     option.setAttribute('role', 'option');
                     option.dataset.imageModel = model;
                     option.textContent = IMAGE_MODEL_LABELS[model] || model;
-                    option.title = model;
+                    option.dataset.imageTip = IMAGE_MODEL_TIPS[model] || model;
                     return option;
                 }));
                 state.modelSignature = signature;
@@ -485,77 +556,150 @@
             if (typeof syncImageReasoningLabels === 'function') syncImageReasoningLabels();
         }
 
+        function renderImageChoices(id, items, value, onSelect, { segmented = false, disabled = false } = {}) {
+            const container = document.getElementById(id);
+            const inline = segmented || items.length <= 3;
+            const signature = JSON.stringify([items, inline, disabled]);
+            if (container.dataset.signature !== signature) {
+                container.dataset.signature = signature;
+                container.classList.toggle('image-control-segmented', inline);
+                container.replaceChildren();
+                if (inline) {
+                    container.setAttribute('role', 'group');
+                    for (const [item, label, tip] of items) {
+                        const button = document.createElement('button');
+                        button.type = 'button';
+                        button.dataset.value = item;
+                        button.textContent = label;
+                        if (tip) button.dataset.imageTip = tip;
+                        button.disabled = disabled;
+                        button.addEventListener('click', () => onSelect(item));
+                        container.append(button);
+                    }
+                } else {
+                    container.removeAttribute('role');
+                    const select = document.createElement('select');
+                    const labelledBy = container.getAttribute('aria-labelledby');
+                    if (labelledBy) select.setAttribute('aria-labelledby', labelledBy);
+                    else select.setAttribute('aria-label', container.getAttribute('aria-label') || '选项');
+                    select.disabled = disabled;
+                    for (const [item, label] of items) select.add(new Option(label, item));
+                    select.addEventListener('change', () => onSelect(select.value));
+                    container.append(select);
+                }
+            }
+            if (!inline) {
+                const select = container.firstElementChild;
+                select.value = value;
+                select.dataset.imageTip = items.find(([item]) => item === value)?.[2] || '';
+                return;
+            }
+            for (const button of container.children) {
+                const active = button.dataset.value === value;
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-pressed', String(active));
+            }
+        }
+
         function setImageQuality(quality, persist = true) {
             const state = window.imageEditState;
-            const control = document.getElementById('imageEditQuality');
-            const extended = /^gpt-image-2\.[56](?:-|$)/.test(state.imageModel);
-            for (const value of ['xhigh', 'max']) {
-                control.querySelector('option[value="' + value + '"]').disabled = !extended;
+            if (persist) state.preferredImageQuality = quality;
+            const levels = [['low', '低'], ['medium', '中'], ['high', '高']];
+            if (/^gpt-image-2\.[56](?:-|$)/.test(state.imageModel)) {
+                levels.push(['xhigh', '超高'], ['max', '最高']);
             }
-            state.quality = ['auto', 'low', 'medium', 'high'].includes(quality)
-                || (extended && ['xhigh', 'max'].includes(quality)) ? quality : 'auto';
-            control.value = state.quality;
+            state.quality = levels.some(([level]) => level === quality) ? quality : 'auto';
+            renderImageChoices('imageQualityChoices', levels, state.quality, setImageQuality, { segmented: true });
+            document.getElementById('imageQualityAuto').setAttribute('aria-pressed', String(state.quality === 'auto'));
             updateImageGenerationControlSummary();
             if (persist) persistImageGenerationPreferences();
         }
 
         function setImageComplexity(complexity, persist = true) {
             const state = window.imageEditState;
-            const control = document.getElementById('imageEditComplexity');
-            const selected = ['low', 'medium', 'high'].includes(complexity) ? complexity : 'auto';
-            control.disabled = !imageModelFeatures().complexity;
-            control.title = control.disabled ? '当前模型未开放复杂度调节' : '';
-            state.complexity = control.disabled ? 'auto' : selected;
-            control.value = state.complexity;
+            const supported = imageModelFeatures().complexity;
+            const levels = [['auto', '模型默认']];
+            if (supported) levels.push(['low', '低'], ['medium', '中'], ['high', '高']);
+            state.complexity = levels.some(([level]) => level === complexity) ? complexity : 'auto';
+            renderImageChoices('imageComplexityChoices', levels, state.complexity, setImageComplexity, { disabled: !supported });
             if (persist) {
-                state.preferredImageComplexity = selected;
+                state.preferredImageComplexity = state.complexity;
                 persistImageGenerationPreferences();
             }
         }
 
         function setImageOutputFormat(format, persist = true) {
             const state = window.imageEditState;
-            const control = document.getElementById('imageEditOutputFormat');
-            const svg = activeImageProfile()?.svg?.enabled === true;
-            const transparent = state.transparency === 'transparent';
-            const svgChoice = control.querySelector('option[value="svg"]');
-            svgChoice.hidden = svgChoice.disabled = !svg;
-            const gif = control.querySelector('option[value="gif"]');
-            gif.hidden = !imageModelFeatures().animation;
-            gif.disabled = gif.hidden || transparent;
-            control.querySelector('option[value="jpeg"]').disabled = transparent;
-            const chosen = [...control.options].find(option => option.value === format);
-            state.outputFormat = chosen && !chosen.disabled ? format : 'png';
-            control.value = state.outputFormat;
-            document.getElementById('imageEditCompressionLabel').hidden = !['jpeg', 'webp'].includes(state.outputFormat);
-            document.querySelectorAll('.image-animation-field').forEach(field => { field.hidden = state.outputFormat !== 'gif'; });
-            if (persist) {
-                state.preferredImageFormat = state.outputFormat;
-                persistImageGenerationPreferences();
+            const features = imageModelFeatures();
+            const formats = [['png', 'PNG', PNG_TIP], ['jpeg', 'JPEG'], ['webp', 'WebP']];
+            if (activeImageProfile()?.svg?.enabled === true && (features.svg ?? features.animation)) {
+                formats.push(['svg', 'SVG']);
             }
+            if (features.animation) formats.push(['gif', 'GIF']);
+            state.outputFormat = formats.some(([item]) => item === format) ? format : 'png';
+            if (persist) state.preferredImageFormat = state.outputFormat;
+            renderImageChoices('imageOutputChoices', formats, state.outputFormat, setImageOutputFormat);
+            const gif = state.outputFormat === 'gif';
+            const frames = document.getElementById('imageGifFrames');
+            frames.inert = !gif;
+            frames.classList.toggle('is-open', gif);
+            setImageFrameCount(state.frameCount, false);
+            document.getElementById('imageEditCompressionLabel').hidden = !['jpeg', 'webp'].includes(state.outputFormat);
+            const supportsTransparency = ['png', 'webp', 'svg'].includes(state.outputFormat);
+            if (!supportsTransparency && state.transparency === 'transparent') state.transparency = 'auto';
+            for (const button of document.querySelectorAll('#imageTransparencyButtons button')) {
+                const active = button.dataset.transparency === state.transparency;
+                button.disabled = button.dataset.transparency === 'transparent' && !supportsTransparency;
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-pressed', String(active));
+            }
+            setImageGenerationCount(state.preferredImageCount ?? state.imageCount, false);
+            if (persist) persistImageGenerationPreferences();
         }
 
-        function setImageAnimationOptions(
-            frameCount = document.getElementById('imageEditFrameCount').value,
-            frameDuration = document.getElementById('imageEditFrameDuration').value,
-            persist = true
-        ) {
+        function setImageFrameCount(value, persist = true) {
+            const counts = [4, 9, 12, 16];
             const state = window.imageEditState;
-            const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) && String(value).trim()
-                ? Math.max(min, Math.min(max, Math.round(Number(value)))) : fallback;
-            state.frameCount = clamp(frameCount, 2, 16, 9);
-            state.frameDuration = clamp(frameDuration, 20, 2000, 200);
-            document.getElementById('imageEditFrameCount').value = state.frameCount;
-            document.getElementById('imageEditFrameDuration').value = state.frameDuration;
+            state.frameCount = counts.includes(Number(value)) ? Number(value) : 9;
+            renderImageChoices('imageFrameChoices', counts.map(count => [String(count), count + ' 帧', '每帧 200 毫秒']),
+                String(state.frameCount), setImageFrameCount);
             if (persist) persistImageGenerationPreferences();
         }
 
         function setImageOutputCompression(value, persist = true) {
             const rounded = Number(value);
             const compression = value != null && value !== '' && Number.isInteger(rounded) && rounded >= 0 && rounded <= 100
-                ? rounded : null;
+                ? rounded : 75;
             window.imageEditState.outputCompression = compression;
-            document.getElementById('imageEditCompression').value = compression ?? '';
+            document.getElementById('imageEditCompression').value = compression;
+            if (persist) persistImageGenerationPreferences();
+        }
+
+        const IMAGE_RESOLUTIONS = { sd: 1536, hd: 2560, uhd: 3840 };
+        const IMAGE_PIXEL_LIMIT = 8294400;
+
+        function imageRequestSize(ratio, resolution) {
+            if (ratio === 'auto') return 'auto';
+            const [width, height] = ratio.split(':').map(Number);
+            const longRatio = Math.max(width, height);
+            const shortRatio = Math.min(width, height);
+            let long = IMAGE_RESOLUTIONS[resolution] || IMAGE_RESOLUTIONS.sd;
+            let short = Math.round(long * shortRatio / longRatio / 16) * 16;
+            while (long * short > IMAGE_PIXEL_LIMIT) {
+                long -= 16;
+                short = Math.round(long * shortRatio / longRatio / 16) * 16;
+            }
+            const dimensions = width >= height ? [long, short] : [short, long];
+            return dimensions.join('x');
+        }
+
+        function setImageResolution(resolution, persist = true) {
+            if (!IMAGE_RESOLUTIONS[resolution]) return;
+            window.imageEditState.resolution = resolution;
+            renderImageChoices('imageResolutionChoices', [['sd', '标清', '最长边 1536 像素'],
+                ['hd', '高清', '最长边 2560 像素'], ['uhd', '超清', '最长边至多 3840 像素']],
+                resolution, setImageResolution);
+            updateImageGenerationControlSummary();
             if (persist) persistImageGenerationPreferences();
         }
 
@@ -575,11 +719,6 @@
             if (!['auto', 'opaque', 'transparent'].includes(transparency)) return;
             window.imageEditState.transparency = transparency;
             setImageOutputFormat(window.imageEditState.preferredImageFormat, false);
-            document.querySelectorAll('#imageTransparencyButtons button').forEach(button => {
-                const active = button.dataset.transparency === transparency;
-                button.classList.toggle('is-active', active);
-                button.setAttribute('aria-pressed', String(active));
-            });
             updateImageGenerationControlSummary();
             if (persist) persistImageGenerationPreferences();
         }
@@ -604,24 +743,29 @@
                 option.setAttribute('aria-selected', String(option.dataset.imageModel === model));
             }
             const label = IMAGE_MODEL_LABELS[model];
+            if (options.length <= 3) {
+                renderImageChoices('imageModelChoices',
+                    options.map(option => [option.dataset.imageModel, option.textContent, option.dataset.imageTip]), model, setImageModel);
+            }
             document.getElementById('imageModelValue').textContent = label || model;
-            document.getElementById('imageModelButton').title = model;
+            document.getElementById('imageModelButton').dataset.imageTip = IMAGE_MODEL_TIPS[model] || model;
             if (!state.editSession) {
                 document.getElementById('imageEditHeading').textContent = label ? 'GPT Image ' + label + ' 生图' : model + ' 生图';
             }
-            setImageQuality(state.quality, false);
+            setImageQuality(state.preferredImageQuality ?? state.quality, false);
             setImageComplexity(state.preferredImageComplexity, false);
             setImageOutputFormat(state.preferredImageFormat, false);
             if (persist) persistImageGenerationPreferences();
         }
 
         function setImageGenerationCount(count, persist = true) {
-            window.imageEditState.imageCount = Math.max(1, Math.min(9, Number(count) || 1));
-            document.querySelectorAll('#imageGenerationCountButtons button').forEach(button => {
-                const active = Number(button.dataset.count) === window.imageEditState.imageCount;
-                button.classList.toggle('is-active', active);
-                button.setAttribute('aria-pressed', String(active));
-            });
+            const state = window.imageEditState;
+            const desired = Math.max(1, Math.min(9, Math.trunc(Number(count)) || 1));
+            state.preferredImageCount = desired;
+            const limit = state.outputFormat === 'svg' ? 1 : 9;
+            state.imageCount = Math.min(desired, limit);
+            const counts = Array.from({ length: limit }, (_, index) => [String(index + 1), `${index + 1} 张`]);
+            renderImageChoices('imageCountChoices', counts, String(state.imageCount), setImageGenerationCount, { disabled: limit === 1 });
             updateImageGenerationControlSummary();
             if (persist) persistImageGenerationPreferences();
         }
@@ -629,8 +773,14 @@
         function updateImageGenerationControlSummary() {
             const ratio = window.imageEditState.aspectRatio;
             const qualityLabels = { auto: '自动质量', low: '低质量', medium: '中质量', high: '高质量', xhigh: '超高质量', max: '最高质量' };
-            const size = IMAGE_SIZE_PRESETS[ratio] || 'auto';
+            const resolution = window.imageEditState.resolution || 'sd';
+            const size = imageRequestSize(ratio, resolution);
             document.getElementById('imageEditSize').value = size;
+            const resolutionLabel = document.getElementById('imageResolutionLabel');
+            resolutionLabel.dataset.imageTip = size === 'auto'
+                ? '智能比例由模型选择尺寸。设定比例后使用选定的分辨率。'
+                : size.replace('x', ' × ') + (Math.max(...size.split('x').map(Number)) < IMAGE_RESOLUTIONS[resolution]
+                    ? ' 像素，已按模型的像素上限缩放' : ' 像素');
             const qualitySummary = document.getElementById('imageGenerationQualitySummary');
             qualitySummary.textContent = qualityLabels[window.imageEditState.quality];
             qualitySummary.dataset.quality = window.imageEditState.quality;

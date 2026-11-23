@@ -254,6 +254,7 @@ class QuotaStateMixin:
             "rates": payload.get("rates", {}) if payload.get("serverQuota") else self.store.rates(record["id"]),
             "serverQuota": bool(payload.get("serverQuota")),
             "appModels": payload.get("appModels") if payload.get("serverQuota") else None,
+            "directApi": not is_mirra_api_url(record.get("base_url") or MIRRA_API_URL),
             "quotaPercent": quota.get("remainingPercent"),
             "quotaSeverity": quota.get("severity"),
             "lastError": record["last_error"],
@@ -298,12 +299,19 @@ class QuotaStateMixin:
             "databasePath": str(self.store.path),
         }
 
-    def add_key(self, name: str, value: str) -> dict[str, Any]:
+    def add_key(self, name: str, value: str, base_url: str = "") -> dict[str, Any]:
         name = (name or "").strip()
         value = (value or "").strip()
         if not name or not value:
             return {"ok": False, "error": "昵称和密钥不能为空"}
-        base_url = api_base_url_for_key(value)
+        try:
+            base_url = normalize_api_base_url(base_url) if base_url else api_base_url_for_key(value)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        if is_mirra_api_url(base_url) and not value.startswith("sk-mirra-"):
+            return {"ok": False, "error": "Mirra 网关需要分发密钥。其他密钥需填写对应的 API 地址。"}
+        if value.startswith("sk-proj-") and base_url != OPENAI_API_URL:
+            return {"ok": False, "error": "OpenAI 项目密钥请绑定官方 API 地址"}
         key_id = self.store.add_key(name, value, base_url)
         with self.refresh_lock:
             self._refresh_key(key_id)

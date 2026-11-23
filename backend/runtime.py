@@ -268,8 +268,8 @@ class RemoteWebApi(WebApi):
     def load_generated_image(self, source_path: str) -> dict[str, Any]:
         return self._remote("load_generated_image", source_path)
 
-    def add_key(self, name: str, value: str) -> dict[str, Any]:
-        return self._remote("add_key", name, value)
+    def add_key(self, name: str, value: str, base_url: str = "") -> dict[str, Any]:
+        return self._remote("add_key", name, value, base_url)
 
     def delete_key(self, key_id: str) -> dict[str, Any]:
         return self._remote("delete_key", key_id)

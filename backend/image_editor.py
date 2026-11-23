@@ -56,7 +56,7 @@ def svg_size(image_bytes: bytes) -> tuple[int, int] | None:
     data = image_bytes.removeprefix(b"\xef\xbb\xbf").lstrip()
     if not data.startswith(b"<"):
         return None
-    if len(data) > 50 * 1024 * 1024 or re.search(rb"<!\s*(?:DOCTYPE|ENTITY)\b", data, re.IGNORECASE):
+    if len(data) > 50 * 1024 * 1024 or re.search(rb"<!(?:DOCTYPE|ENTITY)\b|<\?(?!xml\s)", data, re.IGNORECASE):
         raise ValueError("SVG 内容无效或超过 50 MB")
     try:
         root = ET.fromstring(data.decode("utf-8"))
@@ -65,13 +65,12 @@ def svg_size(image_bytes: bytes) -> tuple[int, int] | None:
     if root.tag not in {"svg", "{http://www.w3.org/2000/svg}svg"}:
         raise ValueError("SVG 根节点无效")
     for element in root.iter():
-        if element.tag.rsplit("}", 1)[-1].lower() in {"script", "foreignobject"}:
+        if element.tag.rsplit("}", 1)[-1].lower() in {"script", "foreignobject", "animate", "animatemotion", "animatetransform", "set"}:
             raise ValueError("SVG 含有无法预览的内容")
         for attr, value in element.attrib.items():
             name = attr.rsplit("}", 1)[-1].lower()
             if name.startswith("on") or (name == "href" and not value.strip().startswith("#")):
                 raise ValueError("SVG 含有无法预览的内容")
-
     def pixels(value: str) -> int:
         try:
             numeric = float(value.removesuffix("px"))
@@ -1833,6 +1832,8 @@ class ImageGenerationService:
             suffix, image_format = ".svg", "svg"
         else:
             with Image.open(io.BytesIO(result_bytes)) as source_image:
+                if request.output_format == "gif" and (source_image.format != "GIF" or source_image.n_frames < 2):
+                    raise RuntimeError("生图接口未返回 GIF 动图")
                 width, height = source_image.size
                 suffix = IMAGE_EXTENSIONS.get(source_image.format)
                 image_format = str(source_image.format).lower()

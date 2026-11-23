@@ -10,9 +10,10 @@ class EasyClinClient:
         url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
         request = urllib.request.Request(
             url,
-            headers={"Authorization": f"Bearer {secret}", "Accept": "application/json"},
+            headers={"Accept": "application/json"},
             method="GET",
         )
+        request.add_unredirected_header("Authorization", f"Bearer {secret}")
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
@@ -20,23 +21,31 @@ class EasyClinClient:
             body = exc.read().decode("utf-8", "replace")
             try:
                 parsed = json.loads(body)
-                message = (parsed.get("error") or {}).get("message") or parsed.get("message")
+                error = parsed.get("error") if isinstance(parsed, dict) else None
+                message = (error.get("message") if isinstance(error, dict) else error) or (
+                    parsed.get("detail") or parsed.get("message") if isinstance(parsed, dict) else None
+                )
             except json.JSONDecodeError:
                 message = body[:200]
+            if message and secret:
+                message = str(message).replace(secret, "[API Key]")
             raise RuntimeError(f"HTTP {exc.code}: {message or exc.reason}") from None
         except (urllib.error.URLError, TimeoutError) as exc:
             raise RuntimeError(f"网络请求失败: {exc.reason if hasattr(exc, 'reason') else exc}") from None
 
     def fetch(self, base_url: str, secret: str) -> tuple[dict[str, Any], list[str] | None]:
         official = base_url.rstrip("/") == OPENAI_API_URL
-        usage = (
-            {"isValid": True, "status": "active", "mode": "official"}
-            if official else self.get_json(base_url, secret, "/usage?days=30")
-        )
+        usage = None
+        if not official:
+            try:
+                usage = self.get_json(base_url, secret, "/usage?days=30")
+            except RuntimeError as exc:
+                if is_mirra_api_url(base_url) or not str(exc).startswith(("HTTP 404:", "HTTP 405:", "HTTP 501:")):
+                    raise
         try:
             models = self.get_json(base_url, secret, "/models")
         except RuntimeError:
-            if official:
+            if usage is None:
                 raise
             return usage, None
         model_ids: list[str] = []
@@ -47,7 +56,7 @@ class EasyClinClient:
             if model_id and model_id not in seen:
                 seen.add(model_id)
                 model_ids.append(model_id)
-        return usage, model_ids
+        return (usage or {"isValid": True, "status": "active", "mode": "official"}), model_ids
 
     @staticmethod
     def _response_output_text(payload: Any) -> str:
@@ -130,13 +139,13 @@ class EasyClinClient:
             url,
             data=body,
             headers={
-                "Authorization": f"Bearer {secret}",
                 "Accept": "text/event-stream",
                 "Content-Type": "application/json",
                 "User-Agent": f"{APP_NAME}/{APP_VERSION}",
             },
             method="POST",
         )
+        request.add_unredirected_header("Authorization", f"Bearer {secret}")
         for attempt in range(2):
             try:
                 response_context = urllib.request.urlopen(request, timeout=timeout)

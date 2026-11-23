@@ -51,7 +51,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.1.16"
+APP_VERSION = "1.1.17"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -65,16 +65,36 @@ MUTEX_NAME = "Local\\API_TOOLS_EasyClin_Quota_Monitor"
 SHOW_EVENT_NAME = "Local\\API_TOOLS_EasyClin_Show_Window"
 DEFAULT_BASE_URL = "https://work.easyclin.cn/v1"
 OPENAI_API_URL = "https://api.openai.com/v1"
-MIRRA_ORIGIN = "https://imggen.djyx.pw"
+MIRRA_ORIGIN = "https://39.105.74.222"
 MIRRA_API_URL = f"{MIRRA_ORIGIN}/openai/v1"
 MIRRA_UPDATE_URL = f"{MIRRA_ORIGIN}/v1/app/update"
 LEGACY_MIRRA_API_URL = "https://imggen.djyx.me/openai/v1"
+MIRRA_PREVIOUS_API_URLS = (LEGACY_MIRRA_API_URL, "https://imggen.djyx.pw/openai/v1")
+
+
+def normalize_api_base_url(value: str) -> str:
+    value = str(value or "").strip().rstrip("/")
+    if not value or len(value) > 2048 or any(ch.isspace() or ch in "\\?#" for ch in value):
+        raise ValueError("请输入有效的 HTTPS API 根地址")
+    try:
+        url = urllib.parse.urlsplit(value)
+        port = url.port
+    except ValueError as exc:
+        raise ValueError("请输入有效的 HTTPS API 根地址") from exc
+    if (url.scheme != "https" or not url.hostname or url.username is not None
+            or url.query or url.fragment or port == 0 or url.netloc.endswith(":")):
+        raise ValueError("请输入有效的 HTTPS API 根地址")
+    return value if url.path else value + "/v1"
+
+
+def is_mirra_api_url(value: str) -> bool:
+    return value.rstrip("/").lower() in (MIRRA_API_URL, *MIRRA_PREVIOUS_API_URLS)
 
 
 def api_base_url_for_key(key: str) -> str:
     if key.startswith("sk-mirra-"):
         base_url = os.environ.get("MIRRA_PUBLIC_OPENAI_BASE_URL", MIRRA_API_URL).rstrip("/")
-        return MIRRA_API_URL if base_url.lower() == LEGACY_MIRRA_API_URL else base_url
+        return MIRRA_API_URL if is_mirra_api_url(base_url) else base_url
     if key.startswith("sk-proj-"):
         return OPENAI_API_URL
     return os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
@@ -87,7 +107,7 @@ RETENTION_DAYS = 30
 LIMIT_CHANGE_DISPLAY_SECONDS = 600
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), name="UTC+8")
 STATIC_CACHE_SCHEMA = 1
-STATIC_UI_VERSION = "54"
+STATIC_UI_VERSION = "55"
 IMAGE_STREAM_DEBUG_LOG_MAX_BYTES = 20 * 1024 * 1024
 WEB_SEARCH_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 WEB_REFERENCE_IMAGE_MAX_BYTES = 16 * 1024 * 1024

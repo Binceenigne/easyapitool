@@ -912,10 +912,13 @@ class ImageReasoningMixin:
         if record is None:
             return {"ok": False, "error": "请选择有效的 API Key"}
         secret = self.store.get_secret(record["id"])
-        profile = None
-        if secret.startswith("sk-mirra-"):
-            snapshot = self.store.latest_payload(record["id"]) or {}
-            profile = snapshot.get("appModels")
+        snapshot = self.store.latest_payload(record["id"]) or {}
+        profile = snapshot.get("appModels")
+        if not profile and not is_mirra_api_url(record["base_url"]):
+            models = [model for model in snapshot.get("_models") or [] if model.startswith("gpt-image-")]
+            if models:
+                profile = {"defaultImage": "gpt-image-2" if "gpt-image-2" in models else models[0],
+                           "imageModels": models, "svg": {"enabled": True}}
 
         def prepare_request(text, paths, requested_options):
             return prepare_image_generation(text, paths, requested_options, app_models=profile)
@@ -947,7 +950,7 @@ class ImageReasoningMixin:
         )
         clean_options.update(
             {
-                "moderation": "low",
+                "moderation": "auto" if record["base_url"] == OPENAI_API_URL else "low",
                 "stream": True,
                 "partialImages": 3,
                 "continuation": continuation_enabled,

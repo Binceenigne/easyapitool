@@ -56,15 +56,15 @@ class StoreTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_saved_mirra_key_moves_to_new_domain(self):
+    def test_saved_mirra_key_moves_to_ip_gateway(self):
         key_id = self.store.add_key("Mirra", "sk-mirra-fixture", "https://imggen.djyx.me/openai/v1")
         direct_id = self.store.add_key("Direct", "fixture", "https://example.test/v1")
         reopened = app.Store(self.store.path)
-        self.assertEqual(reopened.get_key_record(key_id)["base_url"], "https://imggen.djyx.pw/openai/v1")
+        self.assertEqual(reopened.get_key_record(key_id)["base_url"], "https://39.105.74.222/openai/v1")
         self.assertEqual(reopened.get_secret(key_id), "sk-mirra-fixture")
         self.assertEqual(reopened.get_key_record(direct_id)["base_url"], "https://example.test/v1")
         with patch.dict(__import__("os").environ, {"MIRRA_PUBLIC_OPENAI_BASE_URL": "https://imggen.djyx.me/openai/v1/"}):
-            self.assertEqual(app.api_base_url_for_key("sk-mirra-fixture"), "https://imggen.djyx.pw/openai/v1")
+            self.assertEqual(app.api_base_url_for_key("sk-mirra-fixture"), "https://39.105.74.222/openai/v1")
 
     def test_changelog_between_includes_only_uninstalled_versions(self):
         markdown = (
@@ -1022,7 +1022,7 @@ class UtilityTests(unittest.TestCase):
         request = urlopen.call_args.args[0]
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(request.full_url, "https://example.test/v1/responses")
-        self.assertEqual(request.headers["Authorization"], "Bearer secret")
+        self.assertEqual(request.get_header("Authorization"), "Bearer secret")
         self.assertEqual(request.headers["User-agent"], f"{app.APP_NAME}/{app.APP_VERSION}")
         self.assertEqual(payload["model"], "gpt-test")
         self.assertEqual(payload["reasoning"], {"effort": "high"})
@@ -1705,12 +1705,12 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn('id="imageEditPartialImages"', page)
         self.assertNotIn("partialImagesReceived", page)
         self.assertNotIn("image-edit-toggle-field", scss_source)
-        self.assertIn('<select id="imageEditQuality"', page)
-        self.assertIn('<select id="imageEditComplexity"', page)
-        self.assertIn('<select id="imageEditOutputFormat"', page)
-        self.assertIn('<option value="webp">WebP</option>', page)
-        self.assertIn('id="imageGenerationCountButtons"', page)
-        self.assertIn('data-count="9"', page)
+        self.assertIn('id="imageQualityChoices"', page)
+        self.assertIn('id="imageComplexityChoices"', page)
+        self.assertIn('id="imageOutputChoices"', page)
+        self.assertIn("['webp', 'WebP']", page)
+        self.assertIn('id="imageCountChoices"', page)
+        self.assertIn("id=\"imageFrameChoices\"", page)
         self.assertIn('id="imageGenerationQualitySummary" data-quality="auto"', page)
         self.assertNotIn('id="imageGenerationOutputSummary"', page)
         self.assertIn('id="imageGenerationModelSummary"', page)
@@ -2604,6 +2604,7 @@ class ControllerTests(unittest.TestCase):
             controller = app.AppController.__new__(app.AppController)
             controller.image_generator = service
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -2691,6 +2692,7 @@ class ControllerTests(unittest.TestCase):
             controller = app.AppController.__new__(app.AppController)
             controller.image_generator = SimpleNamespace(generate=generate_until_cancelled)
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -2750,6 +2752,7 @@ class ControllerTests(unittest.TestCase):
             controller = app.AppController.__new__(app.AppController)
             controller.image_generator = SimpleNamespace(generate=generate_with_overlap)
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -2802,6 +2805,7 @@ class ControllerTests(unittest.TestCase):
                 )
             )
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {"id": key_id, "base_url": "https://example.test/v1"},
                 get_secret=lambda _key_id: "secret",
             )
@@ -2853,6 +2857,7 @@ class ControllerTests(unittest.TestCase):
             controller.active_image_sets = set()
             controller.image_generator = service
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -2968,6 +2973,7 @@ class ControllerTests(unittest.TestCase):
             controller.active_image_sets = set()
             controller.image_generator = service
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -3105,6 +3111,7 @@ class ControllerTests(unittest.TestCase):
             controller.active_image_sets = set()
             controller.image_generator = service
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -3209,6 +3216,7 @@ class ControllerTests(unittest.TestCase):
     def test_polish_prompt_uses_terra_and_streams_events(self):
         controller = app.AppController.__new__(app.AppController)
         controller.store = SimpleNamespace(
+            latest_payload=lambda _key_id: None,
             get_key_record=lambda key_id: {
                 "id": key_id,
                 "base_url": "https://example.test/v1",
@@ -3390,6 +3398,7 @@ class ControllerTests(unittest.TestCase):
             controller = app.AppController.__new__(app.AppController)
             controller.image_generator = service
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -3484,6 +3493,7 @@ class ControllerTests(unittest.TestCase):
             controller = app.AppController.__new__(app.AppController)
             controller.image_generator = service
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -3799,6 +3809,7 @@ class ControllerTests(unittest.TestCase):
             controller.image_generator = service
             controller.web_search = search_service
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -3939,6 +3950,7 @@ class ControllerTests(unittest.TestCase):
                 )
             )
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -4793,7 +4805,7 @@ class ControllerTests(unittest.TestCase):
             controller._download_update_worker()
             self.assertEqual(controller.update_state["status"], "ready")
             self.assertEqual(Path(controller.update_state["downloadedPath"]).read_bytes(), data)
-            self.assertEqual(download_urls[0], "https://imggen.djyx.pw/v1/app/update/download?platform=windows")
+            self.assertEqual(download_urls[0], "https://39.105.74.222/v1/app/update/download?platform=windows")
             self.assertIn("/releases/download/imagen-v9.9.9/API_TOOLS.exe", download_urls[1])
             checksum.assert_not_called()
 

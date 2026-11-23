@@ -403,7 +403,7 @@
                     outputFormat: window.imageEditState.preferredImageFormat,
                     outputCompression: window.imageEditState.outputCompression,
                     frameCount: window.imageEditState.frameCount,
-                    frameDuration: window.imageEditState.frameDuration,
+                    resolution: window.imageEditState.resolution,
                     imageModel: window.imageEditState.imageModel,
                     aspectRatio: window.imageEditState.aspectRatio,
                     reasoningMode: window.imageEditState.reasoningMode,
@@ -460,7 +460,8 @@
                 setImageComplexity(window.imageEditState.preferredImageComplexity, false);
                 setImageOutputFormat(window.imageEditState.preferredImageFormat, false);
                 setImageOutputCompression(draft.outputCompression, false);
-                setImageAnimationOptions(draft.frameCount ?? 9, draft.frameDuration ?? 200, false);
+                setImageFrameCount(draft.frameCount ?? 9, false);
+                setImageResolution(draft.resolution || 'sd', false);
                 window.imageEditState.reasoningPreviousMode = normalizeImageReasoningPreset(draft.reasoningPreviousMode);
                 setImageReasoningSelection(
                     draft.reasoningMode,
@@ -883,7 +884,7 @@
             const imageCount = window.imageEditState.imageCount;
             const aspectRatio = window.imageEditState.aspectRatio;
             const transparency = window.imageEditState.transparency;
-            const { outputFormat, outputCompression, complexity, quality, frameCount, frameDuration } = window.imageEditState;
+            const { outputFormat, outputCompression, complexity, quality, frameCount } = window.imageEditState;
             if (outputFormat === 'svg' && (files.length || session || imageCount !== 1)) {
                 return showToast('SVG 仅支持单张生成，请先移除参考图并退出续作', 'error');
             }
@@ -898,7 +899,7 @@
                 quality,
                 ...(complexity === 'auto' ? {} : { complexity }),
                 output_format: outputFormat,
-                ...(outputFormat === 'gif' ? { frame_count: frameCount, frame_duration_ms: frameDuration } : {}),
+                ...(outputFormat === 'gif' ? { frame_count: frameCount, frame_duration_ms: 200 } : {}),
                 ...(['jpeg', 'webp'].includes(outputFormat) && outputCompression !== null
                     ? { output_compression: outputCompression } : {}),
                 imageCount,
