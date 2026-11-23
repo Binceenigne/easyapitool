@@ -28,7 +28,28 @@ type egressManager struct {
 	store     *store
 	envURL    string
 	settings  proxySettings
-	transport *http.Transport
+	transport *egressTransport
+}
+
+type egressTransport struct {
+	shared *http.Transport
+	images *http.Transport
+}
+
+func (t *egressTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.images != nil && req.Method == http.MethodPost &&
+		strings.EqualFold(req.URL.Hostname(), "api.openai.com") &&
+		strings.HasPrefix(req.URL.Path, "/v1/images/") {
+		return t.images.RoundTrip(req)
+	}
+	return t.shared.RoundTrip(req)
+}
+
+func (t *egressTransport) CloseIdleConnections() {
+	t.shared.CloseIdleConnections()
+	if t.images != nil {
+		t.images.CloseIdleConnections()
+	}
 }
 
 var errProxyURL = errors.New("代理地址格式无效。带认证的 SOCKS5 地址可用 socks5://用户名:密码@主机:端口 或 socks5://主机:端口:用户名:密码")
@@ -96,7 +117,7 @@ func normalizeSOCKSAddress(value string) string {
 	return scheme + "://" + user.String() + "@" + host + ":" + fields[0]
 }
 
-func (m *egressManager) prepare(s proxySettings) (*http.Transport, *url.URL, error) {
+func (m *egressManager) prepare(s proxySettings) (*egressTransport, *url.URL, error) {
 	raw := ""
 	switch s.Mode {
 	case "environment":
@@ -136,12 +157,24 @@ func (m *egressManager) prepare(s proxySettings) (*http.Transport, *url.URL, err
 	}
 	transport.DialContext = (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.MaxIdleConnsPerHost = 16
+	result := &egressTransport{shared: transport}
 	if proxy != nil {
-		// Keep long image requests active on the other side of the CONNECT tunnel.
 		transport.HTTP2 = &http.HTTP2Config{SendPingTimeout: 25 * time.Second, PingTimeout: 10 * time.Second}
 		transport.IdleConnTimeout = 45 * time.Second
+		// Use one upstream tunnel per OpenAI image request so losing a connection
+		// interrupts only that image request.
+		images := transport.Clone()
+		images.HTTP2 = nil
+		images.ForceAttemptHTTP2 = false
+		images.Protocols = new(http.Protocols)
+		images.Protocols.SetHTTP1(true)
+		if images.TLSClientConfig != nil {
+			images.TLSClientConfig.NextProtos = []string{"http/1.1"}
+		}
+		images.DisableKeepAlives = true
+		result.images = images
 	}
-	return transport, proxy, nil
+	return result, proxy, nil
 }
 
 const egressPurpose = "settings\x00egress"
@@ -190,7 +223,7 @@ func (m *egressManager) view() object {
 	return m.viewLocked()
 }
 
-func (m *egressManager) candidate(input proxySettings) (proxySettings, *http.Transport, error) {
+func (m *egressManager) candidate(input proxySettings) (proxySettings, *egressTransport, error) {
 	if input.Revision != m.settings.Revision {
 		return input, nil, errProxyChanged
 	}

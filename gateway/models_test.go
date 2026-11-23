@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"image"
@@ -10,6 +11,7 @@ import (
 	"image/gif"
 	"image/png"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -17,6 +19,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestProxyProviderAddress(t *testing.T) {
@@ -51,6 +54,88 @@ func TestProxyProviderAddress(t *testing.T) {
 		if _, err := parseProxyURL(bad); err == nil {
 			t.Fatalf("accepted malformed address %q", bad)
 		}
+	}
+}
+
+func TestProxiedOpenAIImagesUseIndependentHTTP1Tunnels(t *testing.T) {
+	type connection struct{ Protocol, Address string }
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(connection{r.Proto, r.RemoteAddr})
+	}))
+	upstream.EnableHTTP2 = true
+	upstream.StartTLS()
+	defer upstream.Close()
+
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect || r.Host != "api.openai.com:443" {
+			t.Errorf("unexpected proxy request: %s %s", r.Method, r.Host)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		origin, err := net.DialTimeout("tcp", upstream.Listener.Addr().String(), time.Second)
+		if err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer origin.Close()
+		tunnel, buffered, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer tunnel.Close()
+		io.WriteString(buffered, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		if err := buffered.Flush(); err != nil {
+			t.Error(err)
+			return
+		}
+		go func() {
+			io.Copy(origin, buffered)
+			origin.Close()
+		}()
+		io.Copy(tunnel, origin)
+	}))
+	defer proxy.Close()
+
+	egress := &egressManager{}
+	transport, _, err := egress.prepare(proxySettings{Mode: "custom", Scope: "openai", URL: proxy.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.CloseIdleConnections()
+	trustedRoots := upstream.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	for _, target := range []*http.Transport{transport.shared, transport.images} {
+		if target.TLSClientConfig == nil {
+			target.TLSClientConfig = &tls.Config{}
+		}
+		target.TLSClientConfig.RootCAs = trustedRoots
+		target.TLSClientConfig.ServerName = "127.0.0.1"
+	}
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	request := func(path string) connection {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "https://api.openai.com/v1/"+path, strings.NewReader("{}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var result connection
+		if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	first, second := request("images/generations"), request("images/edits")
+	if first.Protocol != "HTTP/1.1" || second.Protocol != "HTTP/1.1" || first.Address == second.Address {
+		t.Fatalf("image connections were not isolated: %+v, %+v", first, second)
+	}
+	if got := request("responses"); got.Protocol != "HTTP/2.0" {
+		t.Fatalf("the Responses API lost HTTP/2: %+v", got)
 	}
 }
 
