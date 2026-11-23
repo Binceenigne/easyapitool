@@ -1,3 +1,4 @@
+from tests.sdk_fixture import sdk_text_fixture
 import io
 import json
 import threading
@@ -187,6 +188,7 @@ class PromptTargetTests(unittest.TestCase):
             get_secret=lambda _key: "test-only", latest_payload=lambda _key: {"appModels": profile},
         )
         controller.client = SimpleNamespace(stream_response=Mock(return_value="GIF motion prompt"))
+        controller._run_sdk_agent = Mock(side_effect=sdk_text_fixture(controller.client.stream_response))
         result = controller.polish_prompt("key", "a dog jumps", {"output_format": "gif", "frame_count": 4})
         self.assertTrue(result["ok"])
         call = controller.client.stream_response.call_args
@@ -206,6 +208,7 @@ class PromptTargetTests(unittest.TestCase):
             return text
 
         controller.client = SimpleNamespace(stream_response=Mock(side_effect=response))
+        controller._run_sdk_agent = Mock(side_effect=sdk_text_fixture(controller.client.stream_response))
         config = app.resolve_image_reasoning_config("flash")
         config["outputOptions"] = {"output_format": "gif", "frame_count": 9}
         result = controller._run_image_prompt_agent(
@@ -215,7 +218,7 @@ class PromptTargetTests(unittest.TestCase):
         self.assertIn("运动脚本", result["prompt"])
         call = controller.client.stream_response.call_args
         self.assertIn("循环衔接", call.args[3])
-        self.assertEqual(call.args[4][0]["content"], "a dog jumps")
+        self.assertEqual(call.args[4], "a dog jumps")
         self.assertEqual(call.kwargs["reasoning_mode"], "flash")
 
     def test_continuation_uses_the_authorized_pair_and_static_vision_image(self):
@@ -234,6 +237,7 @@ class PromptTargetTests(unittest.TestCase):
             answer = {"operation": "edit", "selected_asset_ids": [asset["assetId"]],
                       "descriptions": [{"asset_id": asset["assetId"], "description": "a red square"}], "rationale": "preserve the square"}
             controller.client = SimpleNamespace(stream_response=Mock(return_value=json.dumps(answer)))
+            controller._run_sdk_agent = Mock(side_effect=sdk_text_fixture(controller.client.stream_response))
             controller._run_instant_image_continuation_planner(
                 {"id": "key", "base_url": "https://provider.test/v1"}, "test-only", "turn it green",
                 {"assets": [asset]}, [asset],

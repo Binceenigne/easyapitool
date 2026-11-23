@@ -665,7 +665,7 @@ class ImageEditorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "未返回最终图片"):
             image_editor.ImageGenerationClient._read_response(lines, stream=True)
 
-    def test_stream_parser_promotes_last_partial_after_explicit_completion(self):
+    def test_stream_parser_rejects_partial_when_completion_has_no_final_bytes(self):
         final_image = base64.b64encode(b"completed-partial").decode("ascii")
         lines = [
             (
@@ -678,12 +678,10 @@ class ImageEditorTests(unittest.TestCase):
             b"\n",
         ]
 
-        result = image_editor.ImageGenerationClient._read_response(lines, stream=True)
+        with self.assertRaisesRegex(RuntimeError, "未返回最终图片"):
+            image_editor.ImageGenerationClient._read_response(lines, stream=True)
 
-        self.assertEqual(result["data"][0]["b64_json"], final_image)
-        self.assertEqual(result["usage"], {"total_tokens": 42})
-
-    def test_stream_parser_accepts_named_completion_with_done_payload(self):
+    def test_stream_parser_rejects_partial_with_named_done_without_final_bytes(self):
         final_image = base64.b64encode(b"named-done-final").decode("ascii")
         lines = [
             (
@@ -696,9 +694,8 @@ class ImageEditorTests(unittest.TestCase):
             b"\n",
         ]
 
-        result = image_editor.ImageGenerationClient._read_response(lines, stream=True)
-
-        self.assertEqual(result["data"][0]["b64_json"], final_image)
+        with self.assertRaisesRegex(RuntimeError, "未返回最终图片"):
+            image_editor.ImageGenerationClient._read_response(lines, stream=True)
 
     def test_service_persists_partial_before_returning_final_image(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -7,6 +7,8 @@ from ..web_search import WebSearchService
 from ..store import Store
 from ..client import EasyClinClient
 from ..transport import UnsentConnectionError
+from mirra_agents import AgentRequest, AgentRunFailure, run_agent
+from mirra_agents.retry import AgentCancelled, failure_details, max_attempts, retry_sync
 from ..prompt_targets import (format_prompt_instructions, choose_reasoning_pair, stored_model_profile, apply_reasoning_profile)
 
 class ImageGenerationCancelled(Exception):
@@ -48,28 +50,30 @@ class ImageTaskContext:
 
 
 class ImageReasoningMixin:
-    def _call_reasoning_with_retries(self, *args: Any, task_context: ImageTaskContext | None, on_retry: Any = None, **kwargs: Any) -> Any:
-        for attempt in range(2):
-            if task_context is not None:
-                task_context.check_cancelled()
-            try:
-                return self._call_with_task_context(
-                    self.client.stream_response, *args, task_context=task_context, **kwargs
-                )
-            except ImageGenerationCancelled:
-                raise
-            except UnsentConnectionError as exc:
-                if task_context is not None:
-                    task_context.check_cancelled()
-                if attempt:
-                    raise
-                if on_retry is not None:
-                    on_retry(1, 0.35, str(exc))
-                if task_context is not None:
-                    task_context.cancel_event.wait(0.35)
-                    task_context.check_cancelled()
-                else:
-                    time.sleep(0.35)
+    @staticmethod
+    def _run_sdk_agent(request: AgentRequest, **kwargs: Any) -> dict[str, Any]:
+        return run_agent(request, **kwargs)
+
+    def _call_reasoning_with_retries(self, *args: Any, task_context: ImageTaskContext | None, on_retry: Any = None, **kwargs: Any) -> str:
+        base_url, secret, model, instructions, user_input = args[:5]
+        def progress(event: dict[str, Any]) -> None:
+            if event["type"] == "text_delta" and kwargs.get("on_delta"):
+                kwargs["on_delta"](event["delta"])
+            elif event["type"] == "turn_completed" and kwargs.get("on_completed"):
+                kwargs["on_completed"](event["response"])
+            elif event["type"] == "retry" and on_retry is not None:
+                on_retry(event["attempt"] - 1, event["delayMs"] / 1000, event["cause"])
+        request = AgentRequest(base_url=base_url, api_key=secret, model=model,
+            instructions=instructions, input=user_input,
+            effort=str(kwargs.get("reasoning_effort") or ""),
+            mode=str(kwargs.get("reasoning_mode") or ""),
+            max_attempts=max_attempts("agent"))
+        try:
+            return str(self._run_sdk_agent(request,
+                cancel_event=getattr(task_context, "cancel_event", None),
+                on_event=progress)["text"])
+        except AgentCancelled:
+            raise ImageGenerationCancelled("生成已停止") from None
 
     @staticmethod
     def _call_with_task_context(
@@ -300,563 +304,20 @@ class ImageReasoningMixin:
         )
 
     def _run_image_prompt_agent(
-        self,
-        record: Any,
-        secret: str,
-        prompt: str,
-        image_paths: tuple[Path, ...],
-        reasoning_mode: str,
-        web_search_enabled: bool,
-        emit: Any,
+        self, record: Any, secret: str, prompt: str, image_paths: tuple[Path, ...],
+        reasoning_mode: str, web_search_enabled: bool, emit: Any,
         continuation_context: dict[str, Any] | None = None,
         visible_assets: list[dict[str, Any]] | None = None,
         task_context: ImageTaskContext | None = None,
         reasoning_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        reasoning_started_at = time.perf_counter()
-        config = dict(reasoning_config or resolve_image_reasoning_config(reasoning_mode))
-        advanced_mode = bool(config.get("advanced"))
-        model = str(config["model"])
-        reasoning_effort = str(config["effort"])
-        max_agent_turns = int(config["max_turns"])
-        max_reference_count = int(config["max_references"])
-        search_workers = int(config["search_workers"])
-        search_parallel_queries = int(config["search_parallel_queries"])
-        web_search_results = int(config["web_search_results"])
-        visual_search_results = int(config["visual_search_results"])
-        complete_text = ""
-        published_length = 0
-        current_turn = 0
-        current_turn_start = 0
-        candidate_by_id: dict[str, dict[str, Any]] = {}
-        selected_ids: list[str] = []
-        selected_rationale = ""
-        selection_submitted = False
-        web_search_calls = 0
-        web_search_succeeded = False
-        reasoning_usage: dict[str, Any] = {}
-        continuation_enabled = bool(continuation_context)
-        clean_visible_assets = list(visible_assets or [])
-        available_assets = list((continuation_context or {}).get("assets") or [])
-        visible_asset_ids = [
-            str(asset.get("assetId") or "")
-            for asset in clean_visible_assets
-            if asset.get("assetId")
-        ]
-        required_description_ids = [
-            str(asset.get("assetId") or "")
-            for asset in clean_visible_assets
-            if asset.get("assetId") and not str(asset.get("description") or "").strip()
-        ]
-        asset_by_id = {
-            str(asset.get("assetId") or ""): asset
-            for asset in available_assets
-            if asset.get("assetId")
-        }
-        continuation_plan: dict[str, Any] | None = None
-        plan_submitted = False
-
-        def on_delta(delta: str) -> None:
-            nonlocal complete_text, published_length
-            complete_text += delta
-            marker_index = complete_text.find(PROMPT_RESULT_MARKER)
-            safe_length = marker_index if marker_index >= 0 else max(
-                0, len(complete_text) - len(PROMPT_RESULT_MARKER) + 1
-            )
-            if safe_length > published_length:
-                visible_delta = complete_text[published_length:safe_length]
-                emit("react_turn_delta", turn=current_turn, delta=visible_delta)
-                emit("react_summary_delta", delta=visible_delta)
-                published_length = safe_length
-
-        def flush_turn_tail() -> None:
-            nonlocal published_length
-            marker_index = complete_text.find(PROMPT_RESULT_MARKER)
-            safe_length = marker_index if marker_index >= 0 else len(complete_text)
-            if safe_length <= published_length:
-                return
-            visible_delta = complete_text[published_length:safe_length]
-            emit("react_turn_delta", turn=current_turn, delta=visible_delta)
-            emit("react_summary_delta", delta=visible_delta)
-            published_length = safe_length
-
-        emit(
-            "react_started",
-            mode=reasoning_mode,
-            model=model,
-            reasoningEffort=reasoning_effort,
-            webSearchEnabled=web_search_enabled,
-        )
-        instructions = (
-            "你是一个用于图片创作的轻量 ReAct 智能体。根据用户文字和可选参考图，从需求理解"
-            "出发，自主选择必要的分析、方案设计、工具化检查与反思步骤；不要机械套用固定步骤数。"
-            f"当前深度建议：{config['depth']}。"
-            "无论当前深度如何，第一步都必须先判断：用户真正要你完成什么；哪些约束和视觉目标已经"
-            "明确；哪些对象、概念、事实、外观或时效信息是你不确定、不理解或仅凭现有输入无法可靠"
-            "判断的；这些信息缺口是否会实质影响生成结果。不得因为处于 Flash 模式就跳过这项"
-            "判断。若缺口不影响结果，可以直接采用合理假设；若缺口会影响事实、主体外观、构图或用户"
-            "意图，则在工具可用时先做针对性检索，再依据结果定稿。"
-            "如果用户明确指定现有 IP、作品、品牌、世界观、人物或角色，必须保留其名称、身份、"
-            "所属设定和标志性视觉特征，按用户要求直接构思；不要仅因对象属于知名 IP 就改写为"
-            "原创角色、致敬款、同类替代或主动规避相似性。只有用户明确要求原创、重新设计或避开"
-            "现有 IP 时，才进行原创化处理。"
-            "请流畅输出面向用户、可审计的简短工作摘要，描述正在判断的创作环境、关键需求、"
-            "候选方案与可用性评估；不要披露隐藏内部推理、逐 token 思维链或敏感信息。"
-        )
-        if advanced_mode:
-            instructions += (
-                "当前为高级模式，必须完整执行需求理解、信息缺口判断、方案设计、工具化检索、"
-                "候选比较、视觉与事实风险复核、最终提示词整理这些阶段；不得因深度较低而关闭"
-                "任何阶段或工具。深度仅用于限制最大思考轮数、并行搜索规模和候选结果池大小。"
-            )
-        if web_search_enabled:
-            instructions += (
-                "你可以按需调用网页与视觉参考搜索工具。涉及真实产品、地点、事件、人物、时效信息、"
-                "历史考据或难以仅靠文字准确描述的视觉对象时，鼓励先搜索；纯想象创作或已有参考足够时"
-                "可以完全不调用。视觉搜索后请检查缩略图，只有确实能提高构图、形态、材质或事实准确性"
-                "的候选才通过 select_visual_references 选择；不合适时选择空列表。不要仅凭标题纳入图片。"
-                "你可以在同一轮并行发起多个不同检索，也可以根据首轮结果在后续轮次继续搜索；在完成"
-                "必要检索并比较全部候选后，再统一调用 select_visual_references 提交最终采用列表。"
-                f"当前模式每轮最多建议并行发起 {search_parallel_queries} 个互补查询；每个网页查询将返回"
-                f"最多 {web_search_results} 条结果，每个视觉查询将返回最多 {visual_search_results} 个"
-                "已验证缩略图。高级模式应充分利用并行查询覆盖不同关键词、语言和信息源。"
-                f"当前模式最多采用 {max_reference_count} 张真正有帮助的视觉参考；宁缺毋滥。"
-            )
-        if continuation_enabled:
-            instructions += (
-                "这是跨轮图片续作。输入包含本轮原始请求、截至父轮的完整用户输入历史、可审计摘要、"
-                "素材文字目录，以及按 visibleAssetIds 顺序附带的父轮产出图。第一轮必须调用一次"
-                " plan_image_continuation：独立判断本轮是局部 edit 还是 generate 延续创作，并按"
-                " assetId 选择最终图片模型需要的会话素材。edit 必须选图；generate 也可以选图保持"
-                "角色、物体和世界观一致性。必须为 descriptionRequiredAssetIds 中每张首次读取图片"
-                "提供客观、可复用的描述。更早素材先依据缓存描述筛选；工具返回被选素材原图后再检查"
-                "其画面。上一轮及更早轮次用户上传的图片会保留在图片池中，不会默认附带或优先占用"
-                "当前档位允许的参考图槽位；若它们有助于保持角色、物体、材质、风格或世界观一致性，鼓励"
-                "通过 plan_image_continuation 主动选入，再把操作和素材选择纳入后续搜索、反思及最终提示词。"
-            )
-        instructions += (
-            f"摘要结束后单独输出标记 {PROMPT_RESULT_MARKER}，标记后只写可直接提交给图片模型的最终提示词。"
-        )
-        instructions += "\n" + format_prompt_instructions(config.get("outputOptions"))
-        initial_prompt = (
-            image_continuation_prompt(prompt, continuation_context or {}, clean_visible_assets)
-            if continuation_enabled
-            else prompt
-        )
-        initial_input = self._agent_input(initial_prompt, image_paths)
-        if isinstance(initial_input, list):
-            current_input: list[dict[str, Any]] = list(initial_input)
-        else:
-            current_input = [{"role": "user", "content": initial_input}]
-        output = ""
-        total_agent_turns = max_agent_turns + (1 if continuation_enabled else 0)
-        for turn_index in range(total_agent_turns):
-            if task_context is not None:
-                task_context.check_cancelled()
-            current_turn = turn_index + 1
-            current_turn_start = published_length
-            emit(
-                "react_turn_started",
-                turn=current_turn,
-                title="正在分析问题" if current_turn == 1 else "正在完善方案",
-            )
-            completed_payloads: list[dict[str, Any]] = []
-            turn_prefix = complete_text[:current_turn_start]
-
-            def retry_turn(retry: int, delay: int, error: str) -> None:
-                nonlocal complete_text, published_length
-                complete_text = turn_prefix
-                published_length = current_turn_start
-                completed_payloads.clear()
-                emit("react_turn_started", turn=current_turn, title="连接尚未建立，正在重新连接", reset=True, summary=turn_prefix)
-
-            if continuation_enabled and not plan_submitted:
-                tools = [IMAGE_CONTINUATION_PLAN_TOOL]
-                tool_choice = "required"
-            else:
-                tools = (
-                    list(IMAGE_AGENT_WEB_TOOLS)
-                    if web_search_enabled
-                    and turn_index < total_agent_turns - 1
-                    and not selection_submitted
-                    else None
-                )
-                if tools and max_reference_count == 0:
-                    tools = [tool for tool in tools if tool.get("name") == "search_web"]
-                tool_choice = "auto" if tools else None
-            output = self._call_reasoning_with_retries(
-                record["base_url"],
-                secret,
-                model,
-                instructions,
-                current_input,
-                on_delta=on_delta,
-                reasoning_effort=reasoning_effort,
-                reasoning_mode=reasoning_mode,
-                tools=tools,
-                tool_choice=tool_choice,
-                parallel_tool_calls=True if tools else None,
-                on_completed=completed_payloads.append,
-                on_retry=retry_turn,
-                allow_empty_text=bool(tools),
-                task_context=task_context,
-            )
-            response = completed_payloads[-1] if completed_payloads else {}
-            turn_usage = response_usage_metrics(response, model)
-            reasoning_usage = merge_reasoning_usage(reasoning_usage, turn_usage)
-            response_output = [
-                item for item in response.get("output") or [] if isinstance(item, dict)
-            ]
-            function_calls = [
-                item for item in response_output if item.get("type") == "function_call"
-            ]
-            flush_turn_tail()
-            turn_text = complete_text[current_turn_start:published_length].strip()
-            emit(
-                "react_turn_completed",
-                turn=current_turn,
-                title=(
-                    "正在拆解方案"
-                    if function_calls and current_turn == 1
-                    else "正在核对参考信息"
-                    if function_calls
-                    else "方案已确定"
-                ),
-                text=turn_text,
-                usage=turn_usage,
-                reasoningUsage=reasoning_usage,
-            )
-            if not function_calls:
-                break
-            current_input.extend(response_output)
-            parsed_calls: list[dict[str, Any]] = []
-            for tool_call in function_calls:
-                parsed_call = {
-                    "callId": str(tool_call.get("call_id") or ""),
-                    "name": str(tool_call.get("name") or ""),
-                    "arguments": {},
-                    "error": None,
-                    "output": None,
-                }
-                try:
-                    arguments = json.loads(str(tool_call.get("arguments") or "{}"))
-                    if not isinstance(arguments, dict):
-                        raise ValueError("工具参数必须是对象")
-                    parsed_call["arguments"] = arguments
-                    emit(
-                        "react_tool_started",
-                        turn=current_turn,
-                        callId=parsed_call["callId"],
-                        tool=parsed_call["name"],
-                        arguments=arguments,
-                    )
-                except (ValueError, json.JSONDecodeError) as exc:
-                    parsed_call["error"] = exc
-                parsed_calls.append(parsed_call)
-
-            search_futures: dict[int, concurrent.futures.Future[Any]] = {}
-            search_indexes = [
-                index
-                for index, call in enumerate(parsed_calls)
-                if call["error"] is None
-                and call["name"] in {"search_web", "search_visual_references"}
-            ]
-            if search_indexes:
-                with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=min(search_workers, len(search_indexes)),
-                    thread_name_prefix="image-web-search",
-                ) as executor:
-                    for index in search_indexes:
-                        call = parsed_calls[index]
-                        arguments = call["arguments"]
-                        web_search_calls += 1
-                        if call["name"] == "search_web":
-                            search_futures[index] = executor.submit(
-                                self._call_with_task_context,
-                                self.web_search.search_web,
-                                arguments.get("query"),
-                                web_search_results,
-                                task_context=task_context,
-                            )
-                        else:
-                            search_futures[index] = executor.submit(
-                                self._call_with_task_context,
-                                self.web_search.search_visual_references,
-                                arguments.get("query"),
-                                visual_search_results,
-                                task_context=task_context,
-                            )
-
-            for index in search_indexes:
-                if task_context is not None:
-                    task_context.check_cancelled()
-                call = parsed_calls[index]
-                try:
-                    tool_result = search_futures[index].result()
-                    web_search_succeeded = True
-                    if call["name"] == "search_web":
-                        call["output"] = json.dumps(tool_result, ensure_ascii=False)
-                        call["resultCount"] = len(tool_result.get("results") or [])
-                        continue
-                    public_results: list[dict[str, Any]] = []
-                    visual_output: list[dict[str, str]] = []
-                    for candidate in tool_result.get("results") or []:
-                        candidate_id = str(candidate.get("id") or "")
-                        if not candidate_id:
-                            continue
-                        candidate_by_id[candidate_id] = candidate
-                        public_candidate = {
-                            key: value
-                            for key, value in candidate.items()
-                            if not key.startswith("_") and key != "previewDataUrl"
-                        }
-                        public_results.append(public_candidate)
-                        visual_output.extend(
-                            [
-                                {
-                                    "type": "input_text",
-                                    "text": json.dumps(public_candidate, ensure_ascii=False),
-                                },
-                                {
-                                    "type": "input_image",
-                                    "image_url": str(candidate["previewDataUrl"]),
-                                },
-                            ]
-                        )
-                    if not visual_output:
-                        visual_output.append(
-                            {
-                                "type": "input_text",
-                                "text": json.dumps(
-                                    {
-                                        "query": tool_result.get("query"),
-                                        "results": [],
-                                        "message": "未找到可验证的视觉候选",
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                            }
-                        )
-                    call["output"] = visual_output
-                    call["visualEvent"] = {
-                        "query": tool_result.get("query"),
-                        "resultCount": len(public_results),
-                        "webSearchResultCount": len(candidate_by_id),
-                    }
-                except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
-                    call["error"] = exc
-
-            for call in parsed_calls:
-                call_id = call["callId"]
-                name = call["name"]
-                error = call["error"]
-                if error is not None:
-                    tool_output: Any = json.dumps(
-                        {"ok": False, "error": str(error)[:500]}, ensure_ascii=False
-                    )
-                    emit(
-                        "react_tool_failed",
-                        turn=current_turn,
-                        callId=call_id,
-                        tool=name,
-                        error=str(error),
-                    )
-                elif name in {"search_web", "search_visual_references"}:
-                    tool_output = call["output"]
-                    if call.get("visualEvent"):
-                        emit("react_visual_results", **call["visualEvent"])
-                    emit(
-                        "react_tool_completed",
-                        turn=current_turn,
-                        callId=call_id,
-                        tool=name,
-                        resultCount=(
-                            call.get("visualEvent", {}).get("resultCount")
-                            if call.get("visualEvent")
-                            else call.get("resultCount", 0)
-                        ),
-                    )
-                elif name == "plan_image_continuation":
-                    try:
-                        continuation_plan = parse_image_continuation_plan(
-                            call["arguments"],
-                            list(asset_by_id),
-                            visible_asset_ids,
-                            required_description_ids,
-                        )
-                        plan_submitted = True
-                        plan_output: list[dict[str, str]] = [
-                            {
-                                "type": "input_text",
-                                "text": json.dumps(
-                                    {
-                                        "operation": continuation_plan["operation"],
-                                        "selectedAssetIds": continuation_plan["selectedAssetIds"],
-                                        "rationale": continuation_plan["rationale"],
-                                        "message": "已加载选中的更早素材；父轮可见素材沿用初始输入。",
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                            }
-                        ]
-                        for asset_id in continuation_plan["selectedAssetIds"]:
-                            if asset_id in visible_asset_ids:
-                                continue
-                            asset = asset_by_id[asset_id]
-                            asset_path = Path(str(asset.get("path") or ""))
-                            if not asset_path.is_file():
-                                continue
-                            plan_output.extend(
-                                [
-                                    {
-                                        "type": "input_text",
-                                        "text": json.dumps(
-                                            {
-                                                "assetId": asset_id,
-                                                "description": str(asset.get("description") or ""),
-                                            },
-                                            ensure_ascii=False,
-                                        ),
-                                    },
-                                    {
-                                        "type": "input_image",
-                                        "image_url": image_preview_data_url(
-                                            asset_path.read_bytes(), max_side=1024
-                                        ),
-                                    },
-                                ]
-                            )
-                        tool_output = plan_output
-                        emit(
-                            "react_continuation_planned",
-                            operation=continuation_plan["operation"],
-                            selectedAssetIds=continuation_plan["selectedAssetIds"],
-                            rationale=continuation_plan["rationale"],
-                        )
-                        emit(
-                            "react_tool_completed",
-                            turn=current_turn,
-                            callId=call_id,
-                            tool=name,
-                            resultCount=len(continuation_plan["selectedAssetIds"]),
-                        )
-                    except (OSError, ValueError) as exc:
-                        tool_output = json.dumps(
-                            {"ok": False, "error": str(exc)[:500]}, ensure_ascii=False
-                        )
-                        emit(
-                            "react_tool_failed",
-                            turn=current_turn,
-                            callId=call_id,
-                            tool=name,
-                            error=str(exc),
-                        )
-                elif name == "select_visual_references":
-                    arguments = call["arguments"]
-                    try:
-                        selection_submitted = True
-                        requested_ids = arguments.get("reference_ids") or []
-                        if not isinstance(requested_ids, list):
-                            raise ValueError("reference_ids 必须是数组")
-                        selected_ids = []
-                        for candidate_id in requested_ids[:max_reference_count]:
-                            clean_id = str(candidate_id)
-                            if clean_id in candidate_by_id and clean_id not in selected_ids:
-                                selected_ids.append(clean_id)
-                        selected_rationale = str(arguments.get("rationale") or "")[:600]
-                        tool_result = {
-                            "selectedIds": selected_ids,
-                            "acceptedCount": len(selected_ids),
-                        }
-                        tool_output = json.dumps(tool_result, ensure_ascii=False)
-                        emit(
-                            "react_visual_selected",
-                            selectedCount=len(selected_ids),
-                            rationale=selected_rationale,
-                        )
-                        emit(
-                            "react_tool_completed",
-                            turn=current_turn,
-                            callId=call_id,
-                            tool=name,
-                            resultCount=len(selected_ids),
-                        )
-                    except (ValueError, json.JSONDecodeError) as exc:
-                        tool_output = json.dumps(
-                            {"ok": False, "error": str(exc)[:500]}, ensure_ascii=False
-                        )
-                        emit(
-                            "react_tool_failed",
-                            turn=current_turn,
-                            callId=call_id,
-                            tool=name,
-                            error=str(exc),
-                        )
-                else:
-                    tool_output = json.dumps(
-                        {"ok": False, "error": "未知工具"}, ensure_ascii=False
-                    )
-                    emit(
-                        "react_tool_failed",
-                        turn=current_turn,
-                        callId=call_id,
-                        tool=name,
-                        error="未知工具",
-                    )
-                current_input.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": call_id,
-                        "output": tool_output,
-                    }
-                )
-        else:
-            raise RuntimeError("ReAct 工具调用次数超过限制")
-        if continuation_enabled and continuation_plan is None:
-            raise RuntimeError("ReAct 未返回续作操作与素材规划")
-        output = complete_text or output
-        marker_index = output.find(PROMPT_RESULT_MARKER)
-        if marker_index < 0:
-            raise RuntimeError("ReAct 未返回最终提示词标记")
-        summary = output[:marker_index].strip()
-        final_prompt = output[marker_index + len(PROMPT_RESULT_MARKER):].strip()
-        if not summary:
-            raise RuntimeError("ReAct 未返回可审计工作摘要")
-        if not final_prompt:
-            raise RuntimeError("ReAct 未返回最终提示词")
-        reasoning_duration_ms = max(
-            1,
-            round((time.perf_counter() - reasoning_started_at) * 1000),
-        )
-        emit(
-            "react_completed",
-            mode=reasoning_mode,
-            model=model,
-            reasoningEffort=reasoning_effort,
-            summary=summary,
-            prompt=final_prompt,
-            webSearchEnabled=web_search_enabled,
-            webSearchUsed=web_search_calls > 0,
-            webSearchFailed=web_search_calls > 0 and not web_search_succeeded,
-            webSearchResultCount=len(candidate_by_id),
-            webReferenceCount=len(selected_ids),
-            reasoningDurationMs=reasoning_duration_ms,
-            reasoningUsage=reasoning_usage,
-        )
-        return {
-            "prompt": final_prompt,
-            "summary": summary,
-            "model": model,
-            "webSearchEnabled": web_search_enabled,
-            "webSearchUsed": web_search_calls > 0,
-            "webSearchFailed": web_search_calls > 0 and not web_search_succeeded,
-            "webSearchResultCount": len(candidate_by_id),
-            "webCandidates": [candidate_by_id[candidate_id] for candidate_id in selected_ids],
-            "webSelectionRationale": selected_rationale,
-            "continuationPlan": continuation_plan,
-            "reasoningDurationMs": reasoning_duration_ms,
-            "reasoningUsage": reasoning_usage,
-        }
+        from .agent_sdk import run_prompt_agent
+        try:
+            return run_prompt_agent(self, record, secret, prompt, image_paths,
+                reasoning_mode, web_search_enabled, emit, continuation_context,
+                visible_assets, task_context, reasoning_config)
+        except AgentCancelled:
+            raise ImageGenerationCancelled("生成已停止") from None
 
     def generate_image(
         self,
@@ -1155,7 +616,8 @@ class ImageReasoningMixin:
             except (OSError, RuntimeError, ValueError) as exc:
                 discard_pending_assets()
                 release_session_activity()
-                return {"ok": False, "error": f"续作规划失败：{exc}"}
+                return {"ok": False, "error": f"续作规划失败：{exc}",
+                        "errorDetails": exc.details if isinstance(exc, AgentRunFailure) else None}
         if use_reasoning:
             reasoning_effort = str((reasoning_config or {})["effort"])
             try:
@@ -1193,8 +655,9 @@ class ImageReasoningMixin:
                 discard_pending_assets()
                 release_session_activity()
                 shutil.rmtree(web_reference_dir, ignore_errors=True)
-                emit("react_failed", mode=reasoning_mode, error=str(exc))
-                return {"ok": False, "error": f"思维处理失败：{exc}"}
+                details = exc.details if isinstance(exc, AgentRunFailure) else None
+                emit("react_failed", mode=reasoning_mode, error=str(exc), errorDetails=details)
+                return {"ok": False, "error": f"思维处理失败：{exc}", "errorDetails": details}
         if continuation_enabled:
             if not isinstance(continuation_plan, dict):
                 discard_pending_assets()
@@ -1418,17 +881,27 @@ class ImageReasoningMixin:
                 emit("item_partial", item_index, **partial)
 
             try:
-                result = self._call_with_task_context(
-                    self.image_generator.generate,
-                    record["base_url"],
-                    secret,
-                    request,
-                    session_store.folder_for_set(session_id, request_id)
-                    / "process-images"
-                    / f"item-{item_index + 1:03d}",
-                    on_partial=on_partial,
-                    task_context=task_context,
-                )
+                def generate_attempt(attempt: int) -> dict[str, Any]:
+                    if task_context is not None:
+                        task_context.check_cancelled()
+                    return self._call_with_task_context(
+                        self.image_generator.generate,
+                        record["base_url"], secret, request,
+                        session_store.folder_for_set(session_id, request_id)
+                        / "process-images" / f"item-{item_index + 1:03d}",
+                        on_partial=on_partial, task_context=task_context,
+                    )
+
+                try:
+                    result = retry_sync(
+                        generate_attempt, stage="image",
+                        cancel_event=getattr(task_context, "cancel_event", None),
+                        on_retry=lambda details: emit("request_retry", item_index,
+                            **{key: value for key, value in details.items() if key != "type"}),
+                        secrets=(secret,),
+                    )
+                except AgentCancelled:
+                    raise ImageGenerationCancelled("生成已停止") from None
                 if task_context is not None:
                     task_context.check_cancelled()
                 source_path = Path(result["path"])
@@ -1448,12 +921,16 @@ class ImageReasoningMixin:
                 return result
             except (RuntimeError, OSError, ValueError) as exc:
                 error = str(exc)
+                details = exc.details if isinstance(exc, AgentRunFailure) else failure_details(
+                    exc, "image", 1, max_attempts("image"), (secret,))
+                if details["code"] == "cancelled":
+                    raise ImageGenerationCancelled("生成已停止") from None
                 try:
                     session_store.record_failure(session_id, request_id, item_index, error)
                 except (RuntimeError, OSError):
                     pass
-                emit("item_failed", item_index, error=error)
-                return {"ok": False, "itemIndex": item_index, "error": error}
+                emit("item_failed", item_index, error=error, errorDetails=details)
+                return {"ok": False, "itemIndex": item_index, "error": error, "errorDetails": details}
 
         items: list[dict[str, Any]] = []
         try:
@@ -1509,7 +986,8 @@ class ImageReasoningMixin:
             "webReferences": persisted_web_references,
         }
         if not successful:
-            result["error"] = "所有图片生成请求均失败"
+            result["error"] = "所有图片生成请求均失败：" + str(items[0].get("error") or "未返回有效图片")
+            result["errorDetails"] = items[0].get("errorDetails")
         try:
             session_store.complete_round(session_id, request_id)
         finally:

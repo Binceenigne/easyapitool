@@ -5,6 +5,7 @@ import binascii
 import hashlib
 import http.client
 import io
+import inspect
 import json
 import math
 import os
@@ -25,6 +26,7 @@ from PIL import Image
 
 from .network_log import log_network_error, new_network_request_id
 from .transport import open_request
+from mirra_agents.retry import ProviderResponseError, safe_text
 
 
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -1666,8 +1668,9 @@ def prepare_image_generation(
     )
 
 
-class ImageResponseError(RuntimeError):
-    pass
+class ImageResponseError(ProviderResponseError):
+    def __init__(self, message: str) -> None:
+        super().__init__("incomplete_stream", message)
 
 
 class ImageGenerationClient:
@@ -1689,13 +1692,16 @@ class ImageGenerationClient:
             body_text = exc.read().decode("utf-8", "replace")
         try:
             parsed = json.loads(body_text)
-            message = (parsed.get("error") or {}).get("message") or parsed.get("message")
-        except json.JSONDecodeError:
+            problem = parsed.get("error") or {}
+            message = problem.get("message") or parsed.get("message")
+            code = str(problem.get("code") or problem.get("type") or "upstream_error")
+        except (ValueError, AttributeError, TypeError):
             message = body_text[:200]
-        safe_message = str(message or exc.reason)
-        if secret:
-            safe_message = safe_message.replace(secret, "[REDACTED]")
-        return RuntimeError(f"HTTP {exc.code}: {safe_message}")
+            code = "upstream_error"
+        headers = exc.headers or {}
+        return ProviderResponseError(code, f"HTTP {exc.code}: {safe_text(message or exc.reason, (secret,))}",
+            status=exc.code, headers=headers,
+            request_id=headers.get("x-request-id") or headers.get("x-mirra-diagnostic-id"))
 
     @staticmethod
     def _read_response(
@@ -1750,7 +1756,13 @@ class ImageGenerationClient:
                 return
             event_type = str(event.get("type") or event_name).strip().lower()
             if event_type == "error" or event_type.endswith((".error", ".failed")) or event.get("error"):
-                raise ImageResponseError("上游生图服务报告了生成失败")
+                problem = event.get("error") or (event.get("response") or {}).get("error") or event
+                if not isinstance(problem, dict):
+                    problem = {"message": str(problem)}
+                raise ProviderResponseError(str(problem.get("code") or "upstream_error"),
+                    str(problem.get("message") or "上游生图服务报告了生成失败"),
+                    status=problem.get("status"), headers=headers,
+                    request_id=event.get("request_id") or headers.get("x-request-id") or headers.get("x-mirra-diagnostic-id"))
             encoded_image = image_data(event)
             if event_type.endswith(".partial_image"):
                 if encoded_image and completed is None:
@@ -1811,8 +1823,6 @@ class ImageGenerationClient:
         except (http.client.IncompleteRead, OSError) as exc:
             transport_error = exc
         flush_pending(boundary=True)
-        if completed is not None and not completed_image and last_partial_image:
-            completed_image = last_partial_image
         if completed is None or not completed_image:
             if transport_error is not None or malformed_event:
                 raise ImageResponseError("上游图片流中断或缺损，未收到完整成图") from transport_error
@@ -1834,6 +1844,7 @@ class ImageGenerationClient:
         fields: dict[str, Any],
         timeout: int = 600,
         on_partial: Callable[[str, int], None] | None = None,
+        task_context: Any = None,
     ) -> dict[str, Any]:
         url = f"{base_url.rstrip('/')}/images/generations"
         request_id = new_network_request_id()
@@ -1881,7 +1892,8 @@ class ImageGenerationClient:
                 secrets=(secret,),
             )
             error = cls._error(exc, secret, response_body)
-            raise RuntimeError(f"{error}（诊断 ID: {request_id}）") from None
+            error.request_id = error.request_id or request_id
+            raise error from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             log_network_error(
                 "image_generation_connect_error",
@@ -1902,12 +1914,19 @@ class ImageGenerationClient:
         response_status = getattr(response_context, "status", None)
         try:
             with response_context as response:
-                return cls._read_response(
-                    response,
-                    bool(fields.get("stream")),
-                    on_partial,
-                )
+                if task_context is not None:
+                    task_context.add_response(response)
+                try:
+                    result = cls._read_response(response, bool(fields.get("stream")), on_partial)
+                    if task_context is not None:
+                        task_context.check_cancelled()
+                    return result
+                finally:
+                    if task_context is not None:
+                        task_context.remove_response(response)
         except Exception as exc:
+            if task_context is not None:
+                task_context.check_cancelled()
             log_network_error(
                 "image_generation_stream_error",
                 request_id=request_id,
@@ -1921,8 +1940,11 @@ class ImageGenerationClient:
                 details=request_details,
                 secrets=(secret,),
             )
-            if isinstance(exc, ImageResponseError):
-                raise RuntimeError(f"{exc}（诊断 ID: {request_id}）") from None
+            if isinstance(exc, ProviderResponseError):
+                exc.request_id = exc.request_id or request_id
+                exc.headers = exc.headers or response_headers or {}
+                exc.status_code = exc.status_code or response_status
+                raise
             if not isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
                 raise
             raise RuntimeError(
@@ -1938,6 +1960,7 @@ class ImageGenerationClient:
         fields: dict[str, Any],
         timeout: int = 600,
         on_partial: Callable[[str, int], None] | None = None,
+        task_context: Any = None,
     ) -> dict[str, Any]:
         url = f"{base_url.rstrip('/')}/images/edits"
         request_id = new_network_request_id()
@@ -2014,7 +2037,8 @@ class ImageGenerationClient:
                 secrets=(secret,),
             )
             error = ImageGenerationClient._error(exc, secret, response_body)
-            raise RuntimeError(f"{error}（诊断 ID: {request_id}）") from None
+            error.request_id = error.request_id or request_id
+            raise error from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             log_network_error(
                 "image_edit_connect_error",
@@ -2035,12 +2059,19 @@ class ImageGenerationClient:
         response_status = getattr(response_context, "status", None)
         try:
             with response_context as response:
-                return ImageGenerationClient._read_response(
-                    response,
-                    bool(fields.get("stream")),
-                    on_partial,
-                )
+                if task_context is not None:
+                    task_context.add_response(response)
+                try:
+                    result = ImageGenerationClient._read_response(response, bool(fields.get("stream")), on_partial)
+                    if task_context is not None:
+                        task_context.check_cancelled()
+                    return result
+                finally:
+                    if task_context is not None:
+                        task_context.remove_response(response)
         except Exception as exc:
+            if task_context is not None:
+                task_context.check_cancelled()
             log_network_error(
                 "image_edit_stream_error",
                 request_id=request_id,
@@ -2054,8 +2085,11 @@ class ImageGenerationClient:
                 details=request_details,
                 secrets=(secret,),
             )
-            if isinstance(exc, ImageResponseError):
-                raise RuntimeError(f"{exc}（诊断 ID: {request_id}）") from None
+            if isinstance(exc, ProviderResponseError):
+                exc.request_id = exc.request_id or request_id
+                exc.headers = exc.headers or response_headers or {}
+                exc.status_code = exc.status_code or response_status
+                raise
             if not isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
                 raise
             raise RuntimeError(
@@ -2075,6 +2109,7 @@ class ImageGenerationService:
         request: ImageGenerationRequest,
         output_dir: Path,
         on_partial: Callable[[dict[str, Any]], None] | None = None,
+        task_context: Any = None,
     ) -> dict[str, Any]:
         output_dir.mkdir(parents=True, exist_ok=True)
         generation_id = uuid.uuid4().hex[:12]
@@ -2114,20 +2149,27 @@ class ImageGenerationService:
             except (binascii.Error, OSError, ValueError):
                 return
 
+        call_options: dict[str, Any] = {"on_partial": persist_partial}
+        client_method = self.client.edit_images if request.image_paths else self.client.generate_image
+        parameters = inspect.signature(client_method).parameters
+        if task_context is not None and ("task_context" in parameters or any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())):
+            call_options["task_context"] = task_context
+        if task_context is not None:
+            task_context.check_cancelled()
         if request.image_paths:
             response = self.client.edit_images(
                 base_url,
                 secret,
                 request.image_paths,
                 fields,
-                on_partial=persist_partial,
+                **call_options,
             )
         else:
             response = self.client.generate_image(
                 base_url,
                 secret,
                 fields,
-                on_partial=persist_partial,
+                **call_options,
             )
         image_data = ((response.get("data") or [{}])[0] or {}).get("b64_json")
         if not image_data:

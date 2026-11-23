@@ -945,7 +945,7 @@
             prompt.value = '';
             try {
                 const result = await window.pywebview.api.polish_prompt(activeKey.id, originalPrompt, currentNativeImageOptions());
-                if (!result.ok) throw new Error(result.error || '提示词润色失败');
+                if (!result.ok) throw Object.assign(new Error(result.error || '提示词润色失败'), { errorDetails: result.errorDetails });
                 prompt.value = result.prompt;
                 document.getElementById('imagePromptModalTextarea').value = result.prompt;
                 resizeImagePrompt();
@@ -953,7 +953,9 @@
             } catch (error) {
                 prompt.value = originalPrompt;
                 resizeImagePrompt();
-                showToast(error.message || String(error), 'error');
+                const message = imageRequestErrorMessage(error.message || String(error), error.errorDetails);
+                document.getElementById('imageEditStatus').textContent = message;
+                showToast(message, 'error');
             } finally {
                 window.imageEditState.polishing = false;
                 button.disabled = !imageTierFeature('promptPolish');

@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, copy_metadata
 from pathlib import Path
 
 project_root = Path(SPECPATH)
@@ -12,6 +12,13 @@ binaries = []
 hiddenimports = ['pystray._win32', 'winotify', 'resvg_py']
 tmp_ret = collect_all('webview')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# The SDK discovers optional providers and reads its distribution metadata at
+# runtime; retain those modules when building the desktop executable.
+tmp_ret = collect_all('agents')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+datas += copy_metadata('openai-agents')
+datas += copy_metadata('mcp')
 
 
 a = Analysis(

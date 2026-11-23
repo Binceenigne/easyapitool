@@ -8,6 +8,7 @@ from ..store import Store
 from ..client import EasyClinClient
 from ..prompt_targets import format_prompt_instructions, choose_reasoning_pair, stored_model_profile
 from ..image_editor import reference_preview_data_url
+from mirra_agents import AgentRunFailure
 
 class PromptMixin:
     @staticmethod
@@ -59,7 +60,7 @@ class PromptMixin:
             reasoningEffort=effort,
         )
         try:
-            polished = self.client.stream_response(
+            polished = self._call_reasoning_with_retries(
                 record["base_url"],
                 secret,
                 model,
@@ -73,10 +74,13 @@ class PromptMixin:
                 on_delta=lambda delta: emit("prompt_polish_delta", delta=delta),
                 reasoning_effort=effort,
                 reasoning_mode="polish",
+                task_context=None,
+                on_retry=lambda retry, delay, error: emit("request_retry", stage="agent", attempt=retry + 1, maxAttempts=3, delayMs=round(delay * 1000), cause=error),
             ).strip()
         except RuntimeError as exc:
-            emit("prompt_polish_failed", error=str(exc))
-            return {"ok": False, "error": str(exc)}
+            details = exc.details if isinstance(exc, AgentRunFailure) else None
+            emit("prompt_polish_failed", error=str(exc), errorDetails=details)
+            return {"ok": False, "error": str(exc), "errorDetails": details}
         if not polished:
             return {"ok": False, "error": "润色模型未返回提示词"}
         emit(
