@@ -929,6 +929,12 @@ class ImageReasoningMixin:
                 model = (slots.get(reasoning_config["modelKey"]) or {}).get("model")
                 if model:
                     reasoning_config["model"] = model
+                    capabilities = profile.get("reasoningCapabilities") or {}
+                    model_capability = capabilities.get(model) or {}
+                    if clean_options.get("reasoningEffort") == "":
+                        reasoning_config["effort"] = ""
+                    elif model_capability and reasoning_config["effort"] not in model_capability.get("efforts", []):
+                        reasoning_config["effort"] = model_capability["default"]
             else:
                 modes = profile.get("reasoningModes") or {}
                 slot = {"flash": "luna", "medium": "luna", "high": "terra", "extra": "terra", "max": "sol"}.get(reasoning_mode)
@@ -937,8 +943,8 @@ class ImageReasoningMixin:
                     if reasoning_config is None:
                         reasoning_config = {**resolve_image_reasoning_config("flash"), "mode": "instant"}
                     reasoning_config["model"] = preset["model"]
-                    if preset.get("effort"):
-                        reasoning_config["effort"] = preset["effort"]
+                    if "effort" in preset:
+                        reasoning_config["effort"] = str(preset["effort"] or "")
         use_reasoning = reasoning_config is not None
         requested_web_search = clean_options.get("webSearchEnabled")
         web_search_enabled = (

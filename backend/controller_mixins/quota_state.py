@@ -254,7 +254,7 @@ class QuotaStateMixin:
             "rates": payload.get("rates", {}) if payload.get("serverQuota") else self.store.rates(record["id"]),
             "serverQuota": bool(payload.get("serverQuota")),
             "appModels": payload.get("appModels") if payload.get("serverQuota") else None,
-            "directApi": not is_mirra_api_url(record.get("base_url") or MIRRA_API_URL),
+            "directApi": not is_mirra_api_url(dict(record).get("base_url") or MIRRA_API_URL),
             "quotaPercent": quota.get("remainingPercent"),
             "quotaSeverity": quota.get("severity"),
             "lastError": record["last_error"],

@@ -1708,7 +1708,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="imageQualityChoices"', page)
         self.assertIn('id="imageComplexityChoices"', page)
         self.assertIn('id="imageOutputChoices"', page)
-        self.assertIn("['webp', 'WebP']", page)
+        self.assertIn("['webp', 'WebP',", page)
         self.assertIn('id="imageCountChoices"', page)
         self.assertIn("id=\"imageFrameChoices\"", page)
         self.assertIn('id="imageGenerationQualitySummary" data-quality="auto"', page)
@@ -2051,7 +2051,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("...reasoningOptions", page)
         self.assertIn("reasoningMode: 'advanced'", page)
         self.assertIn("reasoningModel: state.reasoningAdvancedModel", page)
-        self.assertIn("reasoningEffort: state.reasoningAdvancedEffort", page)
+        self.assertIn("reasoningEffort: compatibleImageAdvancedEffort(", page)
         self.assertIn("function setImageReasoningModeFromPointer(event)", page)
         self.assertIn("function initializeImageReasoningSlider()", page)
         self.assertIn("sliderTrack.addEventListener('keydown'", page)
@@ -2445,7 +2445,7 @@ class StaticAssetCacheTests(unittest.TestCase):
             PROJECT_ROOT / "frontend" / "scripts" / "modules" / "04-image-stream-rendering.js"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("const aspectRatio = window.imageEditState.aspectRatio;", page)
+        self.assertIn("const aspectRatio = effectiveImageRatio();", page)
         self.assertIn("function visibleImagePrompt(prompt)", controls)
         self.assertIn("const finalPrompt = visibleImagePrompt(prompt);", page)
         self.assertNotIn("imageGenerationConstraintSuffixes", page)
@@ -2473,6 +2473,30 @@ class StaticAssetCacheTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_save_key_returns_state_from_sqlite_records(self):
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "backend.controller.app_data_dir", return_value=Path(temp)
+        ), patch.object(app.Store, "import_environment_key"):
+            controller = app.AppController(asset_cache=Mock())
+            controller.client.fetch = Mock(return_value=(
+                {"status": "active", "usage": {"total": {"cost": 0}}},
+                ["gpt-image-2"],
+            ))
+            api = app.WebApi(controller)
+
+            mirra = api.add_key("网关", "sk-mirra-test-fixture", app.MIRRA_API_URL)
+            direct = api.add_key("直连", "sk-proj-test-fixture", app.OPENAI_API_URL)
+
+            self.assertTrue(mirra["ok"])
+            self.assertTrue(direct["ok"])
+            by_id = {item["id"]: item for item in direct["state"]["keys"]}
+            self.assertFalse(by_id[mirra["activeKeyId"]]["directApi"])
+            self.assertTrue(by_id[direct["activeKeyId"]]["directApi"])
+            self.assertEqual(by_id[direct["activeKeyId"]]["status"], "active")
+            self.assertNotEqual(by_id[direct["activeKeyId"]]["value"], "sk-proj-test-fixture")
+            reopened = app.AppController(asset_cache=Mock())
+            self.assertEqual(reopened.get_state()["keys"], direct["state"]["keys"])
+
     def test_reasoning_retries_five_times_with_incremental_delays(self):
         from backend.controller_mixins.image_reasoning import ImageReasoningMixin, ImageTaskContext
         controller = ImageReasoningMixin()

@@ -1507,6 +1507,7 @@ html.dark #keySwitcherMenu {
 
 #imageGenerationControlPanel {
   --image-choice-height: 40px;
+  --image-choice-shadow: 0 1px 5px rgba(2, 6, 23, .14);
   position: fixed;
   z-index: 54;
   right: auto;
@@ -1567,8 +1568,7 @@ html.dark #keySwitcherMenu {
   gap: 8px;
 }
 
-#imageGenerationControlPanel input[type=number],
-.image-choice-trigger {
+#imageGenerationControlPanel input[type=number] {
   width: 100%;
   min-height: var(--image-choice-height);
   min-width: 0;
@@ -1590,6 +1590,14 @@ html.dark #keySwitcherMenu {
 
 .image-generation-model-row {
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.8fr) minmax(0, 1fr);
+}
+
+.image-generation-model-row:has(#imageComplexitySection[hidden]) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.image-generation-model-row:has(#imageComplexitySection[hidden]):has(#imageResolutionSection[hidden]) {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .image-output-row {
@@ -1624,8 +1632,8 @@ html.dark #keySwitcherMenu {
 }
 
 .image-gif-frames .image-choice-trigger {
-  padding-inline: 5px;
-  gap: 3px;
+  padding-inline: 4px;
+  gap: 2px;
 }
 
 .image-gif-frames:has(.is-picker-open) {
@@ -1676,6 +1684,10 @@ html.dark #keySwitcherMenu {
 
 .image-choice-picker {
   position: relative;
+  min-height: var(--image-choice-height);
+  padding: 3px;
+  border-radius: 7px;
+  background: var(--surface-strong);
 }
 
 .image-choice-picker.is-picker-open {
@@ -1686,13 +1698,22 @@ html.dark #keySwitcherMenu {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
+  min-height: calc(var(--image-choice-height) - 6px);
+  padding: 4px 8px;
   gap: 6px;
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: var(--image-choice-shadow);
+  font-size: 11px;
+  font-weight: 700;
   text-align: left;
-  transition: border-color 160ms ease, background-color 160ms ease;
+  transition: background-color 160ms ease;
 }
 
 .image-choice-trigger:hover, .image-choice-trigger[aria-expanded=true] {
-  border-color: color-mix(in srgb, var(--brand) 66%, var(--border));
+  background: color-mix(in srgb, var(--bg) 86%, var(--image-blue-soft));
 }
 
 .image-choice-trigger > span {
@@ -1739,9 +1760,9 @@ html.dark #keySwitcherMenu {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 4px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-soft);
   border-radius: 9px;
-  background: var(--bg);
+  background: var(--surface-strong);
   box-shadow: 0 6px 22px rgba(2, 6, 23, 0.17);
   transform-origin: top center;
   animation: image-choice-menu-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -1776,7 +1797,7 @@ html.dark #keySwitcherMenu {
   padding: 5px 9px;
   border-radius: 5px;
   overflow: hidden;
-  color: var(--text);
+  color: var(--text-soft);
   background: transparent;
   text-align: left;
   text-overflow: ellipsis;
@@ -1789,12 +1810,14 @@ html.dark #keySwitcherMenu {
 }
 
 .image-choice-menu button:hover, .image-choice-menu button:focus-visible {
-  background: var(--surface-strong);
+  background: var(--bg);
+  color: var(--text);
 }
 
 .image-choice-menu button[aria-selected=true] {
-  background: var(--image-blue-soft);
-  color: var(--image-blue);
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: var(--image-choice-shadow);
   font-weight: 700;
 }
 
@@ -1845,7 +1868,7 @@ html.dark #keySwitcherMenu {
   background: var(--bg);
   color: var(--text);
   font-weight: 700;
-  box-shadow: 0 1px 5px rgba(2, 6, 23, 0.14);
+  box-shadow: var(--image-choice-shadow);
 }
 
 .image-aspect-options {
@@ -1855,6 +1878,10 @@ html.dark #keySwitcherMenu {
   gap: 2px;
   border-radius: 7px;
   background: var(--surface-strong);
+}
+
+.uses-standard-sizes .image-aspect-options {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .image-aspect-options button {
@@ -1877,7 +1904,7 @@ html.dark #keySwitcherMenu {
 .image-aspect-options button.is-active {
   background: var(--bg);
   color: var(--text);
-  box-shadow: 0 1px 5px rgba(2, 6, 23, 0.14);
+  box-shadow: var(--image-choice-shadow);
   transform: translateY(-1px);
 }
 

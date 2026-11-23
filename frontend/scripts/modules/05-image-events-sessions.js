@@ -405,7 +405,7 @@
                     frameCount: window.imageEditState.frameCount,
                     resolution: window.imageEditState.resolution,
                     imageModel: window.imageEditState.imageModel,
-                    aspectRatio: window.imageEditState.aspectRatio,
+                    aspectRatio: effectiveImageRatio(),
                     reasoningMode: window.imageEditState.reasoningMode,
                     reasoningAdvancedModel: window.imageEditState.reasoningAdvancedModel,
                     reasoningAdvancedEffort: window.imageEditState.reasoningAdvancedEffort,
@@ -882,7 +882,7 @@
             const status = document.getElementById('imageEditStatus');
             const requestId = globalThis.crypto?.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`;
             const imageCount = window.imageEditState.imageCount;
-            const aspectRatio = window.imageEditState.aspectRatio;
+            const aspectRatio = effectiveImageRatio();
             const transparency = window.imageEditState.transparency;
             const { outputFormat, outputCompression, complexity, quality, frameCount } = window.imageEditState;
             if (outputFormat === 'svg' && (files.length || session || imageCount !== 1)) {

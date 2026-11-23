@@ -40,6 +40,45 @@
         const IMAGE_ADVANCED_EFFORT_DETAILS = {
             low: '低耗速答', medium: '适度思考', high: '深度推理', xhigh: '超长思维链', max: '极限反思'
         };
+        const IMAGE_REASONING_MODEL_IDS = { luna: 'gpt-6-luna', terra: 'gpt-6.1-terra', sol: 'gpt-6.1-sol' };
+        const IMAGE_REASONING_MODEL_TIPS = {
+            'gpt-6-luna': '轻快且经济，适合边界明确的提示词润色、批量出图和快速构思。',
+            'gpt-6.1-terra': '擅长视觉理解，适合解读参考图、处理布局约束和编排画面细节。',
+            'gpt-6.1-sol': '通用推理模型，适合多步构思、复杂约束和精细的提示词规划。',
+            'gpt-6.2-sol': '适合需要兼顾能力和用量的多步推理、设计与创作任务。',
+            'gpt-6.2-astra': '适合需要综合分析和反复推演的复杂任务。',
+            'gpt-6-astra': '适合复杂任务和需要反复分析、验证的流程。',
+            'gpt-6-sol': '通用推理模型，适合日常设计和多步任务。',
+            'gpt-5.6-luna': '适合用量敏感的批处理和快速提示词整理。',
+            'gpt-5.6-terra': '适合在响应速度和多步推理能力之间取平衡。',
+            'gpt-5.6-sol': '适合较复杂的构思、约束整理和多步分析。',
+            'gpt-5.5': '面向复杂专业任务，适合综合多个参考与约束。',
+            'gpt-5.5-pro': '为困难任务分配较多计算，适合允许较长等待的精细规划。',
+            'gpt-5.4': '面向专业工作和多阶段分析，可直接回答或选用推理。',
+            'gpt-5.4-mini': '较轻量的 GPT-5.4，适合高频分析和创意迭代。',
+            'gpt-5.4-nano': 'GPT-5.4 系列的轻量档，适合简单而高频的整理工作。',
+            'gpt-5.4-pro': '适合允许更长计算时间的困难任务。',
+            'gpt-5.3-codex': '面向编码和流程化任务，可用于梳理结构明确的复杂要求。',
+            'gpt-5.2': '适合较复杂的专业任务和多步约束梳理。',
+            'gpt-5.2-pro': 'GPT-5.2 系列用于深度推理的版本，响应可能较慢。',
+            'gpt-5.1': '适合任务规划和多步工具流程，可选是否启用推理。',
+            'gpt-5': '通用推理模型，可在低延迟和较深入的分析之间调节。',
+            'gpt-5-mini': '适合指令明确、需要较快响应的通用任务。',
+            'gpt-5-nano': '适合简单分类、提取和高频提示词整理。',
+            'gpt-5-pro': '仅提供高思考档，适合可接受较长等待的高难度任务。',
+            'o3': '面向复杂推理，适合需要分步分析和核对约束的任务。',
+            'o3-mini': '较轻量的推理模型，适合针对性分析和有明确规则的任务。',
+            'o4-mini': '较轻量的推理模型，适合快速处理视觉与结构化约束。'
+        };
+        const IMAGE_REASONING_EFFORT_TIPS = {
+            none: '尽量减少额外推理，适合指令明确、优先响应速度的任务。',
+            minimal: '用最少的思考时间完成简单整理，适合固定步骤或短文本。',
+            low: '用较少的推理时间做基础检查，适合指令明确的请求。',
+            medium: '适度检查目标、参考图和约束，在推理深度与等待时间之间取平衡。',
+            high: '为多主体关系、细节约束和版式分配更多推理。',
+            xhigh: '进一步推演复杂构图及多个约束，等待时间和推理用量通常更高。',
+            max: '在所选模型支持时使用最高思考档，适合最难的任务，等待时间可能更长。'
+        };
         const IMAGE_REASONING_HOVER_PLAYBACK_RATE = 2.5;
         let imageReasoningGradientTimer = 0;
         let imageReasoningPulseTimer = 0;
@@ -64,6 +103,39 @@
         function normalizeImageAdvancedEffort(effort) {
             const cleanEffort = String(effort || 'low').toLowerCase();
             return IMAGE_ADVANCED_EFFORTS.includes(cleanEffort) ? cleanEffort : 'low';
+        }
+
+        function imageAdvancedCapabilities(slot) {
+            const profile = activeImageProfile();
+            const preset = profile?.reasoning?.[slot];
+            const model = preset?.model || IMAGE_REASONING_MODEL_IDS[slot];
+            const caps = profile?.reasoningCapabilities?.[model];
+            if (caps) {
+                return { model, efforts: IMAGE_ADVANCED_EFFORTS.filter(effort => caps.efforts.includes(effort)),
+                    preferred: caps.default };
+            }
+            const base = model.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+            if (Object.values(IMAGE_REASONING_MODEL_IDS).includes(base)) {
+                return { model, efforts: IMAGE_ADVANCED_EFFORTS, preferred: 'medium' };
+            }
+            return { model, efforts: IMAGE_ADVANCED_EFFORTS.filter(effort => preset?.effort === effort),
+                preferred: preset?.effort || '' };
+        }
+
+        function compatibleImageAdvancedEffort(slot, effort) {
+            const { efforts, preferred } = imageAdvancedCapabilities(slot);
+            if (!efforts.length) return '';
+            if (efforts.includes(effort)) return effort;
+            const position = IMAGE_ADVANCED_EFFORTS.indexOf(effort);
+            if (position < 0) return efforts.includes(preferred) ? preferred : efforts[0];
+            const distance = value => Math.abs(IMAGE_ADVANCED_EFFORTS.indexOf(value) - position);
+            return efforts.reduce((best, value) => distance(value) < distance(best) ? value : best);
+        }
+
+        function imageReasoningModelTip(model) {
+            const base = model.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+            return Object.hasOwn(IMAGE_REASONING_MODEL_TIPS, base) ? IMAGE_REASONING_MODEL_TIPS[base]
+                : '网关配置的思维模型，用于出图前分析要求并改进提示词。';
         }
 
         function restoreImageReasoningPreferences(saved = {}, persist = false) {
@@ -95,7 +167,7 @@
                 ? {
                     reasoningMode: 'advanced',
                     reasoningModel: state.reasoningAdvancedModel,
-                    reasoningEffort: state.reasoningAdvancedEffort
+                    reasoningEffort: compatibleImageAdvancedEffort(state.reasoningAdvancedModel, state.reasoningAdvancedEffort)
                 }
                 : {
                     reasoningMode: normalizeImageReasoningMode(state.reasoningMode),
@@ -123,17 +195,25 @@
         function syncImageReasoningLabels() {
             const state = window.imageEditState;
             const mode = normalizeImageReasoningMode(state.reasoningMode);
-            const slots = activeImageProfile()?.reasoning;
             document.querySelectorAll('.advanced-y-label').forEach(label => {
                 const slot = IMAGE_ADVANCED_MODELS[Number(label.dataset.yLabel)];
-                const model = slots?.[slot]?.model || IMAGE_ADVANCED_MODEL_DETAILS[slot].name;
+                const { model, efforts } = imageAdvancedCapabilities(slot);
                 label.firstElementChild.textContent = model;
-                label.title = model;
+                label.dataset.imageTip = imageReasoningModelTip(model) + (efforts.length
+                    ? ' 可选思考档位 ' + efforts.join('、') + '。' : ' 使用上游默认思考设置。');
             });
-            if (mode === 'advanced') updateImageAdvancedSelectionUi(state.reasoningAdvancedModel, state.reasoningAdvancedEffort);
+            if (mode === 'advanced') {
+                state.reasoningAdvancedEffort = compatibleImageAdvancedEffort(state.reasoningAdvancedModel, state.reasoningAdvancedEffort);
+                updateImageAdvancedSelectionUi(state.reasoningAdvancedModel, state.reasoningAdvancedEffort);
+            }
             else {
                 const description = document.getElementById('reasoningSliderDesc');
-                description.textContent = description.title = reasoningPresetText(mode);
+                description.textContent = reasoningPresetText(mode);
+                const configured = normalReasoningPreset(mode);
+                const tip = configured?.model ? imageReasoningModelTip(configured.model) : '';
+                description.dataset.imageTip = [IMAGE_REASONING_DESCRIPTIONS[mode], tip,
+                    IMAGE_REASONING_EFFORT_TIPS[configured?.effort]].filter(Boolean).join(' ');
+                document.getElementById('reasoningSliderTrack').dataset.imageTip = description.dataset.imageTip;
             }
             document.getElementById('imageWebSearchEnabled').disabled = !imageModeUsesReasoning(mode);
         }
@@ -143,7 +223,7 @@
             if (cleanMode !== 'advanced') return IMAGE_REASONING_LABELS[cleanMode];
             const slot = IMAGE_ADVANCED_MODELS.includes(model) ? model : '';
             const label = activeImageProfile()?.reasoning?.[slot]?.model || model || 'luna';
-            return `高级 ${label} · ${normalizeImageAdvancedEffort(effort)}`;
+            return `高级 ${label} · ${effort ? normalizeImageAdvancedEffort(effort) : '默认'}`;
         }
 
         function imageAdvancedHue(modelIndex, effortIndex) {
@@ -250,9 +330,18 @@
 
         function updateImageAdvancedSelectionUi(model, effort) {
             const cleanModel = normalizeImageAdvancedModel(model);
-            const cleanEffort = normalizeImageAdvancedEffort(effort);
+            const cleanEffort = compatibleImageAdvancedEffort(cleanModel, effort);
             const modelIndex = IMAGE_ADVANCED_MODELS.indexOf(cleanModel);
-            const effortIndex = IMAGE_ADVANCED_EFFORTS.indexOf(cleanEffort);
+            const effortIndex = Math.max(0, IMAGE_ADVANCED_EFFORTS.indexOf(cleanEffort));
+            const available = imageAdvancedCapabilities(cleanModel);
+            document.querySelectorAll('.advanced-x-label').forEach(label => {
+                const index = Number(label.dataset.xLabel);
+                const value = IMAGE_ADVANCED_EFFORTS[index];
+                const automatic = !available.efforts.length && index === 0;
+                label.style.visibility = automatic || available.efforts.includes(value) ? 'visible' : 'hidden';
+                label.textContent = automatic ? '默认' : value;
+                label.dataset.imageTip = automatic ? '使用上游模型的默认思考设置。' : IMAGE_REASONING_EFFORT_TIPS[value];
+            });
             const modelDetails = IMAGE_ADVANCED_MODEL_DETAILS[cleanModel];
             const knob = document.getElementById('advancedKnob');
             if (knob) {
@@ -266,17 +355,16 @@
             if (pad) pad.style.boxShadow = imageAdvancedPadGlow(effortIndex, modelIndex);
             const badge = document.getElementById('advancedStateBadge');
             if (badge) {
-                badge.textContent = `${cleanModel} · ${cleanEffort}`;
+                badge.textContent = `${cleanModel} · ${cleanEffort || '默认'}`;
                 badge.style.color = `hsl(${modelDetails.hue}, 78%, ${46 - effortIndex}%)`;
             }
             const description = document.getElementById('advancedDesc');
             if (description) {
                 const configured = activeImageProfile()?.reasoning?.[cleanModel]?.model;
-                description.textContent = description.title = [
-                    configured || modelDetails.name,
-                    IMAGE_ADVANCED_EFFORT_DETAILS[cleanEffort],
-                    configured ? '' : modelDetails.description
-                ].filter(Boolean).join(' · ');
+                description.textContent = [configured || available.model,
+                    IMAGE_ADVANCED_EFFORT_DETAILS[cleanEffort] || '上游默认'].join(' · ');
+                description.dataset.imageTip = [imageReasoningModelTip(available.model),
+                    IMAGE_REASONING_EFFORT_TIPS[cleanEffort]].filter(Boolean).join(' ');
             }
             updateImageAdvancedHighlights(effortIndex, modelIndex, false);
             applyImageAdvancedButtonTheme(modelIndex, effortIndex);
@@ -285,7 +373,7 @@
         function setImageAdvancedMode(model, effort, persist = true) {
             const state = window.imageEditState;
             const cleanModel = normalizeImageAdvancedModel(model);
-            const cleanEffort = normalizeImageAdvancedEffort(effort);
+            const cleanEffort = compatibleImageAdvancedEffort(cleanModel, effort);
             if (state.reasoningMode !== 'advanced') {
                 state.reasoningPreviousMode = normalizeImageReasoningPreset(state.reasoningMode);
             }
@@ -300,7 +388,7 @@
             control.querySelectorAll('.reasoning-bg-layer').forEach(layer => {
                 layer.classList.toggle('is-visible', layer.dataset.layerMode === 'advanced');
             });
-            document.getElementById('imageReasoningMenuButton').title = `高级模式：${cleanModel} · ${cleanEffort}`;
+            document.getElementById('imageReasoningMenuButton').title = `高级模式：${cleanModel} · ${cleanEffort || '默认'}`;
             const searchToggle = document.getElementById('imageWebSearchEnabled');
             if (searchToggle) {
                 searchToggle.checked = true;

@@ -1292,8 +1292,8 @@ def prepare_image_generation(
     if output_format in {"svg", "gif"}:
         stream = False
         partial_images = 0
-    if transparency == "transparent" and output_format not in {"png", "webp", "svg"}:
-        raise ValueError("透明背景需要 PNG、WebP 或 SVG")
+    if transparency == "transparent" and output_format not in {"png", "webp"}:
+        raise ValueError("透明背景需要 PNG 或 WebP")
     compression = clean_options.get("output_compression")
     if compression is None and not clean_options.get("output_format"):
         compression = fallback_compression
