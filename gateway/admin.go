@@ -42,6 +42,7 @@ func (a *admin) routes(m *mobile) http.Handler {
 	// Existing public deployments forward /admin/ while allowing only the older
 	// root asset names. Serve the new workspace asset through that namespace.
 	mux.Handle("GET /admin/assets/admin-tiers.js", http.StripPrefix("/admin/assets", files))
+	mux.Handle("GET /admin/assets/admin-tier-publish.js", http.StripPrefix("/admin/assets", files))
 	if m != nil {
 		mux.HandleFunc("GET /app-preview/{asset...}", m.appPreview)
 	}
@@ -61,6 +62,7 @@ func (a *admin) routes(m *mobile) http.Handler {
 	mux.HandleFunc("POST /admin/keys/{id}/reveal", a.protected(a.revealKey))
 	mux.HandleFunc("POST /admin/keys/{id}/delete", a.protected(a.deleteKey))
 	mux.HandleFunc("POST /admin/tiers", a.protected(a.saveTier))
+	mux.HandleFunc("POST /admin/landing-tiers", a.protected(a.saveLandingTiers))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.Host)
 		if err != nil {
@@ -174,9 +176,15 @@ func (a *admin) state(w http.ResponseWriter, r *http.Request) {
 		hosts = append(hosts, host)
 	}
 	sort.Strings(hosts)
+	landing, err := a.gateway.landingTiers(r.Context())
+	if err != nil {
+		jsonError(w, http.StatusServiceUnavailable, "无法读取落地页档位设置")
+		return
+	}
 	writeJSON(w, http.StatusOK, object{
 		"upstreams": upstreams, "keys": keys, "usage": usage, "proxy": a.gateway.egress.view(),
-		"appModels": a.gateway.appModels(),
+		"appModels":    a.gateway.appModels(),
+		"landingTiers": landing.adminView(),
 		"gateway": object{"publicBaseUrl": a.gateway.cfg.publicBase, "allowedHosts": hosts,
 			"reserveMicroUSD": a.gateway.cfg.reserveMicroUSD, "pricingReady": a.gateway.cfg.reserveMicroUSD > 0 && len(a.gateway.cfg.pricing) > 0},
 	})
@@ -245,8 +253,9 @@ func (a *admin) testUpstream(w http.ResponseWriter, r *http.Request) {
 func (a *admin) saveKey(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		accessKey
-		Custom   string `json:"customKey"`
-		Revision *int64 `json:"revision"`
+		Custom          string             `json:"customKey"`
+		Revision        *int64             `json:"revision"`
+		UseTierDefaults tierDefaultsChoice `json:"useTierDefaults"`
 	}
 	input.Enabled = true
 	if !decodeRequest(w, r, 16<<10, &input) {
@@ -258,9 +267,14 @@ func (a *admin) saveKey(w http.ResponseWriter, r *http.Request) {
 	if k.Policy.TierID == "" {
 		k.Policy.TierID = "default"
 	}
-	if _, ok := a.gateway.appModels().tier(k.Policy.TierID); !ok {
+	tier, ok := a.gateway.appModels().tier(k.Policy.TierID)
+	if !ok {
 		jsonError(w, 400, "请选择有效的功能档位")
 		return
+	}
+	now := time.Now().UTC()
+	if input.UseTierDefaults {
+		k.Policy = tier.DefaultQuota.apply(k.Policy, now)
 	}
 	k.Name = strings.TrimSpace(k.Name)
 	if len(k.Name) == 0 || len(k.Name) > 120 || len(k.ID) > 40 {
@@ -285,7 +299,7 @@ func (a *admin) saveKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if k.ID != "" {
-		usage, err := s.changeKey(r.Context(), k.ID, &k, "", input.Revision, time.Now())
+		usage, err := s.changeKey(r.Context(), k.ID, &k, "", input.Revision, now)
 		if err != nil {
 			quotaMutationError(w, err)
 			return

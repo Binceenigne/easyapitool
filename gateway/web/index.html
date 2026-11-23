@@ -6,10 +6,11 @@
   <meta name="theme-color" content="#f7f7ff">
   <title>Mirra · 分发网关</title>
   <link rel="icon" href="/mirra.png">
-  <link rel="stylesheet" href="/admin.css">
-  <script src="/admin.js" defer></script>
-  <script src="/admin-models.js" defer></script>
-  <script src="/admin/assets/admin-tiers.js" defer></script>
+  <link rel="stylesheet" href="/admin.css?v=tier-defaults-1">
+  <script src="/admin.js?v=tier-defaults-1" defer></script>
+  <script src="/admin-models.js?v=tier-defaults-1" defer></script>
+  <script src="/admin/assets/admin-tiers.js?v=tier-defaults-1" defer></script>
+  <script src="/admin/assets/admin-tier-publish.js?v=tier-defaults-1" defer></script>
 </head>
 <body>
   <main id="auth" class="auth">
@@ -153,9 +154,28 @@
         </section>
 
         <section id="page-tiers" data-view="tiers" aria-labelledby="tiers-title" hidden>
-          <div class="page-head"><div><h1 id="tiers-title">档位对比</h1><p class="hint">按权限范围由低到高自动排列，调整档位后同步更新。</p></div><button type="button" id="new-tier-compare" class="primary"><i data-icon="Plus"></i>新建档位</button></div>
+          <div class="page-head"><div><h1 id="tiers-title">档位对比</h1><p class="hint">按权限范围由低到高自动排列，权限调整即时生效；默认额度仅在签发或保存密钥时主动套用。</p></div><button type="button" id="new-tier-compare" class="primary"><i data-icon="Plus"></i>新建档位</button></div>
           <div class="toolbar tier-compare-tools"><label class="search"><i data-icon="Search"></i><input type="search" id="tier-feature-search" placeholder="查找功能或模型" aria-label="查找档位功能"></label><label class="inline-check"><input type="checkbox" id="tier-differences">只看不同项</label></div>
           <section id="tier-comparison" class="panel" aria-label="功能权限横向对比"></section>
+          <section class="panel landing-tier-publish" aria-labelledby="landing-tier-title">
+            <div class="panel-head"><h2 id="landing-tier-title"><i data-icon="PanelsTopLeft"></i>落地页展示</h2><label class="landing-visibility"><span>显示档位</span><input type="checkbox" role="switch" id="landing-tier-enabled" aria-describedby="landing-tier-visibility-hint"></label></div>
+            <div class="landing-tier-publish-grid">
+              <div class="landing-publish-controls">
+                <div class="landing-publish-state"><span id="landing-tier-publish-state" role="status"></span><p id="landing-tier-published-at" class="caption">尚未同步</p></div>
+                <p id="landing-tier-visibility-hint" class="hint">选择要公开的档位并同步后，即可开启落地页展示。</p>
+                <fieldset id="landing-tier-selection"><legend>选择要公开的档位</legend><label class="inline-check landing-select-all"><input type="checkbox" id="landing-tier-select-all">全选档位<span id="landing-tier-count" class="caption"></span></label><div id="landing-tier-options" class="landing-tier-options"></div></fieldset>
+                <div class="landing-sync-actions"><button type="button" id="landing-tier-sync" class="primary"><i data-icon="RefreshCw"></i><span>同步到落地页</span></button><p class="hint">只同步勾选的档位。保存模型或档位后，落地页内容需要重新同步。</p></div>
+                <p id="landing-tier-feedback" class="notice" role="status" hidden></p>
+                <p id="landing-tier-error" class="error" role="alert" hidden></p>
+              </div>
+              <div class="landing-publish-preview">
+                <div class="landing-preview-heading"><h3>展示预览</h3><div class="presets" role="group" aria-label="预览内容来源"><button type="button" id="landing-preview-draft" aria-pressed="true">待同步内容</button><button type="button" id="landing-preview-snapshot" aria-pressed="false">已发布快照</button></div></div>
+                <p id="landing-preview-hint" class="caption"></p>
+                <div id="landing-tier-preview" class="landing-preview-cards" tabindex="0" role="region" aria-label="档位展示预览"></div>
+                <p class="hint landing-preview-note">额度按实际调用费用计算；签发密钥时可单独调整。</p>
+              </div>
+            </div>
+          </section>
         </section>
 
         <section id="page-proxy" data-view="proxy" aria-labelledby="proxy-title" hidden>
@@ -223,10 +243,13 @@
       <label>分发至号池或独立上游<select name="upstreamId" required></select></label>
       <label>功能档位<select name="tierId" id="key-tier-select" required></select></label>
       <div id="key-tier-summary" class="tier-assignment-summary" aria-live="polite"></div>
+      <label class="key-tier-default-choice"><input type="checkbox" name="useTierDefaults" id="key-use-tier-defaults" aria-describedby="key-tier-defaults-note"><span><strong>使用该档位的默认额度限制</strong><small id="key-tier-defaults-note" class="hint">同时套用费用额度和有效期；有效期从本次保存起算，已用费用不会重置。</small></span></label>
+      <div id="key-tier-default-preview" class="key-tier-default-preview" aria-live="polite" hidden></div>
       <label class="toggle-line" id="custom-line"><span>自定义密钥后缀</span><input type="checkbox" role="switch" name="customOn" data-reveal="custom-fields"></label>
       <div id="custom-fields" hidden><label>sk-mirra- 后缀<input name="customKey" type="password" minlength="16" maxlength="128" pattern="[A-Za-z0-9_\-]{16,128}" autocomplete="new-password" placeholder="至少 16 位字母、数字、下划线或连字符"></label></div>
       <label class="toggle-line"><span>IP 白名单</span><input type="checkbox" role="switch" name="ipOn" data-reveal="ip-fields"></label>
       <div id="ip-fields" hidden><label>允许的地址或 CIDR<textarea name="ips" rows="3" placeholder="每行一个 IPv4、IPv6 或网段"></textarea></label></div>
+      <fieldset id="key-manual-quota" class="form-body"><legend class="sr-only">手动费用额度与有效期</legend>
       <label class="toggle-line"><span>费用限额（USD）</span><input type="checkbox" role="switch" name="usdOn" data-reveal="usd-fields"></label>
       <div id="usd-fields" class="form-body" hidden>
         <p id="pricing-hint" class="hint"></p><div class="pair">
@@ -238,6 +261,7 @@
       </div>
       <label class="toggle-line"><span>有效期</span><input type="checkbox" role="switch" name="expiryOn" data-reveal="expiry-fields"></label>
       <div id="expiry-fields" class="form-body" hidden><div class="presets" id="expiry-presets"><button type="button" data-days="7">7 天</button><button type="button" data-days="30">30 天</button><button type="button" data-days="90">90 天</button><button type="button" data-days="0">自定义</button></div><label>到期时间<input type="datetime-local" name="expiresAt"></label></div>
+      </fieldset>
       <label class="toggle-line"><span>启用密钥</span><input type="checkbox" role="switch" name="enabled" checked></label>
       <p class="error" role="alert" hidden></p>
     </div><footer><button type="button" data-close>取消</button><button id="save-key" type="submit" class="primary">签发密钥</button></footer>
@@ -260,6 +284,17 @@
     <header><div><h2 id="tier-title">新建功能档位</h2><p class="hint">权限调整会同步到绑定此档位的密钥。</p></div><button type="button" class="icon-button" data-close aria-label="关闭"><i data-icon="X"></i></button></header>
     <div class="editor-body tier-editor-body">
       <div class="pair"><label>档位名称<input name="name" maxlength="120" required placeholder="例如 基础、专业、完整"></label><label>说明<input name="description" maxlength="500" placeholder="简要说明适用范围"></label></div>
+      <section class="tier-default-quota" aria-labelledby="tier-default-quota-title">
+        <div class="tier-default-quota-head"><h3 id="tier-default-quota-title"><i data-icon="Clock3"></i>签发默认限制</h3><span class="caption">0 表示长期有效或额度不限</span></div>
+        <p class="hint" id="tier-default-quota-note">不会影响已签发密钥。新建密钥默认套用；编辑密钥时需主动勾选，有效期从本次保存日起算，已用费用保持不变。</p>
+        <div class="tier-default-expiry"><label>默认有效期（天）<input type="number" name="defaultExpiresInDays" min="0" max="36500" step="1" value="0" required aria-describedby="tier-default-quota-note"></label><div class="presets" id="tier-expiry-presets" role="group" aria-label="默认有效期"><button type="button" data-expiry-days="0">长期</button><button type="button" data-expiry-days="7">7 天</button><button type="button" data-expiry-days="30">30 天</button><button type="button" data-expiry-days="90">90 天</button><button type="button" data-expiry-days="custom">自定义</button></div></div>
+        <div class="pair tier-default-budget-grid">
+          <label>总创作额度（USD）<input type="number" name="defaultTotalUsd" min="0" max="1000000" step=".000001" value="0" required></label>
+          <label>5 小时额度（USD）<input type="number" name="defaultFiveHourUsd" min="0" max="1000000" step=".000001" value="0" required></label>
+          <label>每日额度（USD）<input type="number" name="defaultDayUsd" min="0" max="1000000" step=".000001" value="0" required></label>
+          <label>7 天额度（USD）<input type="number" name="defaultWeekUsd" min="0" max="1000000" step=".000001" value="0" required></label>
+        </div>
+      </section>
       <div id="tier-permissions" class="tier-permission-groups"></div>
       <section class="tier-limits"><h3>生成上限</h3><div class="pair">
         <label>最大分辨率<select name="maxResolution"><option value="1536">标清 · 最长边 1536 px</option><option value="2560">高清 · 最长边 2560 px</option><option value="3840">超清 · 最长边 3840 px</option></select></label>

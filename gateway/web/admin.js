@@ -83,6 +83,7 @@ function showLogin() {
   state = null;
   proxyDirty = false;
   window.resetModelSettings?.();
+  window.resetLandingTierSettings?.();
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
   document.querySelectorAll('form').forEach(f => f.reset());
   $('secret').value = '';
@@ -134,7 +135,9 @@ function openDialog(id) {
   if (form) formError(form);
   d.showModal();
   const first = d.querySelector('.editor-body input:not([type=hidden]):not([disabled])');
-  if (first) first.focus();
+  if (first) first.focus({preventScroll:true});
+  const body=d.querySelector('.editor-body');
+  if (body) body.scrollTop=0;
 }
 document.querySelectorAll('[data-close]').forEach(btn => { btn.onclick = () => btn.closest('dialog').close(); });
 document.querySelectorAll('dialog').forEach(d => d.addEventListener('close', () => {
@@ -387,6 +390,7 @@ fields('member-form').baseUrl.addEventListener('input',memberRequired);
 
 function localDate(date) { return new Date(date.valueOf()-date.getTimezoneOffset()*60000).toISOString().slice(0,16); }
 function syncKey() {
+  window.syncKeyTierDefaults?.();
   const f=fields('key-form');
   for(const c of $('key-form').querySelectorAll('[data-reveal]')) {
     const area=$(c.dataset.reveal);area.hidden=!c.checked;
@@ -418,7 +422,7 @@ function openKey(k=null) {
   }
   syncKey();openDialog('key-dialog');
 }
-$('key-form').addEventListener('change',e=>{if(e.target.dataset.reveal)syncKey();});
+$('key-form').addEventListener('change',e=>{if(e.target.dataset.reveal || e.target.name==='useTierDefaults')syncKey();});
 $('expiry-presets').addEventListener('click',e=>{
   const btn=e.target.closest('[data-days]');if(!btn)return;
   const days=Number(btn.dataset.days),field=fields('key-form').expiresAt;
@@ -477,7 +481,7 @@ submit('key-form',async form=>{
   if(f.expiryOn.checked)end=editingKey?.policy.expiresAt && f.expiresAt.value===localDate(new Date(editingKey.policy.expiresAt)) ? editingKey.policy.expiresAt : new Date(f.expiresAt.value).toISOString();
   const issued=await api('keys',{
     id:editingKey?.id||'',revision:editingKey?keyRevision:null,name:f.name.value,upstreamId:f.upstreamId.value,enabled:f.enabled.checked,
-    customKey:f.customOn.checked?f.customKey.value:'',
+    customKey:f.customOn.checked?f.customKey.value:'',useTierDefaults:f.useTierDefaults.checked,
     policy:{tierId:f.tierId.value,ips:f.ipOn.checked?f.ips.value.split(/[\s,]+/).filter(Boolean):[],expiresAt:end,totalMicroUSD:micro('totalUsd'),
       fiveHourMicroUSD:micro('fiveHourUsd'),dayMicroUSD:micro('dayUsd'),weekMicroUSD:micro('weekUsd')}
   });

@@ -73,6 +73,7 @@ func (m *mobile) registerRoutes(root *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/device/register", m.registerDevice)
 	mux.HandleFunc("GET /api/v1/app/update", m.appUpdate(false))
 	mux.HandleFunc("GET /api/v1/app/update/download", m.appUpdate(true))
+	mux.HandleFunc("GET /api/v1/app/tiers", m.g.publicLandingTiers)
 	mux.HandleFunc("GET /api/v1/state", m.auth(m.getState))
 	mux.HandleFunc("POST /api/v1/refresh", m.auth(m.refresh))
 	mux.HandleFunc("POST /api/v1/keys", m.auth(m.addKey))

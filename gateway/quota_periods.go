@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 )
@@ -244,11 +245,14 @@ func (s *store) changeKey(ctx context.Context, id string, updated *accessKey, re
 		return nil, err
 	}
 	if updated != nil {
+		sameExpiry := k.Policy.ExpiresAt == nil && updated.Policy.ExpiresAt == nil ||
+			k.Policy.ExpiresAt != nil && updated.Policy.ExpiresAt != nil && k.Policy.ExpiresAt.Equal(*updated.Policy.ExpiresAt)
 		if tierID(k) != tierID(*updated) {
 			if err := quotaEvent(ctx, tx, id, "tier_changed", "permissions", 0, 0, now); err != nil {
 				return nil, err
 			}
-		} else if k.Name != updated.Name || k.Upstream != updated.Upstream || k.Enabled != updated.Enabled {
+		} else if k.Name != updated.Name || k.Upstream != updated.Upstream || k.Enabled != updated.Enabled ||
+			!sameExpiry || !slices.Equal(k.Policy.IPs, updated.Policy.IPs) {
 			if err := quotaEvent(ctx, tx, id, "key_updated", "settings", 0, 0, now); err != nil {
 				return nil, err
 			}

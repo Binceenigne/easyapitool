@@ -42,8 +42,10 @@ func limitedTier() featureTier {
 func TestAdminTierAssetUsesManagedNamespace(t *testing.T) {
 	handler := newAdmin(testGateway(t)).routes(nil)
 	for _, tc := range []struct{ path, content string }{
-		{"/", `src="/admin/assets/admin-tiers.js"`},
+		{"/", `src="/admin/assets/admin-tiers.js`},
+		{"/", `src="/admin/assets/admin-tier-publish.js`},
 		{"/admin/assets/admin-tiers.js", "window.prepareKeyTier"},
+		{"/admin/assets/admin-tier-publish.js", "window.renderLandingTierSettings"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8771"+tc.path, nil)
 		reply := httptest.NewRecorder()

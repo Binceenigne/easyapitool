@@ -287,6 +287,7 @@
     if (!profile.defaultImage) throw new Error('请选择至少一个生图模型');
     state.appModels = await api('models', profile);
     loadForm(state.appModels);
+    window.renderTiers?.();
     tell('模型配置已保存', 'good');
   });
   if (state) {

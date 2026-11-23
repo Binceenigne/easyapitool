@@ -185,7 +185,7 @@ func (g *gateway) loadModels(ctx context.Context) error {
 			settings.ReasoningModes = defaultReasoningModes(settings.Reasoning)
 		}
 		settings.ensureTiers()
-		if settings.validate() != nil {
+		if settings.validate() != nil || validateTiers(settings.Tiers) != nil {
 			return errors.New("已保存的模型配置无效")
 		}
 		settings.applyCapabilities()

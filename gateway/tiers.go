@@ -12,25 +12,26 @@ import (
 )
 
 type featureTier struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name"`
-	Description      string   `json:"description"`
-	ImageModels      []string `json:"imageModels"`
-	ReasoningModels  []string `json:"reasoningModels"`
-	ReasoningModes   []string `json:"reasoningModes"`
-	ReasoningEfforts []string `json:"reasoningEfforts"`
-	Qualities        []string `json:"qualities"`
-	Complexities     []string `json:"complexities"`
-	Formats          []string `json:"formats"`
-	Advanced         bool     `json:"advanced"`
-	Transparency     bool     `json:"transparency"`
-	WebSearch        bool     `json:"webSearch"`
-	PromptPolish     bool     `json:"promptPolish"`
-	ImageEditing     bool     `json:"imageEditing"`
-	MaxResolution    int      `json:"maxResolution"`
-	MaxImages        int      `json:"maxImages"`
-	MaxReferences    int      `json:"maxReferences"`
-	MaxGIFFrames     int      `json:"maxGifFrames"`
+	ID               string           `json:"id"`
+	Name             string           `json:"name"`
+	Description      string           `json:"description"`
+	ImageModels      []string         `json:"imageModels"`
+	ReasoningModels  []string         `json:"reasoningModels"`
+	ReasoningModes   []string         `json:"reasoningModes"`
+	ReasoningEfforts []string         `json:"reasoningEfforts"`
+	Qualities        []string         `json:"qualities"`
+	Complexities     []string         `json:"complexities"`
+	Formats          []string         `json:"formats"`
+	Advanced         bool             `json:"advanced"`
+	Transparency     bool             `json:"transparency"`
+	WebSearch        bool             `json:"webSearch"`
+	PromptPolish     bool             `json:"promptPolish"`
+	ImageEditing     bool             `json:"imageEditing"`
+	MaxResolution    int              `json:"maxResolution"`
+	MaxImages        int              `json:"maxImages"`
+	MaxReferences    int              `json:"maxReferences"`
+	MaxGIFFrames     int              `json:"maxGifFrames"`
+	DefaultQuota     tierDefaultQuota `json:"defaultQuota"`
 }
 
 func fullTier() featureTier {
@@ -82,6 +83,9 @@ func (s *modelSettings) tier(id string) (featureTier, bool) {
 func validateTier(t featureTier) error {
 	if !modelPattern.MatchString(t.ID) || len(strings.TrimSpace(t.Name)) == 0 || len(t.Name) > 120 || len(t.Description) > 500 {
 		return errors.New("请填写档位名称和有效标识")
+	}
+	if err := t.DefaultQuota.validate(); err != nil {
+		return err
 	}
 	for _, list := range [][]string{t.ImageModels, t.ReasoningModels, t.ReasoningModes, t.ReasoningEfforts, t.Qualities, t.Complexities, t.Formats} {
 		if len(list) > 128 {

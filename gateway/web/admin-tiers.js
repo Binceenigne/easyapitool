@@ -13,6 +13,48 @@
   const bindingCount = id => state.keys.filter(k => (k.policy.tierId || 'default') === id).length;
   const limitName = t => ({1536:'标清',2560:'高清',3840:'超清'}[t.maxResolution] || '—');
   const allowedText = (list, catalog) => (list || []).includes('*') ? '全部' : (list || []).length ? list.map(v => catalog?.find(([id]) => id === v)?.[1] || v).join('、') : '未开放';
+  const quotaFields = [['totalUsd','totalMicroUSD'],['fiveHourUsd','fiveHourMicroUSD'],['dayUsd','dayMicroUSD'],['weekUsd','weekMicroUSD']];
+  const defaultFields = [['defaultTotalUsd','totalMicroUSD'],['defaultFiveHourUsd','fiveHourMicroUSD'],['defaultDayUsd','dayMicroUSD'],['defaultWeekUsd','weekMicroUSD']];
+  const quotaDefaults = tier => ({expiresInDays:0,totalMicroUSD:0,fiveHourMicroUSD:0,dayMicroUSD:0,weekMicroUSD:0,...tier?.defaultQuota});
+  const quotaAmount = micro => Number(micro) ? usd(Number(micro)/1e6) : '不限';
+  const validity = days => Number(days) ? '签发后 '+number(days)+' 天' : '长期有效';
+  let keyManualDraft = null;
+
+  function quotaPreview(tier) {
+    const quota = quotaDefaults(tier), preview = $('key-tier-default-preview');
+    const grid = node('dl','key-default-quota-grid');
+    for (const [label,value] of [['有效期',validity(quota.expiresInDays)],['总创作额度',quotaAmount(quota.totalMicroUSD)],['5 小时额度',quotaAmount(quota.fiveHourMicroUSD)],['每日额度',quotaAmount(quota.dayMicroUSD)],['7 天额度',quotaAmount(quota.weekMicroUSD)]]) {
+      const item=node('div'); item.append(node('dt','caption',label),node('dd','number',value)); grid.append(item);
+    }
+    preview.replaceChildren(node('strong','',tier.name+' · 默认限制'),grid,node('p','hint','由服务端在保存时套用；已有用量记录和已用费用保持不变。'));
+  }
+
+  window.syncKeyTierDefaults = () => {
+    const f = $('key-form').elements, useDefaults = f.useTierDefaults.checked;
+    const tier = tiers().find(t => t.id === f.tierId.value);
+    $('key-manual-quota').disabled = useDefaults;
+    $('key-tier-default-preview').hidden = !useDefaults;
+    if (useDefaults && tier) {
+      if (!keyManualDraft) {
+        keyManualDraft = {usdOn:f.usdOn.checked,expiryOn:f.expiryOn.checked,expiresAt:f.expiresAt.value,
+          amounts:Object.fromEntries(quotaFields.map(([field]) => [field,f[field].value])),
+          expiryPresets:[...$('expiry-presets').children].map(button => button.getAttribute('aria-pressed'))};
+      }
+      const quota = quotaDefaults(tier);
+      f.usdOn.checked = quotaFields.some(([,prop]) => quota[prop] > 0);
+      for (const [field,prop] of quotaFields) f[field].value = quota[prop]/1e6;
+      f.expiryOn.checked = quota.expiresInDays > 0;
+      f.expiresAt.value = quota.expiresInDays ? localDate(new Date(Date.now()+quota.expiresInDays*86400000)) : '';
+      for (const button of $('expiry-presets').children) button.setAttribute('aria-pressed',String(Number(button.dataset.days) === quota.expiresInDays && quota.expiresInDays > 0));
+      quotaPreview(tier);
+    } else if (keyManualDraft) {
+      const draft=keyManualDraft; keyManualDraft=null;
+      f.usdOn.checked=draft.usdOn;f.expiryOn.checked=draft.expiryOn;f.expiresAt.value=draft.expiresAt;
+      for (const [field] of quotaFields) f[field].value=draft.amounts[field];
+      [...$('expiry-presets').children].forEach((button,index) => button.setAttribute('aria-pressed',draft.expiryPresets[index] || 'false'));
+    }
+  };
+
 
   function summary(t, target) {
     target.replaceChildren();
@@ -31,9 +73,10 @@
     const select = $('key-tier-select');
     select.replaceChildren(...tiers().map(t => new Option(t.name,t.id)));
     select.value = key?.policy?.tierId || 'default';
+    keyManualDraft = null; $('key-use-tier-defaults').checked = !key;
     summary(tiers().find(t => t.id === select.value),$('key-tier-summary'));
   };
-  $('key-tier-select').addEventListener('change', e => summary(tiers().find(t => t.id === e.target.value),$('key-tier-summary')));
+  $('key-tier-select').addEventListener('change', e => { summary(tiers().find(t => t.id === e.target.value),$('key-tier-summary')); syncKey(); });
 
   function permissionGroup(name,title,choices,selected,help) {
     const group = node('fieldset','tier-permission-group'); group.dataset.permissionGroup = name;
@@ -63,10 +106,17 @@
     }
     for (const name of ['maxResolution','maxImages','maxReferences','maxGifFrames']) t[name] = Number(f[name].value);
     for (const [name] of switches) t[name] = f[name].checked;
+    t.defaultQuota = {expiresInDays:Number(f.defaultExpiresInDays.value)};
+    for (const [field,prop] of defaultFields) t.defaultQuota[prop] = Math.round(Number(f[field].value || 0)*1e6);
     return t;
   }
   function updateSummary() {
     const t = readTier(); t.name ||= '新档位'; summary(t,$('tier-live-summary'));
+    const quota=quotaDefaults(t);
+    $('tier-live-summary').append(node('p','hint','默认限制：'+validity(quota.expiresInDays)+' · 总创作额度 '+quotaAmount(quota.totalMicroUSD)+' · 5 小时 '+quotaAmount(quota.fiveHourMicroUSD)+' · 每日 '+quotaAmount(quota.dayMicroUSD)+' · 7 天 '+quotaAmount(quota.weekMicroUSD)));
+    const days=Number($('tier-form').elements.defaultExpiresInDays.value);
+    const custom=![0,7,30,90].includes(days);
+    for (const button of $('tier-expiry-presets').children) button.setAttribute('aria-pressed',String(button.dataset.expiryDays === (custom?'custom':String(days))));
   }
 
   function openTier(t = null, duplicate = false) {
@@ -77,6 +127,8 @@
     if (duplicate) value.name += ' · 副本';
     const f = $('tier-form').elements;
     f.name.value = value.name; f.description.value = value.description;
+    const quota=quotaDefaults(value); f.defaultExpiresInDays.value=quota.expiresInDays;
+    for (const [field,prop] of defaultFields) f[field].value=quota[prop]/1e6;
     $('tier-title').textContent = editing ? '编辑档位 · '+value.name : '新建功能档位';
     const imageModels = [...new Set([...state.appModels.imageModels,...value.imageModels.filter(v => v !== '*')])];
     const reasoningModels = [...new Set([...Object.values(state.appModels.reasoning).map(p => p.model),...Object.values(state.appModels.reasoningModes).map(p => p.model),...value.reasoningModels.filter(v => v !== '*')])].filter(Boolean);
@@ -102,7 +154,9 @@
   function comparison() {
     const plans = tiers(), query = $('tier-feature-search').value.trim().toLowerCase();
     const definitions = [
-      ['说明',t => t.description || '—'],['生图模型',t => allowedText(t.imageModels)],['思维模型',t => allowedText(t.reasoningModels)],
+      ['说明',t => t.description || '—'],['默认有效期',t => validity(quotaDefaults(t).expiresInDays)],
+      ['默认总创作额度',t => quotaAmount(quotaDefaults(t).totalMicroUSD)],['默认 5 小时额度',t => quotaAmount(quotaDefaults(t).fiveHourMicroUSD)],
+      ['默认每日额度',t => quotaAmount(quotaDefaults(t).dayMicroUSD)],['默认 7 天额度',t => quotaAmount(quotaDefaults(t).weekMicroUSD)],['生图模型',t => allowedText(t.imageModels)],['思维模型',t => allowedText(t.reasoningModels)],
       ['思维深度预设',t => allowedText(t.reasoningModes,modes)],['模型思考深度',t => allowedText(t.reasoningEfforts,efforts)],
       ['高级模式',t => t.advanced],['SVG 矢量输出',t => all(t.formats,'svg')],['GIF 动图',t => all(t.formats,'gif')],
       ['透明背景',t => t.transparency],['最大分辨率',t => limitName(t)+' · '+t.maxResolution+' px'],
@@ -139,6 +193,7 @@
       return [stacked(t.name,t.description),capabilities,bindingCount(t.id)+' 把',buttons];
     })));
     comparison();
+    window.renderLandingTierSettings?.();
   };
 
   window.viewDistributedKey = async key => {
@@ -148,7 +203,13 @@
   };
   window.confirmDeleteDistributedKey = key => { deleting = {key,revision:state.usage[key.id].quotaRevision};$('delete-key-title').textContent='删除分发密钥';$('delete-key-confirm').textContent='删除密钥';$('delete-key-note').textContent='删除后立即停止该密钥的新请求，历史用量回执保留。';$('delete-key-name').textContent = '删除“'+key.name+'”（'+key.prefix+'…）？';openDialog('delete-key-dialog'); };
   submit('delete-key-form',async()=>{if(deleting.tier){await api('tiers',{tier:{id:deleting.tier.id},delete:true,revision:deleting.revision});}else{await api('keys/'+encodeURIComponent(deleting.key.id)+'/delete',{revision:deleting.revision});}$('delete-key-dialog').close();await afterSave(deleting.tier?'档位已删除':'密钥已删除');});
-  submit('tier-form',async()=>{await api('tiers',{tier:readTier(),revision});$('tier-dialog').close();await afterSave('档位权限已保存并同步');});
+  submit('tier-form',async()=>{await api('tiers',{tier:readTier(),revision});$('tier-dialog').close();await afterSave('档位已保存。权限立即生效，默认额度不会修改现有密钥。');});
+  $('tier-expiry-presets').addEventListener('click',event=>{
+    const button=event.target.closest('[data-expiry-days]'); if(!button)return;
+    const field=$('tier-form').elements.defaultExpiresInDays;
+    if(button.dataset.expiryDays==='custom'){field.focus();field.select();return;}
+    field.value=button.dataset.expiryDays;updateSummary();
+  });
   $('tier-form').addEventListener('input',updateSummary);
   $('tier-form').addEventListener('change',updateSummary);
   $('new-tier').onclick = $('new-tier-compare').onclick = () => openTier();
