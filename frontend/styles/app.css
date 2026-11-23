@@ -4746,6 +4746,10 @@ html.dark :is(.advanced-y-label, .advanced-x-label):not(.is-active):not(.is-tier
   background-color: var(--border);
 }
 
+.image-generation-command-bar button > :is(svg, i), .image-choice-trigger > :is(svg, i), .advanced-entry-label > svg {
+  pointer-events: none;
+}
+
 #dashboardGrid {
   display: grid;
   flex: 1 1 auto;

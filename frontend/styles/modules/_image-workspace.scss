@@ -1751,3 +1751,5 @@ html.dark :is(.advanced-y-label, .advanced-x-label):not(.is-active):not(.is-tier
 .advanced-entry-row.is-tier-locked { padding: 8px 10px; gap: 8px; border-radius: 8px; }
 
 .web-search-row.is-tier-locked .toggle-switch input:disabled + .toggle-slider { background-color: var(--border); }
+
+.image-generation-command-bar button > :is(svg, i), .image-choice-trigger > :is(svg, i), .advanced-entry-label > svg { pointer-events: none; }
