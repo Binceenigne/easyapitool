@@ -1,7 +1,9 @@
 import asyncio
 import json
+import ssl
 import threading
 import unittest
+from unittest.mock import patch
 
 import httpx2
 from agents import FunctionTool
@@ -70,7 +72,7 @@ class AgentsRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("upstream refused",failure["cause"]);self.assertNotIn("sk-test",json.dumps(failure));self.assertIn("重试已用尽",failure["message"])
 
     async def test_permissions_and_local_budget_limits_do_not_retry(self):
-        for status,code in [(403,"tier_denied"),(429,"rpm_limit_exceeded"),(429,"insufficient_quota"),(400,"invalid_request_error")]:
+        for status,code in [(403,"tier_denied"),(429,"rpm_limit_exceeded"),(429,"insufficient_quota"),(400,"invalid_request_error"),(502,"tls_certificate_invalid")]:
             with self.subTest(status=status,code=code):
                 calls=[]
                 def handler(request):
@@ -172,6 +174,53 @@ class AgentsRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 if reject:self.assertEqual(events[-1]["error"]["code"],"tier_denied")
                 else:self.assertEqual(events[-1]["text"],"final result")
 
+    async def test_real_sdk_connection_failure_preserves_specific_sanitized_root_cause(self):
+        calls=[]
+        def handler(request):
+            calls.append(request)
+            try:
+                raise ConnectionRefusedError(10061,"target refused sk-test-super-secret-123456789 via socks5h://proxy-user:proxy-password@proxy.test:8001")
+            except ConnectionRefusedError as cause:
+                raise httpx2.ConnectError("All connection attempts failed",request=request) from cause
+        with patch("mirra_agents.runtime.retry_delay",return_value=0):
+            events=await self.consume(handler)
+        details=events[-1]["error"]
+        self.assertEqual(len(calls),3);self.assertEqual(details["attempts"],3)
+        self.assertIn("10061",details["cause"]);self.assertIn("target refused",details["cause"])
+        self.assertIn("All connection attempts failed",details["cause"])
+        self.assertNotIn("sk-test",json.dumps(details));self.assertNotIn("proxy-user",json.dumps(details))
+        self.assertNotIn("proxy-password",json.dumps(details))
+        self.assertEqual(details["cause"],details["lastCause"])
+
+    async def test_real_sdk_read_timeout_preserves_low_level_reason(self):
+        calls=[]
+        def handler(request):
+            calls.append(request)
+            try:
+                raise TimeoutError("upstream read timed out after 12 seconds")
+            except TimeoutError as cause:
+                raise httpx2.ReadTimeout("response headers were not received",request=request) from cause
+        with patch("mirra_agents.runtime.retry_delay",return_value=0):
+            events=await self.consume(handler)
+        details=events[-1]["error"]
+        self.assertEqual(len(calls),3);self.assertIn("12 seconds",details["cause"])
+        self.assertIn("response headers were not received",details["cause"])
+
+    async def test_real_sdk_certificate_verification_failure_stops_after_one_request(self):
+        calls=[]
+        def handler(request):
+            calls.append(request)
+            try:
+                raise ssl.SSLCertVerificationError(1,"certificate verify failed: unable to get local issuer certificate")
+            except ssl.SSLCertVerificationError as cause:
+                raise httpx2.ConnectError("TLS handshake failed",request=request) from cause
+        events=await self.consume(handler)
+        details=events[-1]["error"]
+        self.assertEqual(len(calls),1);self.assertEqual(details["code"],"tls_certificate_invalid")
+        self.assertFalse(details["retryable"]);self.assertEqual(details["attempts"],1)
+        self.assertIn("unable to get local issuer certificate",details["cause"])
+        self.assertFalse(any(event["type"]=="retry" for event in events))
+
 
 class RetryBoundaryTests(unittest.TestCase):
     def test_an_exhausted_sdk_budget_is_not_multiplied_by_outer_retry(self):
@@ -180,6 +229,36 @@ class RetryBoundaryTests(unittest.TestCase):
         def operation(attempt):calls.append(attempt);raise AgentRunFailure(details)
         with self.assertRaises(AgentRunFailure) as caught:retry_sync(operation,stage="agent")
         self.assertEqual(calls,[1]);self.assertEqual(caught.exception.details,details)
+
+    def test_exception_chains_are_bounded_and_cycles_do_not_loop(self):
+        errors=[RuntimeError(f"layer-{index}") for index in range(12)]
+        for outer,inner in zip(errors,errors[1:]):outer.__cause__=inner
+        details=failure_details(errors[0],"agent",1,3)
+        self.assertIn("layer-7",details["cause"]);self.assertNotIn("layer-8",details["cause"])
+        errors[2].__cause__=errors[0]
+        details=failure_details(errors[0],"agent",1,3)
+        self.assertEqual(details["cause"].count("layer-0"),1)
+        self.assertIn("layer-2",details["cause"])
+
+    def test_implicit_exception_context_is_preserved_and_provider_message_stays_primary(self):
+        try:
+            try:raise OSError("socket reset by peer")
+            except OSError:raise RuntimeError("transport failed")
+        except RuntimeError as error:
+            details=failure_details(error,"agent",1,3)
+        self.assertIn("socket reset by peer",details["cause"])
+        provider=ProviderResponseError("rate_limit_exceeded","precise provider rejection",status=429)
+        provider.__cause__=RuntimeError("HTTP wrapper")
+        self.assertEqual(failure_details(provider,"agent",1,3)["cause"],"precise provider rejection")
+
+    def test_proxy_url_authentication_is_redacted_for_every_supported_scheme(self):
+        for scheme in ("http","https","socks5","socks5h"):
+            with self.subTest(scheme=scheme):
+                error=RuntimeError(f"Cannot connect through {scheme}://proxy-user:proxy-password@proxy.test:8001; custom-secret")
+                details=failure_details(error,"agent",1,3,("custom-secret",))
+                self.assertIn(f"{scheme}://[REDACTED]@proxy.test:8001",details["cause"])
+                for secret in ("proxy-user","proxy-password","custom-secret"):
+                    self.assertNotIn(secret,json.dumps(details))
 
 
 if __name__=="__main__":unittest.main()

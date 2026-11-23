@@ -6,6 +6,7 @@ import errno
 import os
 import random
 import re
+import ssl
 import time
 import uuid
 from datetime import datetime, timezone
@@ -36,7 +37,7 @@ def safe_text(value: Any, secrets: tuple[str, ...] = ()) -> str:
         text = text.replace(secret, "[REDACTED]")
     text = re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", "[REDACTED]", text)
     text = re.sub(r"(?i)(Bearer\s+)[^\s\"'<>]+", r"\1[REDACTED]", text)
-    text = re.sub(r"(https?://)[^\s/@:]+:[^\s/@]+@", r"\1[REDACTED]@", text)
+    text = re.sub(r"(?i)([a-z][a-z0-9+.-]*://)[^\s/]+@", r"\1[REDACTED]@", text)
     return text[:1600]
 
 
@@ -54,6 +55,32 @@ def _error_body(error: BaseException) -> dict[str, Any]:
         nested = body.get("error")
         return nested if isinstance(nested, dict) else body
     return {}
+
+
+def _exception_chain(error: BaseException) -> tuple[BaseException, ...]:
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and len(chain) < 8 and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        cause = current.__cause__
+        if cause is None and not current.__suppress_context__:
+            cause = current.__context__
+        current = cause if isinstance(cause, BaseException) else None
+    return tuple(chain)
+
+
+def _failure_cause(error: BaseException) -> str:
+    body_message = _error_body(error).get("message")
+    if body_message:
+        return str(body_message)
+    messages: list[str] = []
+    for current in _exception_chain(error):
+        message = str(current).strip()
+        if message and message not in messages:
+            messages.append(message)
+    return " → ".join(messages) or type(error).__name__
 
 
 def classify_error(error: BaseException) -> tuple[bool, int | None, str, str | None, float | None]:
@@ -79,6 +106,10 @@ def classify_error(error: BaseException) -> tuple[bool, int | None, str, str | N
                 retry_after = max(0.0, (email.utils.parsedate_to_datetime(str(value)) - datetime.now(timezone.utc)).total_seconds())
             except (ValueError, TypeError, OverflowError):
                 pass
+    if code == "tls_certificate_invalid" or any(isinstance(current, ssl.SSLCertVerificationError)
+           or any(marker in str(current).lower() for marker in ("certificate verify failed", "certificate verification failed", "certificate_verify_failed"))
+           for current in _exception_chain(error)):
+        return False, status, "tls_certificate_invalid", request_id, retry_after
     forbidden = ("rpm_limit_exceeded", "insufficient_quota", "quota_exceeded", "quota exceeded", "permission", "content_filter", "content policy", "safety", "max_output_tokens", "max turns", "max_turns", "invalid_api_key", "额度", "档位", "权限", "无效参数", "不支持", "取消", "生成已停止", "cancel")
     local_io_error = isinstance(error, OSError) and getattr(error, "errno", None) in {errno.EACCES, errno.EPERM, errno.ENOSPC, errno.ENOENT, errno.EROFS, errno.ENAMETOOLONG}
     if local_io_error or isinstance(error, (AgentCancelled, asyncio.CancelledError)) or code in {"invalid_request_error", "invalid_prompt", "unsupported_parameter", "model_not_found"} or any(word in combined for word in forbidden) or status in {400, 401, 402, 403, 404, 405, 413, 422}:
@@ -92,7 +123,7 @@ def failure_details(error: BaseException, stage: str, attempts: int, maximum: in
     if isinstance(error, AgentRunFailure):
         return dict(error.details)
     retryable, status, code, request_id, _ = classify_error(error)
-    cause = safe_text(_error_body(error).get("message") or error, secrets)
+    cause = safe_text(_failure_cause(error), secrets)
     identifier = safe_text(request_id or uuid.uuid4().hex[:16], secrets)
     label = "Agent" if stage == "agent" else "图片生成"
     exhausted = retryable and attempts >= maximum
