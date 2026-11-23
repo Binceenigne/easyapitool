@@ -348,6 +348,7 @@
             const button = document.getElementById('imageGenerationControlsButton');
             const form = document.getElementById('imageEditForm');
             if (!panel || panel.hidden || !button || !form) return;
+            closeImagePicker(true);
             const { layer, scale, rect: layerRect } = pageZoomMetrics();
             if (!layer || !layerRect) return;
             const buttonRect = button.getBoundingClientRect();
@@ -360,8 +361,8 @@
         function closeImageGenerationControls() {
             const panel = document.getElementById('imageGenerationControlPanel');
             const button = document.getElementById('imageGenerationControlsButton');
-            if (!panel || panel.hidden) return;
-            closeImageModelPicker();
+            if (!panel || button?.getAttribute('aria-expanded') !== 'true') return;
+            closeImagePicker();
             clearTimeout(panel.__hideTimer);
             panel.classList.remove('is-open');
             button.setAttribute('aria-expanded', 'false');
@@ -373,7 +374,7 @@
         function toggleImageGenerationControls() {
             const panel = document.getElementById('imageGenerationControlPanel');
             const button = document.getElementById('imageGenerationControlsButton');
-            if (!panel.hidden) return closeImageGenerationControls();
+            if (button.getAttribute('aria-expanded') === 'true') return closeImageGenerationControls();
             closeImageReasoningMenu();
             clearTimeout(panel.__hideTimer);
             panel.hidden = false;
@@ -381,7 +382,9 @@
             button.setAttribute('aria-expanded', 'true');
             const icon = button.querySelector('[data-lucide="chevron-up"], [data-lucide="chevron-down"], svg:last-child');
             if (icon) setLucideIcon(icon, 'chevron-down');
-            requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.add('is-open')));
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                if (button.getAttribute('aria-expanded') === 'true') panel.classList.add('is-open');
+            }));
         }
 
         const IMAGE_MODEL_LABELS = {
@@ -412,13 +415,35 @@
                 ?? { complexity: enabledByDefault, animation: enabledByDefault };
         }
 
-        function closeImageModelPicker(restoreFocus = false) {
-            const menu = document.getElementById('imageModelMenu');
-            if (menu.hidden) return;
+        let activeImagePicker = null;
+
+        function closeImagePicker(restoreFocus = false) {
+            if (!activeImagePicker) return;
+            const picker = activeImagePicker;
+            activeImagePicker = null;
+            const [button, menu] = picker.children;
+            picker.classList.remove('is-picker-open');
             menu.hidden = true;
-            const button = document.getElementById('imageModelButton');
             button.setAttribute('aria-expanded', 'false');
             if (restoreFocus) button.focus({ preventScroll: true });
+        }
+
+        function positionImagePicker(button, menu) {
+            const panel = document.getElementById('imageGenerationControlPanel').getBoundingClientRect();
+            const anchor = button.getBoundingClientRect();
+            const scale = anchor.height / button.offsetHeight || 1;
+            const above = (anchor.top - Math.max(panel.top, 0)) / scale - 10;
+            const below = (Math.min(panel.bottom, innerHeight) - anchor.bottom) / scale - 10;
+            const opensUp = below < Math.min(menu.scrollHeight + 2, 220) && above > below;
+            menu.classList.toggle('opens-up', opensUp);
+            menu.style.maxHeight = Math.max(0, Math.min(220, opensUp ? above : below)) + 'px';
+
+            menu.style.maxWidth = '';
+            const left = (anchor.right - panel.left) / scale - 5;
+            const right = (panel.right - anchor.left) / scale - 5;
+            const alignEnd = menu.offsetWidth > right && left > right;
+            menu.classList.toggle('align-end', alignEnd);
+            menu.style.maxWidth = Math.min(220, alignEnd ? left : right) + 'px';
         }
 
         const IMAGE_MODEL_TIPS = {
@@ -472,84 +497,23 @@
             });
             panel.addEventListener('focusout', hide);
             panel.addEventListener('scroll', hide, true);
+            panel.addEventListener('scroll', () => closeImagePicker(true));
             panel.addEventListener('click', hide);
             new MutationObserver(() => { if (panel.hidden || !panel.classList.contains('is-open')) hide(); })
                 .observe(panel, { attributes: true, attributeFilter: ['hidden', 'class'] });
         }
 
-        function initializeImageModelPicker() {
-            initializeImageOptionTooltips();
-            const picker = document.getElementById('imageModelPicker');
-            const button = document.getElementById('imageModelButton');
-            const menu = document.getElementById('imageModelMenu');
-            function open() {
-                if (!menu.firstElementChild) return;
-                menu.hidden = false;
-                button.setAttribute('aria-expanded', 'true');
-                (menu.querySelector('[aria-selected="true"]') || menu.firstElementChild).focus();
-            }
-            button.addEventListener('click', () => {
-                if (menu.hidden) open();
-                else closeImageModelPicker(true);
-            });
-            menu.addEventListener('click', event => {
-                const option = event.target.closest('[data-image-model]');
-                if (!option) return;
-                setImageModel(option.dataset.imageModel);
-                closeImageModelPicker(true);
-            });
-            picker.addEventListener('keydown', event => {
-                const { key } = event;
-                if (menu.hidden) {
-                    if (key === 'ArrowDown' || key === 'ArrowUp') {
-                        event.preventDefault();
-                        open();
-                    }
-                    return;
-                }
-                if (key === 'Escape') {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    closeImageModelPicker(true);
-                    return;
-                }
-                if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(key)) return;
-                event.preventDefault();
-                const options = [...menu.children];
-                const index = options.indexOf(document.activeElement);
-                const next = key === 'Home' ? 0 : key === 'End' ? options.length - 1
-                    : Math.max(0, Math.min(options.length - 1, index + (key === 'ArrowDown' ? 1 : -1)));
-                options[next]?.focus();
-            });
-            picker.addEventListener('focusout', event => {
-                if (!picker.contains(event.relatedTarget)) closeImageModelPicker();
-            });
+        function availableImageModels(profile) {
+            return profile?.imageModels?.length ? profile.imageModels : Object.keys(IMAGE_MODEL_LABELS);
         }
 
         function syncManagedImageControls() {
             const state = window.imageEditState;
             const profile = activeImageProfile();
-            const models = profile?.imageModels?.length ? profile.imageModels : Object.keys(IMAGE_MODEL_LABELS);
+            const models = availableImageModels(profile);
             const fallback = profile?.defaultImage || 'gpt-image-2';
-            const inline = models.length <= 3;
-            const picker = document.getElementById('imageModelPicker');
-            const segments = document.getElementById('imageModelChoices');
-            picker.hidden = inline;
-            segments.hidden = !inline;
             const signature = JSON.stringify([fallback, models]);
             if (state.modelSignature !== signature) {
-                const menu = document.getElementById('imageModelMenu');
-                closeImageModelPicker(menu.contains(document.activeElement));
-                menu.replaceChildren(...models.map(model => {
-                    const option = document.createElement('button');
-                    option.type = 'button';
-                    option.tabIndex = -1;
-                    option.setAttribute('role', 'option');
-                    option.dataset.imageModel = model;
-                    option.textContent = IMAGE_MODEL_LABELS[model] || model;
-                    option.dataset.imageTip = IMAGE_MODEL_TIPS[model] || model;
-                    return option;
-                }));
                 state.modelSignature = signature;
                 setImageModel(models.includes(state.preferredImageModel) ? state.preferredImageModel : fallback, false);
             } else {
@@ -559,13 +523,117 @@
             if (typeof syncImageReasoningLabels === 'function') syncImageReasoningLabels();
         }
 
+        function buildImagePicker(container, items, onSelect, disabled) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'image-choice-trigger';
+            button.disabled = disabled;
+            button.setAttribute('aria-haspopup', 'listbox');
+            button.setAttribute('aria-expanded', 'false');
+
+            const label = document.createElement('span');
+            label.id = container.id + 'Value';
+            button.append(label);
+            button.insertAdjacentHTML('beforeend', iconMarkup('chevron-down'));
+
+            const menu = document.createElement('div');
+            menu.id = container.id + 'Menu';
+            menu.className = 'image-choice-menu';
+            menu.setAttribute('role', 'listbox');
+            menu.hidden = true;
+            button.setAttribute('aria-controls', menu.id);
+            const labelledBy = container.getAttribute('aria-labelledby');
+            if (labelledBy) {
+                button.setAttribute('aria-labelledby', labelledBy + ' ' + label.id);
+                menu.setAttribute('aria-labelledby', labelledBy);
+            } else {
+                const name = container.getAttribute('aria-label') || '选项';
+                menu.setAttribute('aria-label', name);
+            }
+
+            const options = items.map(([value, text, tip]) => {
+                const option = document.createElement('button');
+                option.type = 'button';
+                option.tabIndex = -1;
+                option.setAttribute('role', 'option');
+                option.dataset.value = value;
+                option.textContent = text;
+                if (tip) option.dataset.imageTip = tip;
+                return option;
+            });
+            menu.append(...options);
+            container.append(button, menu);
+            renderLucideIcons();
+
+            function focusOption(option) {
+                if (option.offsetTop < menu.scrollTop) {
+                    menu.scrollTop = option.offsetTop;
+                } else if (option.offsetTop + option.offsetHeight > menu.scrollTop + menu.clientHeight) {
+                    menu.scrollTop = option.offsetTop + option.offsetHeight - menu.clientHeight;
+                }
+                option.focus({ preventScroll: true });
+            }
+
+            function open() {
+                closeImagePicker();
+                activeImagePicker = container;
+                container.classList.add('is-picker-open');
+                menu.hidden = false;
+                positionImagePicker(button, menu);
+                button.setAttribute('aria-expanded', 'true');
+                focusOption(menu.querySelector('[aria-selected="true"]') || options[0]);
+            }
+
+            button.addEventListener('click', () => {
+                if (menu.hidden) open();
+                else closeImagePicker(true);
+            });
+            menu.addEventListener('click', event => {
+                const option = event.target.closest('[role="option"]');
+                if (!option) return;
+                closeImagePicker(true);
+                onSelect(option.dataset.value);
+            });
+            button.addEventListener('keydown', event => {
+                if (menu.hidden && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+                    event.preventDefault();
+                    open();
+                }
+            });
+            menu.addEventListener('keydown', event => {
+                const { key } = event;
+                if (key === 'Escape') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeImagePicker(true);
+                    return;
+                }
+                if (key === 'Tab') {
+                    closeImagePicker(true);
+                    return;
+                }
+                if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(key)) return;
+                event.preventDefault();
+                const index = options.indexOf(document.activeElement);
+                const next = key === 'Home' ? 0 : key === 'End' ? options.length - 1
+                    : Math.max(0, Math.min(options.length - 1, index + (key === 'ArrowDown' ? 1 : -1)));
+                focusOption(options[next]);
+            });
+            container.onfocusout = event => {
+                if (activeImagePicker === container && !container.contains(event.relatedTarget)) closeImagePicker();
+            };
+        }
+
         function renderImageChoices(id, items, value, onSelect, { segmented = false, disabled = false } = {}) {
             const container = document.getElementById(id);
             const inline = segmented || items.length <= 3;
             const signature = JSON.stringify([items, inline, disabled]);
             if (container.dataset.signature !== signature) {
+                const hadFocus = container.contains(document.activeElement);
+                if (activeImagePicker === container) closeImagePicker();
                 container.dataset.signature = signature;
                 container.classList.toggle('image-control-segmented', inline);
+                container.classList.toggle('image-choice-picker', !inline);
                 container.replaceChildren();
                 if (inline) {
                     container.setAttribute('role', 'group');
@@ -581,20 +649,20 @@
                     }
                 } else {
                     container.removeAttribute('role');
-                    const select = document.createElement('select');
-                    const labelledBy = container.getAttribute('aria-labelledby');
-                    if (labelledBy) select.setAttribute('aria-labelledby', labelledBy);
-                    else select.setAttribute('aria-label', container.getAttribute('aria-label') || '选项');
-                    select.disabled = disabled;
-                    for (const [item, label] of items) select.add(new Option(label, item));
-                    select.addEventListener('change', () => onSelect(select.value));
-                    container.append(select);
+                    buildImagePicker(container, items, onSelect, disabled);
                 }
+                if (hadFocus && !disabled) container.firstElementChild.focus({ preventScroll: true });
             }
             if (!inline) {
-                const select = container.firstElementChild;
-                select.value = value;
-                select.dataset.imageTip = items.find(([item]) => item === value)?.[2] || '';
+                const [button, menu] = container.children;
+                const [, label, tip] = items.find(([item]) => item === value) || items[0];
+                button.firstElementChild.textContent = label;
+                if (tip) button.dataset.imageTip = tip;
+                else delete button.dataset.imageTip;
+                if (menu.hasAttribute('aria-label')) button.setAttribute('aria-label', menu.getAttribute('aria-label') + ' ' + label);
+                for (const option of menu.children) {
+                    option.setAttribute('aria-selected', String(option.dataset.value === value));
+                }
                 return;
             }
             for (const button of container.children) {
@@ -736,22 +804,16 @@
 
         function setImageModel(model, persist = true) {
             const state = window.imageEditState;
-            const menu = document.getElementById('imageModelMenu');
-            const fallback = activeImageProfile()?.defaultImage || 'gpt-image-2';
-            const options = [...menu.children];
-            if (!options.some(option => option.dataset.imageModel === model)) model = fallback;
+            const profile = activeImageProfile();
+            const models = availableImageModels(profile);
+            const fallback = profile?.defaultImage || 'gpt-image-2';
+            if (!models.includes(model)) model = models.includes(fallback) ? fallback : models[0];
             state.imageModel = model;
             if (persist) state.preferredImageModel = model;
-            for (const option of options) {
-                option.setAttribute('aria-selected', String(option.dataset.imageModel === model));
-            }
             const label = IMAGE_MODEL_LABELS[model];
-            if (options.length <= 3) {
-                renderImageChoices('imageModelChoices',
-                    options.map(option => [option.dataset.imageModel, option.textContent, option.dataset.imageTip]), model, setImageModel);
-            }
-            document.getElementById('imageModelValue').textContent = label || model;
-            document.getElementById('imageModelButton').dataset.imageTip = IMAGE_MODEL_TIPS[model] || model;
+            renderImageChoices('imageModelChoices', models.map(item => [
+                item, IMAGE_MODEL_LABELS[item] || item, IMAGE_MODEL_TIPS[item] || item
+            ]), model, setImageModel);
             if (!state.editSession) {
                 document.getElementById('imageEditHeading').textContent = label ? 'GPT Image ' + label + ' 生图' : model + ' 生图';
             }

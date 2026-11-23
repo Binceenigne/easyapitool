@@ -1549,6 +1549,7 @@ html.dark #keySwitcherMenu {
 }
 
 #imageGenerationControlPanel {
+  --image-choice-height: 40px;
   position: fixed;
   z-index: 54;
   right: auto;
@@ -1556,8 +1557,8 @@ html.dark #keySwitcherMenu {
   left: var(--image-popover-left, 12px);
   display: grid;
   width: var(--image-popover-width, 100%);
-  padding: 12px;
-  gap: 9px;
+  padding: 16px;
+  gap: 12px;
   max-height: calc(100vh - var(--image-popover-bottom, 58px) - 12px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1592,6 +1593,10 @@ html.dark #keySwitcherMenu {
   display: none;
 }
 
+.image-control-section > span, .image-quality-heading {
+  min-height: 16px;
+}
+
 .image-control-section > span {
   color: var(--muted);
   font-size: 10px;
@@ -1604,23 +1609,17 @@ html.dark #keySwitcherMenu {
   gap: 8px;
 }
 
-#imageGenerationControlPanel select,
 #imageGenerationControlPanel input[type=number],
-#imageModelButton {
-  box-sizing: border-box;
+.image-choice-trigger {
   width: 100%;
-  min-height: 32px;
+  min-height: var(--image-choice-height);
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 0;
-  padding: 4px 8px;
+  border-radius: 7px;
+  padding: 4px 9px;
   background: var(--bg);
   color: var(--text);
   font: inherit;
-}
-
-#imageGenerationControlPanel select:disabled {
-  opacity: 0.6;
 }
 
 #imageGenerationControlPanel [hidden] {
@@ -1661,13 +1660,20 @@ html.dark #keySwitcherMenu {
   transform: scale(1);
 }
 
-.image-gif-frames > div {
-  width: 62px;
+.image-gif-frames > .image-choice {
+  width: 58px;
+  margin-inline-start: 4px;
 }
 
-.image-gif-frames > div > select {
-  padding: 3px 1px 3px 4px !important;
-  border-left: 0 !important;
+.image-gif-frames .image-choice-trigger {
+  padding-inline: 5px;
+  gap: 3px;
+}
+
+.image-gif-frames:has(.is-picker-open) {
+  position: relative;
+  z-index: 3;
+  overflow: visible;
 }
 
 #imageOptionTooltip {
@@ -1683,11 +1689,6 @@ html.dark #keySwitcherMenu {
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .image-gif-frames {
-    transition: none;
-  }
-}
 .image-quality-heading {
   display: flex;
   align-items: center;
@@ -1702,99 +1703,167 @@ html.dark #keySwitcherMenu {
 }
 
 #imageQualityAuto {
-  padding: 0 3px;
+  padding: 1px 5px;
+  border-radius: 5px;
   background: transparent;
   color: var(--muted);
   font-size: 10px;
 }
 
 #imageQualityAuto[aria-pressed=true] {
-  color: var(--brand);
+  background: var(--image-blue-soft);
+  color: var(--image-blue);
   font-weight: 700;
 }
 
-.image-model-picker {
+.image-choice-picker {
   position: relative;
-  min-width: 0;
 }
 
-#imageModelButton {
+.image-choice-picker.is-picker-open {
+  z-index: 2;
+}
+
+.image-choice-trigger {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
   text-align: left;
+  transition: border-color 160ms ease, background-color 160ms ease;
 }
 
-#imageModelButton[aria-expanded=true] {
-  border-color: var(--brand);
+.image-choice-trigger:hover, .image-choice-trigger[aria-expanded=true] {
+  border-color: color-mix(in srgb, var(--brand) 66%, var(--border));
 }
 
-#imageModelValue {
+.image-choice-trigger > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#imageModelButton svg {
-  width: 13px;
-  height: 13px;
+.image-choice-trigger > :is(svg, i) {
+  width: 12px;
+  height: 12px;
   flex: none;
+  color: var(--muted);
+  transition: transform 180ms ease;
 }
 
-.image-model-menu {
+.image-choice-trigger > i {
+  display: grid;
+  place-items: center;
+}
+
+.image-choice-trigger > i::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border: solid currentColor;
+  border-width: 0 1px 1px 0;
+  transform: rotate(45deg);
+}
+
+.image-choice-trigger[aria-expanded=true] > :is(svg, i) {
+  transform: rotate(180deg);
+}
+
+.image-choice-menu {
   position: absolute;
-  z-index: 2;
-  inset: calc(100% + 2px) 0 auto;
-  max-height: 176px;
+  top: calc(100% + 5px);
+  left: 0;
+  width: max-content;
+  min-width: max(100%, 84px);
+  max-width: 220px;
+  max-height: 220px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  padding: 4px;
   border: 1px solid var(--border);
+  border-radius: 9px;
   background: var(--bg);
-  box-shadow: 0 4px 12px rgba(2, 6, 23, 0.15);
+  box-shadow: 0 6px 22px rgba(2, 6, 23, 0.17);
+  transform-origin: top center;
+  animation: image-choice-menu-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.image-model-menu button {
+.image-choice-menu.opens-up {
+  --image-choice-enter-y: 5px;
+  top: auto;
+  bottom: calc(100% + 5px);
+  transform-origin: bottom center;
+}
+
+.image-choice-menu.align-end {
+  left: auto;
+  right: 0;
+}
+
+@keyframes image-choice-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--image-choice-enter-y, -5px)) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.image-choice-menu button {
   display: block;
   width: 100%;
-  min-height: 30px;
-  padding: 5px 8px;
+  min-height: 34px;
+  padding: 5px 9px;
+  border-radius: 5px;
   overflow: hidden;
   color: var(--text);
   background: transparent;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: background-color 140ms ease, color 140ms ease;
 }
 
-.image-model-menu button + button {
-  border-top: 1px solid var(--border);
+.image-choice-menu button + button {
+  margin-top: 2px;
 }
 
-.image-model-menu button:hover, .image-model-menu button:focus-visible {
+.image-choice-menu button:hover, .image-choice-menu button:focus-visible {
   background: var(--surface-strong);
-  outline-offset: -2px;
 }
 
-.image-model-menu button[aria-selected=true] {
-  background: var(--brand-soft);
-  color: var(--brand);
+.image-choice-menu button[aria-selected=true] {
+  background: var(--image-blue-soft);
+  color: var(--image-blue);
   font-weight: 700;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  #imageGenerationControlPanel, .image-gif-frames, .image-choice-trigger > :is(svg, i) {
+    transition: none;
+  }
+  .image-choice-menu {
+    animation: none;
+  }
+}
 .image-control-segmented {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
-  min-height: 32px;
-  border: 1px solid var(--border);
-  background: var(--bg);
+  min-height: var(--image-choice-height);
+  padding: 3px;
+  gap: 2px;
+  border-radius: 7px;
+  background: var(--surface-strong);
 }
 
 .image-control-segmented button {
   min-width: 0;
-  min-height: 30px;
+  min-height: calc(var(--image-choice-height) - 6px);
   padding: 4px 1px;
+  border-radius: 5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1802,10 +1871,6 @@ html.dark #keySwitcherMenu {
   color: var(--muted);
   font-size: 10px;
   transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
-}
-
-.image-control-segmented button + button {
-  border-left: 1px solid var(--border);
 }
 
 .image-control-segmented button:hover:not(:disabled) {
@@ -1819,9 +1884,10 @@ html.dark #keySwitcherMenu {
 }
 
 .image-control-segmented button.is-active {
-  background: var(--brand-soft);
+  background: var(--bg);
   color: var(--text);
   font-weight: 700;
+  box-shadow: 0 1px 5px rgba(2, 6, 23, 0.14);
 }
 
 .image-aspect-options {
@@ -1829,6 +1895,7 @@ html.dark #keySwitcherMenu {
   grid-template-columns: repeat(9, minmax(0, 1fr));
   padding: 3px;
   gap: 2px;
+  border-radius: 7px;
   background: var(--surface-strong);
 }
 
@@ -1836,9 +1903,10 @@ html.dark #keySwitcherMenu {
   display: grid;
   place-items: center;
   min-width: 0;
-  min-height: 42px;
+  min-height: 62px;
   padding: 4px 2px;
   gap: 3px;
+  border-radius: 5px;
   background: transparent;
   color: var(--muted);
   transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
@@ -4189,6 +4257,7 @@ html[data-platform=android] .image-result-modal-canvas img {
 
 @media (max-width: 600px) {
   #imageGenerationControlPanel {
+    --image-choice-height: 36px;
     padding: 12px;
     gap: 10px;
   }
