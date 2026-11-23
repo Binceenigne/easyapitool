@@ -409,6 +409,9 @@ func (g *gateway) checkReasoningTier(k accessKey, model, effort, mode string, we
 		return denied("未指定思维模型的调用")
 	}
 	effort = effectiveReasoningEffort(model, effort)
+	if capability, known := documentedReasoning(model); known && effort != "" && !slices.Contains(capability.Efforts, effort) {
+		return errors.New("所选思维模型不支持该思考深度")
+	}
 	if mode == "svg" && p.SVG.Enabled && model == p.SVG.Model && effort == p.SVG.Effort {
 		return nil
 	}
@@ -472,6 +475,11 @@ func (a *admin) saveTier(w http.ResponseWriter, r *http.Request) {
 	if input.Tier.ID == "" {
 		input.Tier.ID = "tier-" + randomID(12)
 	}
+	if err := validateTier(input.Tier); err != nil {
+		tierMutationError(w, err)
+		return
+	}
+	input.Tier = normalizeTierChoices(&profile, input.Tier)
 	index := slices.IndexFunc(profile.Tiers, func(t featureTier) bool { return t.ID == input.Tier.ID })
 	profile.Tiers = slices.Clone(profile.Tiers)
 	if index < 0 {

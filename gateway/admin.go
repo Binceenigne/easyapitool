@@ -63,6 +63,7 @@ func (a *admin) routes(m *mobile) http.Handler {
 	mux.HandleFunc("POST /admin/keys/{id}/reveal", a.protected(a.revealKey))
 	mux.HandleFunc("POST /admin/keys/{id}/delete", a.protected(a.deleteKey))
 	mux.HandleFunc("POST /admin/tiers", a.protected(a.saveTier))
+	mux.HandleFunc("POST /admin/tier-options", a.protected(a.tierOptions))
 	mux.HandleFunc("POST /admin/tiers/order", a.protected(a.orderTiers))
 	mux.HandleFunc("GET /admin/tiers/{id}/preview", a.protected(a.previewTier))
 	mux.HandleFunc("POST /admin/landing-tiers", a.protected(a.saveLandingTiers))
@@ -184,10 +185,12 @@ func (a *admin) state(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusServiceUnavailable, "无法读取落地页档位设置")
 		return
 	}
+	models := a.gateway.appModels()
 	writeJSON(w, http.StatusOK, object{
 		"upstreams": upstreams, "keys": keys, "usage": usage, "proxy": a.gateway.egress.view(),
-		"appModels":    a.gateway.appModels(),
-		"landingTiers": landing.adminView(),
+		"appModels":      models,
+		"effectiveTiers": effectiveTiers(models),
+		"landingTiers":   landing.adminView(),
 		"gateway": object{"publicBaseUrl": a.gateway.cfg.publicBase, "allowedHosts": hosts,
 			"reserveMicroUSD": a.gateway.cfg.reserveMicroUSD, "pricingReady": a.gateway.cfg.reserveMicroUSD > 0 && len(a.gateway.cfg.pricing) > 0},
 	})

@@ -162,7 +162,8 @@ func (g *gateway) updateLandingTiers(ctx context.Context, input landingTierUpdat
 		next.Tiers = make([]featureTier, 0, len(selected))
 		for _, tier := range models.Tiers {
 			if seen[tier.ID] {
-				next.Tiers = append(next.Tiers, tier)
+				_, effective := tierOptions(models, &tier)
+				next.Tiers = append(next.Tiers, effective)
 			}
 		}
 		next.TierIDs = make([]string, 0, len(selected))

@@ -64,13 +64,13 @@ async function runButton(button, handler) {
   finally { button.disabled = false; }
 }
 
-async function api(path, body) {
+async function api(path, body, {signal} = {}) {
   const requestLoadID=loadID;
-  const options = {cache:'no-store', credentials:'same-origin'};
+  const options = {cache:'no-store', credentials:'same-origin',signal};
   if (body !== undefined) Object.assign(options, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
   let response;
   try { response = await fetch('/admin/' + path, options); }
-  catch { throw new Error('无法连接网关，请检查 SSH 隧道后重试'); }
+  catch (error) { if(error.name==='AbortError')throw error;throw new Error('无法连接网关，请检查 SSH 隧道后重试'); }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401 && path !== 'login' && requestLoadID===loadID) showLogin();

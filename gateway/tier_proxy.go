@@ -322,6 +322,12 @@ func (g *gateway) checkNativeImage(k accessKey, data object, refs int, edit bool
 	if n < 1 || !validImageSize(size) {
 		return errors.New("图片数量或尺寸无效")
 	}
+	if err := validateImageModelOptions(o); err != nil {
+		return err
+	}
+	if background == "transparent" && !oneOf(format, "png", "webp") {
+		return errors.New("透明背景需要 PNG 或 WebP")
+	}
 	if format == "svg" && !profile.SVG.Enabled {
 		return denied("SVG")
 	}

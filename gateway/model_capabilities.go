@@ -1,9 +1,31 @@
 package main
 
 import (
+	"errors"
 	"regexp"
 	"slices"
 )
+
+// Both the native API proxy and the application adapter enforce documented
+// model constraints. A broad tier allowlist cannot add an upstream capability.
+// Auto remains valid: the upstream chooses within that model's own range.
+func validateImageModelOptions(o imageOptions) error {
+	if features, known := documentedImageFeatures(o.model); known {
+		if features.SizeMode == "fixed" && !oneOf(o.size, "auto", "1024x1024", "1536x1024", "1024x1536") {
+			return errors.New("所选模型仅支持标准尺寸")
+		}
+		if o.quality != "auto" && !slices.Contains(features.Quality, o.quality) {
+			return errors.New("所选模型不支持该质量档位")
+		}
+		if o.complexity != "" && !features.Complexity {
+			return errors.New("所选模型不支持复杂度")
+		}
+		if (o.format == "gif" && !features.Animation) || (o.format == "svg" && !features.SVG) {
+			return errors.New("所选模型不支持该输出格式")
+		}
+	}
+	return nil
+}
 
 type reasoningCapability struct {
 	Efforts []string `json:"efforts"`

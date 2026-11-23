@@ -1,14 +1,18 @@
 "use strict";
 (() => {
   let draftIds = null, snapshotSignature = '', optionsSignature = '', pending = false, pendingVisibility = null, previewMode = 'draft';
-  const plans = () => state?.appModels?.tiers || [];
+  const plans = () => (state?.appModels?.tiers || []).map(tier=>window.effectiveTierFor(tier));
   const publication = () => ({enabled:false,tierIds:[],revision:0,publishedAt:null,sourceRevision:0,tiers:[],...state?.landingTiers});
   const amount = micro => Number(micro) ? usd(Number(micro)/1e6) : '不限';
   const quota = tier => ({expiresInDays:0,totalMicroUSD:0,fiveHourMicroUSD:0,dayMicroUSD:0,weekMicroUSD:0,...tier.defaultQuota});
   const validity = days => Number(days) ? '签发后 '+number(days)+' 天' : '长期有效';
   const hasFormat = (tier, format) => (tier.formats || []).includes('*') || (tier.formats || []).includes(format);
-  const displayResolution = tier => ({1536:'标清',2560:'高清',3840:'超清'}[tier.maxResolution] || tier.maxResolution+' px');
+  const displayResolution = tier => !tier.imageModels?.length?'未开放生图':({1536:'标清',2560:'高清',3840:'超清'}[tier.maxResolution] || tier.maxResolution+' px');
   const sameIds = (left,right) => JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+  const publicTierFields=['id','name','description','imageModels','reasoningModels','reasoningModes','reasoningEfforts','qualities','complexities','formats','advanced','transparency','webSearch','promptPolish','imageEditing','maxResolution','maxImages','maxReferences','maxGifFrames','defaultQuota','rpmLimit'];
+  const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value;
+  const samePublishedContent=(left,right)=>JSON.stringify(stable(left.map(tier=>Object.fromEntries(publicTierFields.map(field=>[field,tier[field]])))))===JSON.stringify(stable(right.map(tier=>Object.fromEntries(publicTierFields.map(field=>[field,tier[field]])))));
+
 
   function renderPreview(current) {
     const snapshot = previewMode === 'snapshot';
@@ -44,8 +48,8 @@
       ['7 天额度',tier=>amount(quota(tier).weekMicroUSD)],
       ['有效期',tier=>validity(quota(tier).expiresInDays)],
       ['RPM（语言 + 图像）',tier=>Number(tier.rpmLimit)>0?number(tier.rpmLimit)+' 次/分钟':'不限'],
-      ['最大分辨率',tier=>displayResolution(tier)+' · '+number(tier.maxResolution)+' px'],
-      ['每次生成张数',tier=>'最多 '+number(tier.maxImages)+' 张'],
+      ['最大分辨率',tier=>tier.imageModels.length?displayResolution(tier)+' · '+number(tier.maxResolution)+' px':'未开放生图'],
+      ['每次生成张数',tier=>tier.imageModels.length?'最多 '+number(tier.maxImages)+' 张':'未开放生图'],
       ['参考图上限',tier=>tier.imageEditing?'最多 '+number(tier.maxReferences)+' 张':'未开放'],
       ['图片质量',tier=>allowed(tier.qualities,{low:'低',medium:'中',high:'高',xhigh:'超高',max:'最高'})],
       ['构图复杂度',tier=>allowed(tier.complexities,{low:'低',medium:'中',high:'高'})],
@@ -107,7 +111,7 @@
     }
     for (const input of $('landing-tier-options').querySelectorAll('input')) input.checked=draftIds.has(input.value);
     const hasSnapshot=!!current.publishedAt;
-    const dirty=!hasSnapshot || Number(current.sourceRevision)!==Number(state.appModels.revision) || !sameIds(draftIds,current.tierIds);
+    const dirty=!hasSnapshot || Number(current.sourceRevision)!==Number(state.appModels.revision) || !sameIds(draftIds,current.tierIds) || !samePublishedContent(catalog.filter(tier=>draftIds.has(tier.id)),current.tiers);
     $('landing-tier-publish-state').replaceChildren(status(!hasSnapshot?'尚未同步':dirty?'有未同步变更':'已同步',!hasSnapshot?'':dirty?'warn':'good'),status(current.enabled?'落地页显示中':'落地页已隐藏',current.enabled?'good':''));
     $('landing-tier-published-at').textContent = current.publishedAt ? '上次同步 '+new Date(current.publishedAt).toLocaleString('zh-CN',{hour12:false}) : '尚未同步到落地页';
     $('landing-tier-visibility-hint').textContent = hasSnapshot && current.tiers.length

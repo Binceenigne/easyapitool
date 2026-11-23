@@ -6,12 +6,12 @@
   <meta name="theme-color" content="#f7f7ff">
   <title>Mirra · 分发网关</title>
   <link rel="icon" href="/mirra.png">
-  <link rel="stylesheet" href="/admin.css?v=workspace-order-1">
-  <script src="/admin.js?v=workspace-order-1" defer></script>
-  <script src="/admin/assets/admin-sortable.js?v=workspace-order-1" defer></script>
-  <script src="/admin-models.js?v=workspace-order-1" defer></script>
-  <script src="/admin/assets/admin-tiers.js?v=workspace-order-1" defer></script>
-  <script src="/admin/assets/admin-tier-publish.js?v=workspace-order-1" defer></script>
+  <link rel="stylesheet" href="/admin.css?v=tier-capabilities-1">
+  <script src="/admin.js?v=tier-capabilities-1" defer></script>
+  <script src="/admin/assets/admin-sortable.js?v=tier-capabilities-1" defer></script>
+  <script src="/admin-models.js?v=tier-capabilities-1" defer></script>
+  <script src="/admin/assets/admin-tiers.js?v=tier-capabilities-1" defer></script>
+  <script src="/admin/assets/admin-tier-publish.js?v=tier-capabilities-1" defer></script>
 </head>
 <body>
   <main id="auth" class="auth">
@@ -296,6 +296,7 @@
           <label>7 天额度（USD）<input type="number" name="defaultWeekUsd" min="0" max="1000000" step=".000001" value="0" required></label>
         </div>
       </section>
+      <div class="tier-capability-status"><p id="tier-options-status" class="notice" role="status">正在读取模型能力…</p><button type="button" id="tier-options-retry" hidden><i data-icon="RefreshCw"></i>重新读取能力</button></div>
       <div id="tier-permissions" class="tier-permission-groups"></div>
       <section class="tier-runtime-rate" aria-labelledby="tier-rpm-title"><h3 id="tier-rpm-title">实时请求限制</h3><label>RPM（语言 + 图像）<input type="number" name="rpmLimit" min="0" max="1000000" step="1" value="0" required aria-describedby="tier-rpm-hint"></label><p id="tier-rpm-hint" class="hint">每把密钥在最近 60 秒内可调用模型的次数，语言与图像模型共享。一次生成可能包含多次思维分析或生图调用，润色与续作中的模型调用也计入；用量、状态和配置查询不计入。0 表示不限，修改后实时生效。</p></section>
       <section class="tier-limits"><h3>生成上限</h3><div class="pair">
