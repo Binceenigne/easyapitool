@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .common import *
 from .network_log import log_network_error, new_network_request_id
+from .transport import open_request, is_mirra_request, connection_was_refused, UnsentConnectionError
 
 
 class EasyClinClient:
@@ -10,11 +11,12 @@ class EasyClinClient:
         url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
         request = urllib.request.Request(
             url,
-            headers={"Authorization": f"Bearer {secret}", "Accept": "application/json"},
+            headers={"Accept": "application/json"},
             method="GET",
         )
+        request.add_unredirected_header("Authorization", f"Bearer {secret}")
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with open_request(request, timeout=timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", "replace")
@@ -84,6 +86,7 @@ class EasyClinClient:
         parallel_tool_calls: bool | None = None,
         on_completed: Any = None,
         allow_empty_text: bool = False,
+        reasoning_mode: str | None = None,
     ) -> str:
         url = f"{base_url.rstrip('/')}/responses"
         payload = {
@@ -124,16 +127,18 @@ class EasyClinClient:
             url,
             data=body,
             headers={
-                "Authorization": f"Bearer {secret}",
                 "Accept": "text/event-stream",
                 "Content-Type": "application/json",
                 "User-Agent": f"{APP_NAME}/{APP_VERSION}",
             },
             method="POST",
         )
+        request.add_unredirected_header("Authorization", f"Bearer {secret}")
+        if reasoning_mode:
+            request.add_header("X-Mirra-Reasoning-Mode", str(reasoning_mode))
         for attempt in range(2):
             try:
-                response_context = urllib.request.urlopen(request, timeout=timeout)
+                response_context = open_request(request, timeout=timeout)
                 break
             except urllib.error.HTTPError as exc:
                 response_body = exc.read().decode("utf-8", "replace")
@@ -186,7 +191,8 @@ class EasyClinClient:
                     secrets=(secret,),
                 )
                 reason = exc.reason if hasattr(exc, "reason") else exc
-                raise RuntimeError(
+                error_type = UnsentConnectionError if is_mirra_request(request) and connection_was_refused(exc) else RuntimeError
+                raise error_type(
                     f"Responses 网络请求失败: {reason}（诊断 ID: {request_id}）"
                 ) from None
         response_headers = getattr(response_context, "headers", None)
@@ -196,6 +202,10 @@ class EasyClinClient:
                 content_type = str(response.headers.get("Content-Type") or "").lower()
                 if "text/event-stream" not in content_type:
                     payload = json.loads(response.read().decode("utf-8"))
+                    if str(payload.get("status") or "") in {"failed", "incomplete", "cancelled"}:
+                        error = payload.get("error") or {}
+                        message = error.get("message") if isinstance(error, dict) else str(error)
+                        raise RuntimeError(message or f"Responses 响应未完成（诊断 ID: {request_id}）")
                     if on_completed is not None:
                         on_completed(payload)
                     text = EasyClinClient._response_output_text(payload)
@@ -208,9 +218,10 @@ class EasyClinClient:
                 chunks: list[str] = []
                 event_type = ""
                 data_lines: list[str] = []
+                completed_stream = False
 
                 def flush_event() -> None:
-                    nonlocal event_type, data_lines
+                    nonlocal event_type, data_lines, completed_stream
                     if not data_lines:
                         event_type = ""
                         return
@@ -219,6 +230,7 @@ class EasyClinClient:
                     event_type = ""
                     data_lines = []
                     if raw_data == "[DONE]":
+                        completed_stream = True
                         return
                     try:
                         payload = json.loads(raw_data)
@@ -236,6 +248,8 @@ class EasyClinClient:
                         error = payload.get("error") or payload.get("response", {}).get("error") or {}
                         message = error.get("message") if isinstance(error, dict) else str(error)
                         raise RuntimeError(message or "Responses 接口执行失败")
+                    if payload_type == "response.completed":
+                        completed_stream = True
                     if payload_type == "response.completed" and not chunks:
                         completed_text = EasyClinClient._response_output_text(payload)
                         if completed_text:
@@ -255,6 +269,8 @@ class EasyClinClient:
                     elif line.startswith("data:"):
                         data_lines.append(line[5:].lstrip())
                 flush_event()
+                if not completed_stream:
+                    raise RuntimeError(f"Responses 响应中断，未收到完整完成事件（诊断 ID: {request_id}）")
                 text = "".join(chunks)
                 if not text and not allow_empty_text:
                     raise RuntimeError("Responses 接口未返回文本")

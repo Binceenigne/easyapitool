@@ -14,7 +14,10 @@ import (
 )
 
 func (m *mobile) polish(w http.ResponseWriter, r *http.Request, owner string) {
-	var input struct{ KeyID, Prompt string }
+	var input struct {
+		KeyID, Prompt string
+		Options       object
+	}
 	if !decodeRequest(w, r, 160<<10, &input) {
 		return
 	}
@@ -35,17 +38,25 @@ func (m *mobile) polish(w http.ResponseWriter, r *http.Request, owner string) {
 	}
 	model := m.g.cfg.polishModel
 	effort := m.g.cfg.reasoningEffort
-	if model == "" && m.g.managedKey(key) {
-		configured := m.g.appModels().Reasoning["terra"]
-		model, effort = configured.Model, configured.Effort
+	if selected.key.ID != "" {
+		profile, err := m.g.modelsForKey(selected.key)
+		if err != nil {
+			m.g.proxyError(w, err)
+			return
+		}
+		model, effort = profile.Polish.Model, profile.Polish.Effort
 	}
-	if model == "" {
+	if model == "" && selected.key.ID == "" {
 		model = m.g.cfg.reasoningModel
 	}
 	if model == "" && selected.upstream.URL == m.g.cfg.legacyBase {
 		model = "gpt-6.1-terra"
 	}
-	prompt, _, _, err := m.g.rewrite(r.Context(), selected, model, effort, input.Prompt, false)
+	if input.Options == nil {
+		input.Options = object{}
+	}
+	input.Options["reasoningMode"] = "polish"
+	prompt, _, _, err := m.g.rewrite(r.Context(), selected, model, effort, input.Prompt, false, input.Options)
 	if err != nil {
 		writeJSON(w, http.StatusOK, object{"ok": false, "error": err.Error()})
 		return
@@ -98,7 +109,7 @@ func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInpu
 	web := input.Options["webSearchEnabled"] == true
 	start := time.Now()
 	m.publish(id, object{"type": "react_started", "model": model, "reasoningEffort": effort, "webSearchEnabled": web}, false)
-	prompt, usage, searched, err := m.g.rewrite(ctx, selected, model, effort, input.Prompt, web)
+	prompt, usage, searched, err := m.g.rewrite(ctx, selected, model, effort, input.Prompt, web, input.Options)
 	if err != nil {
 		m.publish(id, object{"type": "react_failed", "error": err.Error()}, false)
 		return "", nil, err
@@ -108,13 +119,20 @@ func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInpu
 	return prompt, usage, nil
 }
 
-func (g *gateway) rewrite(ctx context.Context, selected route, model, effort, prompt string, web bool) (string, object, bool, error) {
+func (g *gateway) rewrite(ctx context.Context, selected route, model, effort, prompt string, web bool, options ...object) (string, object, bool, error) {
 	if !modelPattern.MatchString(model) {
 		return "", nil, false, errors.New("请在网关模型配置中选择可用的思维模型")
 	}
 	effort = supportedReasoningEffort(model, effort)
+	var target object
+	if len(options) > 0 {
+		target = options[0]
+	}
+	if err := g.checkReasoningTier(selected.key, model, effort, objectString(target, "reasoningMode"), web); err != nil {
+		return "", nil, false, err
+	}
 	fields := object{"model": model, "input": prompt, "store": false, "max_output_tokens": 8192,
-		"instructions": "优化用户的生图提示词，保留原意、语言和引用对象。只输出可直接用于生成或编辑的提示词。"}
+		"instructions": imagePromptInstructions(target)}
 	if effort != "" {
 		fields["reasoning"] = object{"effort": effort}
 	}

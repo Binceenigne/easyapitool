@@ -97,6 +97,12 @@ func (m *mobile) fetchKey(ctx context.Context, input keyInput, ip netip.Addr) (*
 	switch {
 	case selected.key.ID != "":
 		key.usage, err = m.g.store.usage(ctx, selected.key, time.Now())
+		if err == nil {
+			key.usage["appModels"], err = m.g.modelsForKey(selected.key)
+		}
+		if err == nil {
+			key.usage["planName"] = key.usage["appModels"].(*modelSettings).Tier.Name
+		}
 		return key, err
 	case input.BaseURL == openAIBaseURL:
 		key.usage = object{"isValid": true, "mode": "official", "status": "active"}
@@ -250,7 +256,7 @@ func (m *mobile) state(ctx context.Context, owner string, ip netip.Addr) object 
 		}
 		view := copy.state()
 		if m.g.managedKey(key.keyInput) && copy.usage != nil {
-			view["appModels"] = m.g.appModels()
+			view["appModels"] = copy.usage["appModels"]
 		}
 		items = append(items, view)
 	}

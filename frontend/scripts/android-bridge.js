@@ -742,6 +742,59 @@
         return result;
     }
 
+    async function rasterImageDataUrl(path) {
+        const dataUrl = await readAsDataUrl(path);
+        const image = new Image();
+        image.src = dataUrl;
+        await image.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+        if (!canvas.width || !canvas.height) throw new Error('图片的尺寸无效');
+        try {
+            canvas.getContext('2d').drawImage(image, 0, 0);
+            return canvas.toDataURL('image/png');
+        } finally { image.src = ''; canvas.width = 0; canvas.height = 0; }
+    }
+
+    const rasterReferenceCache = new Map();
+    async function rasterizeReference(path, mimeType = '') {
+        if (!/\.(?:gif|svg)$/i.test(path) && !['image/gif', 'image/svg+xml'].includes(mimeType)) return path;
+        if (rasterReferenceCache.has(path)) return rasterReferenceCache.get(path);
+        const conversion = (async () => {
+            const result = await pluginCall('importReferenceDataUrl', {
+                dataUrl: await rasterImageDataUrl(path), name: path.split(/[\\/]/).pop().replace(/\.[^.]+$/, '') + '-reference.png'
+            });
+            if (!result?.ok || !result.path) throw new Error(result?.error || '参考图转换失败');
+            return result.path;
+        })();
+        rasterReferenceCache.set(path, conversion);
+        while (rasterReferenceCache.size > 32) rasterReferenceCache.delete(rasterReferenceCache.keys().next().value);
+        try { return await conversion; }
+        catch (error) { rasterReferenceCache.delete(path); throw error; }
+    }
+
+    async function resolveGenerationReferences(keyId, paths, options) {
+        const supplied = [...new Set((paths || []).filter(Boolean))];
+        const tier = window.appState?.keys?.find(key => String(key.id) === String(keyId))?.appModels?.tier;
+        const limit = tier ? tier.imageEditing ? Math.max(0, Math.min(16, Number(tier.maxReferences) || 0)) : 0 : 16;
+        if ((supplied.length || options.parentSetId) && !limit) throw new Error('当前档位未开放参考图和续作编辑');
+        if (supplied.length > limit) throw new Error(`当前档位最多使用 ${limit} 张参考图`);
+        let parents = [];
+        if (options.parentSetId) {
+            const saved = await pluginCall('listAssets', { sessionId: String(options.sessionId || '') });
+            parents = (saved.assets || []).filter(asset => String(asset.setId) === String(options.parentSetId) && asset.path);
+            if (!parents.length) throw new Error('上一轮成品已不可用，请重新选择参考图后生成');
+            const available = limit - supplied.length;
+            if (!available) throw new Error('续作需要为上一轮成品保留至少一个参考图名额');
+            parents = parents.filter(asset => !supplied.includes(asset.path)).slice(0, available);
+        }
+        const parentPaths = parents.map(asset => asset.path);
+        const all = [...new Set([...parentPaths, ...supplied])];
+        const converted = [];
+        for (const path of all) converted.push(await rasterizeReference(path, parents.find(asset => asset.path === path)?.mimeType));
+        return [...new Set(converted)];
+    }
+
     async function uploadReference(path) {
         await loadServiceConfig();
         const settings = requireService();
@@ -821,6 +874,8 @@
         if (pendingTasks.has(requestId) || directTasks.has(requestId)) throw new Error('同一任务正在生成');
         options = { ...options, requestId };
         const key = (await secureKeyMetadata()).find(item => String(item.id) === String(keyId));
+        try { paths = await resolveGenerationReferences(keyId, paths, options); }
+        catch (error) { return persistFailedGeneration(options, prompt, error); }
         if (usesDirectApi(key)) return generateDirectImage(key, prompt, paths, options);
         let pending = null;
         try {
@@ -886,7 +941,9 @@
             keyId, operation: 'respond', requestId: options.requestId || '',
             body: {
                 model, reasoning: { effort }, input: prompt, store: false,
-                instructions: '将用户的图像需求整理为一段可直接用于生成或编辑图片的提示词。保留用户的明确要求，仅返回改写后的提示词。',
+                instructions: '将用户的图像需求整理为可直接生成或编辑图片的提示词。保留明确要求，仅返回改写后的提示词。'
+                    + (options.output_format === 'svg' ? '输出目标是静态SVG矢量图，组织为【主体与轮廓】【路径与分层】【色彩与留白】【矢量约束】文本块，不输出代码或动画要求。'
+                    : options.output_format === 'gif' ? `输出目标是GIF循环动图，共${options.frame_count || 9}帧。组织为【画面设定】【运动脚本】【分帧控制】【循环衔接】【稳定约束】，明确动作方向、幅度和关键阶段，保持跨帧主体与背景一致，让末帧自然接回首帧。帧数与时长由接口字段控制。` : ''),
                 ...(options.webSearchEnabled ? { tools: [{ type: 'web_search' }] } : {})
             }
         });
@@ -912,7 +969,7 @@
                 result.prompt = await prepareDirectPrompt(key.id, prompt, options);
             }
             const body = { model: options.imageModel, prompt: result.prompt, size: options.size || 'auto',
-                quality: options.quality || 'auto', background: result.transparency, output_format: output, n: 1 };
+                quality: options.quality || 'medium', background: result.transparency, output_format: output, n: 1 };
             for (const field of ['complexity', 'output_compression', 'frame_count', 'frame_duration_ms']) {
                 if (options[field] != null) body[field] = options[field];
             }
@@ -963,12 +1020,20 @@
     }
 
     async function copyGeneratedImage(path) {
-        const dataUrl = await readAsDataUrl(path);
-        const response = await fetch(dataUrl);
-        const blob = await response.blob();
         if (!navigator.clipboard?.write || !window.ClipboardItem) return { ok: false, error: '当前设备不支持图片剪贴板' };
-        await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-        return { ok: true };
+        const original = await readAsDataUrl(path);
+        const mime = /^data:([^;,]+)/.exec(original)?.[1] || '';
+        if (mime === 'image/png' || ClipboardItem.supports?.(mime)) {
+            try {
+                const blob = await (await fetch(original)).blob();
+                await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+                return { ok: true };
+            } catch (error) { if (mime === 'image/png') throw error; }
+        }
+        const dataUrl = await rasterImageDataUrl(path);
+        const blob = await (await fetch(dataUrl)).blob();
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        return { ok: true, message: mime === 'image/gif' ? '已复制 GIF 首帧' : mime === 'image/svg+xml' ? '已复制 SVG 预览' : '图片已复制到剪贴板' };
     }
 
     async function saveEditedImage(path) {
@@ -1043,12 +1108,12 @@
         delete_image_set: deleteImageSet,
         open_generated_pictures: async () => ({ ok: true }),
         export_image_sets: exportImageSets,
-        polish_prompt: async (keyId, prompt) => {
+        polish_prompt: async (keyId, prompt, options = {}) => {
             const key = (await secureKeyMetadata()).find(item => String(item.id) === String(keyId));
-            if (usesDirectApi(key)) return { ok: true, prompt: await prepareDirectPrompt(key.id, prompt) };
+            if (usesDirectApi(key)) return { ok: true, prompt: await prepareDirectPrompt(key.id, prompt, options) };
             return requestJson('/api/v1/prompts/polish', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ keyId: String(keyId), prompt })
+                body: JSON.stringify({ keyId: String(keyId), prompt, options })
             });
         },
         append_image_stream_debug: async () => ({ ok: true }),

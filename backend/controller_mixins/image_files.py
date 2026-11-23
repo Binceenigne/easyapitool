@@ -6,6 +6,7 @@ from ..usage import *
 from ..web_search import WebSearchService
 from ..store import Store
 from ..client import EasyClinClient
+from ..image_editor import OUTPUT_IMAGE_SUFFIXES, image_file_suffix
 
 class ImageFilesMixin:
     def _image_data_root(self) -> Path:
@@ -118,14 +119,19 @@ class ImageFilesMixin:
             ".jpg": "image/jpeg",
             ".jpeg": "image/jpeg",
             ".webp": "image/webp",
+            ".gif": "image/gif",
+            ".svg": "image/svg+xml",
         }
         content_type = content_types.get(source.suffix.lower())
         if content_type is None or source.stat().st_size > 50 * 1024 * 1024:
             return {"ok": False, "error": "生成图片格式或大小无效"}
         try:
             image_bytes = source.read_bytes()
-            with Image.open(io.BytesIO(image_bytes)) as generated_image:
-                generated_image.verify()
+            actual_suffix = image_file_suffix(image_bytes)
+            content_type = content_types[actual_suffix]
+            if actual_suffix != ".svg":
+                with Image.open(io.BytesIO(image_bytes)) as generated_image:
+                    generated_image.verify()
         except (OSError, ValueError):
             return {"ok": False, "error": "生成图片内容无效"}
         encoded = base64.b64encode(image_bytes).decode("ascii")
@@ -140,7 +146,7 @@ class ImageFilesMixin:
         pictures_root = self._image_pictures_root().resolve()
         if not source.is_file() or not source.is_relative_to(pictures_root):
             return {"ok": False, "error": "只能复制本应用保存的最终图片"}
-        if source.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        if source.suffix.lower() not in OUTPUT_IMAGE_SUFFIXES:
             return {"ok": False, "error": "最终图片格式无效"}
         try:
             copy_image_to_windows_clipboard(source)
@@ -150,6 +156,14 @@ class ImageFilesMixin:
 
     def _image_session_store(self) -> ImageSessionStore:
         return ImageSessionStore(self._image_pictures_root())
+
+    def open_image_session_folder(self, session_id: str, set_id: str = "") -> dict[str, Any]:
+        try:
+            folder = self._image_session_store().folder_for_set(session_id, set_id)
+            os.startfile(str(folder))
+        except (OSError, ValueError, RuntimeError) as exc:
+            return {"ok": False, "error": f"打开项目文件夹失败：{exc}"}
+        return {"ok": True, "path": str(folder)}
 
     def _image_session_activity_state(self) -> tuple[threading.Lock, set[str]]:
         lock = getattr(self, "image_session_activity_lock", None)

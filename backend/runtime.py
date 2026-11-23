@@ -262,6 +262,9 @@ class RemoteWebApi(WebApi):
     def get_asset_status(self) -> dict[str, Any]:
         return self._remote("get_asset_status")
 
+    def open_image_session_folder(self, session_id: str, set_id: str = "") -> dict[str, Any]:
+        return self._controller.open_image_session_folder(session_id, set_id)
+
     def open_generated_pictures(self) -> dict[str, Any]:
         return self._remote("open_generated_pictures")
 
@@ -321,11 +324,12 @@ class RemoteWebApi(WebApi):
     def cancel_image_generation(self, request_id: str) -> dict[str, Any]:
         return self._remote("cancel_image_generation", request_id)
 
-    def polish_prompt(self, key_id: str, prompt: str) -> dict[str, Any]:
+    def polish_prompt(self, key_id: str, prompt: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._rpc_client.call_with_events(
             "polish_prompt",
             key_id,
             prompt,
+            *([options] if options is not None else []),
             on_event=self._controller.push_image_generation_event,
         )
 

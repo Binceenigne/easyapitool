@@ -129,7 +129,8 @@ func loadPeriods(ctx context.Context, tx *sql.Tx, k accessKey, now time.Time, di
 func readKey(ctx context.Context, tx *sql.Tx, id string) (accessKey, error) {
 	var k accessKey
 	var policy string
-	err := tx.QueryRowContext(ctx, `SELECT id,name,prefix,upstream_id,policy,enabled FROM access_keys WHERE id=?`, id).
+	err := tx.QueryRowContext(ctx, `SELECT id,name,prefix,upstream_id,policy,enabled FROM access_keys WHERE id=?
+		AND NOT EXISTS(SELECT 1 FROM deleted_keys WHERE key_id=access_keys.id)`, id).
 		Scan(&k.ID, &k.Name, &k.Prefix, &k.Upstream, &policy, &k.Enabled)
 	if err == nil {
 		err = json.Unmarshal([]byte(policy), &k.Policy)
@@ -191,6 +192,10 @@ func readQuotaEvents(ctx context.Context, tx *sql.Tx, id string, after int64, la
 			item.Message = windowLabel(item.Window) + "已用额度已手动重置"
 		case "window_refreshed":
 			item.Message = windowLabel(item.Window) + "窗口已刷新"
+		case "tier_changed":
+			item.Message = "功能档位已更新"
+		case "key_updated":
+			item.Message = "密钥设置已更新"
 		}
 		items = append(items, item)
 	}
@@ -239,6 +244,15 @@ func (s *store) changeKey(ctx context.Context, id string, updated *accessKey, re
 		return nil, err
 	}
 	if updated != nil {
+		if tierID(k) != tierID(*updated) {
+			if err := quotaEvent(ctx, tx, id, "tier_changed", "permissions", 0, 0, now); err != nil {
+				return nil, err
+			}
+		} else if k.Name != updated.Name || k.Upstream != updated.Upstream || k.Enabled != updated.Enabled {
+			if err := quotaEvent(ctx, tx, id, "key_updated", "settings", 0, 0, now); err != nil {
+				return nil, err
+			}
+		}
 		oldRules := k.Policy.budgets()
 		for i, rule := range updated.Policy.budgets() {
 			if oldRules[i].limit != rule.limit {

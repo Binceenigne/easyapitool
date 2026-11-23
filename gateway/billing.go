@@ -21,6 +21,7 @@ var (
 )
 
 type keyPolicy struct {
+	TierID    string     `json:"tierId,omitempty"`
 	IPs       []string   `json:"ips"`
 	ExpiresAt *time.Time `json:"expiresAt"`
 	Total     int64      `json:"totalMicroUSD"`

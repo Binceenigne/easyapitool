@@ -282,25 +282,119 @@ def activate_ui_window() -> bool:
 
 def image_to_windows_dib(source: Path) -> bytes:
     bitmap = io.BytesIO()
-    with Image.open(source) as image:
-        image.convert("RGB").save(bitmap, format="BMP")
+    from .image_editor import reference_preview_bytes
+    source_data = reference_preview_bytes(source.read_bytes(), 2048) if source.suffix.lower() == ".svg" else source.read_bytes()
+    with Image.open(io.BytesIO(source_data)) as image:
+        frame = image.convert("RGBA")
+        background = Image.new("RGB", frame.size, "white")
+        background.paste(frame, mask=frame.getchannel("A"))
+        background.save(bitmap, format="BMP")
     return bitmap.getvalue()[14:]
 
 
-def copy_image_to_windows_clipboard(source: Path) -> None:
-    dib = image_to_windows_dib(source)
-    memory = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(dib))
-    if not memory:
-        raise ctypes.WinError()
-    transferred = False
+def maximized_work_area_bounds(monitor: tuple[int, int, int, int], work: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """MINMAXINFO uses monitor-relative offsets and physical pixel dimensions."""
+    left, top, _right, _bottom = monitor
+    work_left, work_top, work_right, work_bottom = work
+    return (work_left - left, work_top - top, max(1, work_right - work_left), max(1, work_bottom - work_top))
+
+
+def update_window_maximized_bounds(window: Any) -> bool:
+    native = getattr(window, "native", None) if window is not None else None
+    if native is None:
+        return False
     try:
-        pointer = kernel32.GlobalLock(memory)
-        if not pointer:
-            raise ctypes.WinError()
-        try:
-            ctypes.memmove(pointer, dib, len(dib))
-        finally:
-            kernel32.GlobalUnlock(memory)
+        from System import Action
+        from System.Drawing import Rectangle
+        from System.Reflection import BindingFlags
+        from System.Windows.Forms import Screen
+
+        applied = [False]
+
+        def update() -> None:
+            if native.IsDisposed:
+                return
+            screen = Screen.FromHandle(native.Handle)
+            area, bounds = screen.WorkingArea, screen.Bounds
+            rect = Rectangle(*maximized_work_area_bounds(
+                (bounds.Left, bounds.Top, bounds.Right, bounds.Bottom),
+                (area.Left, area.Top, area.Right, area.Bottom),
+            ))
+            prop = native.GetType().GetProperty(
+                "MaximizedBounds", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            )
+            if prop is None:
+                return
+            if prop.GetValue(native, None) != rect:
+                prop.SetValue(native, rect, None)
+            applied[0] = True
+
+        if native.InvokeRequired:
+            native.Invoke(Action(update))
+        else:
+            update()
+        return applied[0]
+    except Exception:
+        # A non-WinForms host still keeps its existing maximize implementation.
+        return False
+
+
+def clipboard_image_payloads(source: Path) -> list[tuple[int | str, bytes]]:
+    suffix = source.suffix.lower()
+    if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}:
+        raise ValueError("不支持的成品格式")
+    payloads: list[tuple[int | str, bytes]] = []
+    payloads.append((CF_DIB, image_to_windows_dib(source)))
+    if suffix == ".png":
+        payloads.append(("PNG", source.read_bytes()))
+    elif suffix in {".svg", ".gif", ".webp"}:
+        from .image_editor import reference_preview_bytes
+        raster = reference_preview_bytes(source.read_bytes(), 2048)
+        with Image.open(io.BytesIO(raster)) as image:
+            buffer = io.BytesIO()
+            image.convert("RGBA").save(buffer, format="PNG")
+            payloads.append(("PNG", buffer.getvalue()))
+    if suffix in {".gif", ".svg"}:
+        import struct
+        from .image_editor import svg_size
+        data = source.read_bytes()
+        if len(data) > 50 * 1024 * 1024:
+            raise ValueError("图片超过 50 MB")
+        if suffix == ".svg" and svg_size(data) is None:
+            raise ValueError("SVG 内容无效")
+        payloads.append(("image/gif" if suffix == ".gif" else "image/svg+xml", data))
+        if suffix == ".gif":
+            payloads.append(("GIF", data))
+        # File consumers retain animation/vector data; bitmap consumers also get
+        # the first GIF frame through CF_DIB for their normal image paste path.
+        drop = struct.pack("<IiiII", 20, 0, 0, 0, 1)
+        payloads.append((15, drop + (str(source.resolve()) + "\0\0").encode("utf-16-le")))
+        payloads.append(("Preferred DropEffect", struct.pack("<I", 1)))
+    return payloads
+
+
+def copy_image_to_windows_clipboard(source: Path) -> None:
+    payloads = clipboard_image_payloads(source)
+    user32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
+    user32.RegisterClipboardFormatW.restype = wintypes.UINT
+    allocations: list[tuple[int, Any]] = []
+    transferred: set[int] = set()
+    try:
+        for name, data in payloads:
+            format_id = name if isinstance(name, int) else user32.RegisterClipboardFormatW(name)
+            if not format_id:
+                raise ctypes.WinError()
+            memory = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+            if not memory:
+                raise ctypes.WinError()
+            allocations.append((format_id, memory))
+            pointer = kernel32.GlobalLock(memory)
+            if not pointer:
+                raise ctypes.WinError()
+            try:
+                ctypes.memmove(pointer, data, len(data))
+            finally:
+                kernel32.GlobalUnlock(memory)
         opened = False
         for _ in range(10):
             if user32.OpenClipboard(None):
@@ -312,14 +406,16 @@ def copy_image_to_windows_clipboard(source: Path) -> None:
         try:
             if not user32.EmptyClipboard():
                 raise ctypes.WinError()
-            if not user32.SetClipboardData(CF_DIB, memory):
-                raise ctypes.WinError()
-            transferred = True
+            for format_id, memory in allocations:
+                if not user32.SetClipboardData(format_id, memory):
+                    raise ctypes.WinError()
+                transferred.add(memory)
         finally:
             user32.CloseClipboard()
     finally:
-        if not transferred:
-            kernel32.GlobalFree(memory)
+        for _, memory in allocations:
+            if memory not in transferred:
+                kernel32.GlobalFree(memory)
 
 
 def activate_existing_instance() -> bool:

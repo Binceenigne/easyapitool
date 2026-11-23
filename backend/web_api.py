@@ -31,6 +31,9 @@ class WebApi:
     def copy_generated_image(self, source_path: str) -> dict[str, Any]:
         return self._controller.copy_generated_image(source_path)
 
+    def open_image_session_folder(self, session_id: str, set_id: str = "") -> dict[str, Any]:
+        return self._controller.open_image_session_folder(session_id, set_id)
+
     def open_generated_pictures(self) -> dict[str, Any]:
         return self._controller.open_generated_pictures()
 
@@ -73,8 +76,8 @@ class WebApi:
     def cancel_image_generation(self, request_id: str) -> dict[str, Any]:
         return self._controller.cancel_image_generation(request_id)
 
-    def polish_prompt(self, key_id: str, prompt: str) -> dict[str, Any]:
-        return self._controller.polish_prompt(key_id, prompt)
+    def polish_prompt(self, key_id: str, prompt: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._controller.polish_prompt(key_id, prompt, options) if options is not None else self._controller.polish_prompt(key_id, prompt)
 
     def refresh_now(self, trace_id: Any = None) -> dict[str, Any]:
         return self._controller.refresh_now(trace_id)

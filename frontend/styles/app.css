@@ -1730,20 +1730,6 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
   font-weight: 700;
 }
 
-#imageQualityAuto {
-  padding: 1px 5px;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 10px;
-}
-
-#imageQualityAuto[aria-pressed=true] {
-  background: var(--image-blue-soft);
-  color: var(--image-blue);
-  font-weight: 700;
-}
-
 .image-choice-picker {
   position: relative;
   min-height: var(--image-choice-height);
@@ -4467,6 +4453,63 @@ html[data-platform=android] .image-result-modal-canvas img {
   display: none !important;
 }
 
+/* Keep complete model names and distinguish unavailable controls. */
+#imageModelChoices .image-choice-trigger > span,
+#imageModelChoices .image-choice-menu button,
+#imageModelChoices > button,
+.advanced-y-label > span,
+.slider-desc, .advanced-desc {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+#imageModelChoices > button {
+  padding-inline: 6px;
+}
+
+#imageGenerationControlPanel .image-control-segmented > button:not(.is-active):not(:disabled) {
+  color: var(--text-soft);
+}
+
+#imageGenerationControlPanel .image-control-segmented > button:disabled:not(.is-active) {
+  border: 1px dashed color-mix(in srgb, var(--muted) 65%, transparent);
+  background: repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in srgb, var(--muted) 12%, transparent) 4px 5px);
+  color: var(--muted);
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+
+#imageTransparencyButtons > button:disabled:not(.is-active)::after {
+  content: "×";
+  font-size: 12px;
+  font-weight: 500;
+}
+
+#imageGenerationControlPanel .image-control-segmented > button:disabled.is-active {
+  opacity: 1;
+  cursor: default;
+}
+
+#reasoningSliderTrack .slider-dot.is-unavailable {
+  opacity: 0.38;
+  background: transparent;
+  border: 1px solid currentColor;
+}
+
+.image-set-folder-button {
+  flex: none;
+}
+
+.advanced-state {
+  max-width: 54%;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
 #dashboardGrid {
   display: grid;
   flex: 1 1 auto;
@@ -6653,78 +6696,14 @@ html[data-platform=android][data-keyboard-visible=true] .image-edit-prompt texta
   background: var(--bg);
 }
 
-html[data-platform=android] #widget-root {
-  --mobile-nav-height: calc(54px + env(safe-area-inset-bottom, 0px));
-}
-
-html[data-platform=android] #pageZoomViewport {
-  bottom: var(--mobile-nav-height);
-}
-
-html[data-platform=android] #appFooter,
-html[data-platform=android] #keyToolbar :is(#workspaceModeButton, #settingsButton) {
-  display: none;
-}
-
-#mobileNav {
-  position: absolute;
-  right: 4px;
-  bottom: 0;
-  left: 4px;
-  z-index: 50;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  height: var(--mobile-nav-height);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-  border: 1px solid var(--border);
-  border-top: 0;
-  background: var(--surface);
-}
-
-#mobileNav button {
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 2px;
-  background: transparent;
-  color: var(--text-soft);
-  font-size: 12px;
-}
-
-#mobileNav button svg {
-  width: 17px;
-  height: 17px;
-}
-
-#mobileNav button[aria-current=page] {
-  background: var(--image-purple-soft);
-  color: var(--image-purple);
-  box-shadow: inset 0 2px var(--image-purple);
-}
-
 html[data-platform=android] #toast {
-  bottom: calc(var(--mobile-nav-height) + 8px);
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
 }
 
-@media (max-width: 600px) {
-  html[data-platform=android] #imageEditWorkspace {
-    grid-template-columns: minmax(0, 1fr);
-    min-width: 0;
-  }
-  html[data-platform=android] #imageEditForm {
-    overflow: auto;
-    border-right: 0;
-  }
-  html[data-platform=android] #widget-root[data-mobile-page=image] #imageEditResult,
-  html[data-platform=android] #widget-root[data-mobile-page=results] #imageEditForm {
-    display: none;
-  }
-  html[data-platform=android][data-keyboard-visible=true] #imageEditForm {
-    width: 100%;
-    min-width: 0;
-    max-width: none;
-  }
+html[data-platform=android] #keyToolbar :is(#workspaceModeButton, #settingsButton) {
+  display: inline-flex;
 }
+
 @property --adv-h {
   syntax: "<number>";
   inherits: true;

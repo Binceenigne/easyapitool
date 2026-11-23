@@ -9,7 +9,7 @@ datas = [
     (str(project_root / 'CHANGELOG.md'), '.'),
 ]
 binaries = []
-hiddenimports = ['pystray._win32', 'winotify']
+hiddenimports = ['pystray._win32', 'winotify', 'resvg_py']
 tmp_ret = collect_all('webview')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 

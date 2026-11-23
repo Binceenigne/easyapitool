@@ -13,7 +13,7 @@
             document.documentElement.dataset.themeMode = ['light', 'dark', 'system'].includes(theme) ? theme : 'system';
         })();
     </script>
-    <link rel="stylesheet" href="styles/app.css?v=49">
+    <link rel="stylesheet" href="styles/app.css?v=50">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -183,7 +183,7 @@
                                 <button type="button" id="imageGenerationControlsButton" aria-expanded="false" onclick="toggleImageGenerationControls()">
                                     <i data-lucide="settings-2" aria-hidden="true"></i>
                                     <span id="imageGenerationControlSummary">
-                                        <strong id="imageGenerationQualitySummary" data-quality="auto">自动细节</strong>
+                                        <strong id="imageGenerationQualitySummary" data-quality="medium">中质量</strong>
                                         <span aria-hidden="true">·</span>
                                         <span id="imageGenerationRatioSummary">智能</span>
                                         <span id="imageGenerationResolutionDivider" aria-hidden="true">·</span>
@@ -243,7 +243,6 @@
                                         <div class="image-control-section">
                                             <div class="image-quality-heading">
                                                 <span id="imageQualityLabel" tabindex="0" data-image-tip="控制最终渲染质量，独立于构图复杂度与图片分辨率。低档更快，细节、纹理或文字可能出现伪影。">质量</span>
-                                                <button id="imageQualityAuto" type="button" data-image-tip="由模型按任务决定渲染质量。适合希望兼顾效果和用量的通用请求。" aria-pressed="true" onclick="setImageQuality('auto')">自动</button>
                                             </div>
                                             <div id="imageQualityChoices" class="image-choice" aria-labelledby="imageQualityLabel"></div>
                                         </div>
@@ -315,13 +314,13 @@
                                         <div class="advanced-header">
                                             <button type="button" id="advancedBackButton" class="advanced-back">返回</button>
                                             <span class="advanced-title">高级调控</span>
-                                            <span id="advancedStateBadge" class="advanced-state">luna · low</span>
+                                            <span id="advancedStateBadge" class="advanced-state">gpt-6-luna · low</span>
                                         </div>
                                         <div id="advancedMatrix" class="advanced-matrix" tabindex="0" role="application" aria-label="模型与思维深度矩阵">
                                             <div class="advanced-y-labels">
-                                                <span class="advanced-y-label" data-y-label="2"><span>gpt6.1sol</span></span>
-                                                <span class="advanced-y-label" data-y-label="1"><span>gpt6.1terra</span></span>
-                                                <span class="advanced-y-label" data-y-label="0"><span>gpt6luna</span></span>
+                                                <span class="advanced-y-label" data-y-label="2"><span>gpt-6.1-sol</span></span>
+                                                <span class="advanced-y-label" data-y-label="1"><span>gpt-6.1-terra</span></span>
+                                                <span class="advanced-y-label" data-y-label="0"><span>gpt-6-luna</span></span>
                                             </div>
                                             <div id="advancedPad" class="advanced-pad">
                                                 <span id="advancedPadBgA" class="advanced-pad-bg" aria-hidden="true"></span>
@@ -340,7 +339,7 @@
                                                 <span class="advanced-x-label" data-x-label="4">max</span>
                                             </div>
                                         </div>
-                                        <div id="advancedDesc" class="advanced-desc">gpt6luna · 轻快响应 · 日常问答首选</div>
+                                        <div id="advancedDesc" class="advanced-desc">gpt-6-luna · 轻快响应 · 日常问答首选</div>
                                     </div>
                                 </div>
                             </div>
@@ -913,12 +912,7 @@
         </footer>
         </div>
             </div>
-        <nav id="mobileNav" aria-label="Mirra 主导航" hidden>
-            <button type="button" data-mobile-tab="image" aria-current="page"><i data-lucide="wand-sparkles" aria-hidden="true"></i><span>生图</span></button>
-            <button type="button" data-mobile-tab="results"><i data-lucide="images" aria-hidden="true"></i><span>作品</span></button>
-            <button type="button" data-mobile-tab="usage"><i data-lucide="activity" aria-hidden="true"></i><span>用量</span></button>
-            <button type="button" data-mobile-tab="settings"><i data-lucide="settings" aria-hidden="true"></i><span>设置</span></button>
-        </nav>
+
         <!-- 自定义轻量吐司通知保持在缩放层外，避免 fixed 定位参与页面缩放。 -->
         <div id="toast">
             <i id="toastIcon" data-lucide="circle-check" class="icon-14 color-good" aria-hidden="true"></i>
@@ -928,19 +922,19 @@
 
     <script src="vendor/lucide/lucide.min.js?v=0.468.0"></script>
     <script src="scripts/modules/00-core-ui.js?v=2"></script>
-    <script src="scripts/android-bridge.js?v=8"></script>
-    <script src="scripts/modules/01-app-state.js?v=4"></script>
-    <script src="scripts/modules/02-image-controls.js?v=10"></script>
-    <script src="scripts/modules/03-image-reasoning.js?v=4"></script>
-    <script src="scripts/modules/04-image-stream-rendering.js?v=1"></script>
-    <script src="scripts/modules/05-image-events-sessions.js?v=7"></script>
+    <script src="scripts/android-bridge.js?v=9"></script>
+    <script src="scripts/modules/01-app-state.js?v=5"></script>
+    <script src="scripts/modules/02-image-controls.js?v=12"></script>
+    <script src="scripts/modules/03-image-reasoning.js?v=5"></script>
+    <script src="scripts/modules/04-image-stream-rendering.js?v=2"></script>
+    <script src="scripts/modules/05-image-events-sessions.js?v=8"></script>
     <script src="scripts/modules/06-backend-bridge.js?v=3"></script>
     <script src="scripts/modules/07-page-initializer.js?v=8"></script>
     <script src="scripts/modules/08-window-settings-updates.js?v=4"></script>
     <script src="scripts/modules/09-modals-input-refresh.js?v=1"></script>
     <script src="scripts/modules/10-dashboard-rendering.js?v=3"></script>
     <script src="scripts/modules/11-theme-bootstrap.js?v=2"></script>
-    <script src="scripts/mobile-nav.js?v=1"></script>
+    <script src="scripts/mobile-nav.js?v=2"></script>
     <script src="scripts/modules/12-bootstrap.js?v=1"></script>
 
 

@@ -40,12 +40,13 @@ type upstream struct {
 }
 
 type accessKey struct {
-	ID       string    `json:"id"`
-	Name     string    `json:"name"`
-	Prefix   string    `json:"prefix"`
-	Upstream string    `json:"upstreamId"`
-	Policy   keyPolicy `json:"policy"`
-	Enabled  bool      `json:"enabled"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Prefix    string    `json:"prefix"`
+	Upstream  string    `json:"upstreamId"`
+	Policy    keyPolicy `json:"policy"`
+	Enabled   bool      `json:"enabled"`
+	CanReveal bool      `json:"canReveal"`
 }
 
 type meter struct {
@@ -116,6 +117,14 @@ func openStore(path, secret string) (*store, error) {
 		  kind TEXT NOT NULL, window TEXT NOT NULL, before_micro INTEGER NOT NULL, after_micro INTEGER NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS quota_events_by_key ON quota_events(key_id,id);`)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS key_secrets (
+		key_id TEXT PRIMARY KEY REFERENCES access_keys(id), credential BLOB NOT NULL);
+		CREATE TABLE IF NOT EXISTS deleted_keys (
+		key_id TEXT PRIMARY KEY REFERENCES access_keys(id), deleted_at INTEGER NOT NULL);`)
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -222,6 +231,10 @@ func (s *store) issue(ctx context.Context, k accessKey, custom string) (accessKe
 	if err != nil {
 		return accessKey{}, "", nil, err
 	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO key_secrets(key_id,credential) VALUES(?,?)", k.ID, s.seal([]byte(secret), "distributed-key\x00"+k.ID)); err != nil {
+		return accessKey{}, "", nil, err
+	}
+	k.CanReveal = true
 	snapshot, err := s.usageTx(ctx, tx, k, time.Now())
 	if err != nil {
 		return accessKey{}, "", nil, err
@@ -233,7 +246,9 @@ func (s *store) issue(ctx context.Context, k accessKey, custom string) (accessKe
 }
 
 func (s *store) listKeys(ctx context.Context) ([]accessKey, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,prefix,upstream_id,policy,enabled FROM access_keys ORDER BY name,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,prefix,upstream_id,policy,enabled,
+		EXISTS(SELECT 1 FROM key_secrets WHERE key_id=access_keys.id) FROM access_keys
+		WHERE NOT EXISTS(SELECT 1 FROM deleted_keys WHERE key_id=access_keys.id) ORDER BY name,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +257,7 @@ func (s *store) listKeys(ctx context.Context) ([]accessKey, error) {
 	for rows.Next() {
 		var k accessKey
 		var policy string
-		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.Upstream, &policy, &k.Enabled); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.Upstream, &policy, &k.Enabled, &k.CanReveal); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(policy), &k.Policy); err != nil {
@@ -256,7 +271,8 @@ func (s *store) listKeys(ctx context.Context) ([]accessKey, error) {
 func (s *store) authenticate(ctx context.Context, secret string) (accessKey, upstream, error) {
 	var k accessKey
 	var policy string
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,prefix,upstream_id,policy,enabled FROM access_keys WHERE digest=?`, keyDigest(secret)).
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,prefix,upstream_id,policy,enabled FROM access_keys WHERE digest=?
+		AND NOT EXISTS(SELECT 1 FROM deleted_keys WHERE key_id=access_keys.id)`, keyDigest(secret)).
 		Scan(&k.ID, &k.Name, &k.Prefix, &k.Upstream, &policy, &k.Enabled)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !k.Enabled) {
 		return k, upstream{}, errInvalidKey
@@ -284,7 +300,8 @@ func (s *store) reserve(ctx context.Context, selected route, now time.Time, esti
 	var currentUpstream, anchorPool, anchorURL, pool, upstreamURL, policy string
 	var enabled bool
 	err = tx.QueryRowContext(ctx, `SELECT a.upstream_id,a.enabled AND u.enabled,a.policy,anchor.pool,anchor.url,u.pool,u.url
-		FROM access_keys a JOIN upstreams anchor ON anchor.id=a.upstream_id JOIN upstreams u ON u.id=? WHERE a.id=?`, selected.upstream.ID, k.ID).
+		FROM access_keys a JOIN upstreams anchor ON anchor.id=a.upstream_id JOIN upstreams u ON u.id=? WHERE a.id=?
+		AND NOT EXISTS(SELECT 1 FROM deleted_keys WHERE key_id=a.id)`, selected.upstream.ID, k.ID).
 		Scan(&currentUpstream, &enabled, &policy, &anchorPool, &anchorURL, &pool, &upstreamURL)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && (!enabled || currentUpstream != k.Upstream || upstreamURL != selected.upstream.URL ||
 		(currentUpstream != selected.upstream.ID && (pool == "" || pool != anchorPool || upstreamURL != anchorURL)))) {

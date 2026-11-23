@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/admin.css">
   <script src="/admin.js" defer></script>
   <script src="/admin-models.js" defer></script>
+  <script src="/admin-tiers.js" defer></script>
 </head>
 <body>
   <main id="auth" class="auth">
@@ -34,6 +35,7 @@
         <a href="#/usage" data-page="usage"><i data-icon="ChartNoAxesColumnIncreasing"></i>用量明细</a>
         <span class="nav-section">网关设置</span>
         <a href="#/models" data-page="models"><i data-icon="SlidersHorizontal"></i>模型配置</a>
+        <a href="#/tiers" data-page="tiers"><i data-icon="Layers3"></i>档位对比</a>
         <a href="#/proxy" data-page="proxy"><i data-icon="Network"></i>代理配置</a>
       </nav>
       <div class="rail-bottom">
@@ -85,7 +87,7 @@
         </section>
 
         <section id="page-models" data-view="models" aria-labelledby="models-title" hidden>
-          <div class="page-head"><h1 id="models-title">模型配置</h1></div>
+          <div class="page-head"><h1 id="models-title">模型配置</h1><button type="button" id="new-tier" class="primary"><i data-icon="Plus"></i>新建档位</button></div>
           <section class="panel model-source" aria-labelledby="models-source-title">
             <div class="panel-head"><h2 id="models-source-title"><i data-icon="Server"></i>上游模型目录</h2><a href="#/pools">管理上游<i data-icon="ChevronRight"></i></a></div>
             <div class="panel-body">
@@ -139,10 +141,21 @@
             <p class="error model-error" role="alert" hidden></p>
             <div class="panel-foot"><button id="reset-models" type="button">还原表单</button><button type="submit" class="primary">保存模型配置</button></div>
           </form>
+          <section class="panel tier-manager" aria-labelledby="tier-manager-title">
+            <div class="panel-head"><h2 id="tier-manager-title"><i data-icon="Layers3"></i>功能档位</h2><a href="#/tiers">横向对比全部档位</a></div>
+            <p class="panel-body hint">为每把分发密钥分配一组功能权限。客户端会定期同步，实际选项同时受模型能力限制。</p>
+            <div id="tier-list"></div>
+          </section>
           <section class="panel model-preview" aria-labelledby="models-preview-title">
             <div class="panel-head"><h2 id="models-preview-title"><i data-icon="PanelsTopLeft"></i>Android App 预览</h2><span class="caption" id="preview-state">已保存配置</span></div>
             <div class="panel-body"><iframe id="app-preview" title="Mirra Android 客户端预览" sandbox="allow-scripts" referrerpolicy="no-referrer" loading="lazy"></iframe></div>
           </section>
+        </section>
+
+        <section id="page-tiers" data-view="tiers" aria-labelledby="tiers-title" hidden>
+          <div class="page-head"><div><h1 id="tiers-title">档位对比</h1><p class="hint">按权限范围由低到高自动排列，调整档位后同步更新。</p></div><button type="button" id="new-tier-compare" class="primary"><i data-icon="Plus"></i>新建档位</button></div>
+          <div class="toolbar tier-compare-tools"><label class="search"><i data-icon="Search"></i><input type="search" id="tier-feature-search" placeholder="查找功能或模型" aria-label="查找档位功能"></label><label class="inline-check"><input type="checkbox" id="tier-differences">只看不同项</label></div>
+          <section id="tier-comparison" class="panel" aria-label="功能权限横向对比"></section>
         </section>
 
         <section id="page-proxy" data-view="proxy" aria-labelledby="proxy-title" hidden>
@@ -208,6 +221,8 @@
     <div class="editor-body">
       <label>密钥名称<input name="name" maxlength="120" required></label>
       <label>分发至号池或独立上游<select name="upstreamId" required></select></label>
+      <label>功能档位<select name="tierId" id="key-tier-select" required></select></label>
+      <div id="key-tier-summary" class="tier-assignment-summary" aria-live="polite"></div>
       <label class="toggle-line" id="custom-line"><span>自定义密钥后缀</span><input type="checkbox" role="switch" name="customOn" data-reveal="custom-fields"></label>
       <div id="custom-fields" hidden><label>sk-mirra- 后缀<input name="customKey" type="password" minlength="16" maxlength="128" pattern="[A-Za-z0-9_\-]{16,128}" autocomplete="new-password" placeholder="至少 16 位字母、数字、下划线或连字符"></label></div>
       <label class="toggle-line"><span>IP 白名单</span><input type="checkbox" role="switch" name="ipOn" data-reveal="ip-fields"></label>
@@ -238,8 +253,29 @@
   </form></dialog>
   <dialog id="secret-dialog" aria-labelledby="secret-title"><div class="editor">
     <header><h2 id="secret-title">密钥已签发</h2><button type="button" class="icon-button" data-close aria-label="关闭"><i data-icon="X"></i></button></header>
-    <div class="editor-body"><label>完整分发密钥<input id="secret" class="mono" readonly spellcheck="false"></label><p class="hint" id="secret-note" role="status">完整值仅显示一次，请复制后妥善保存。</p></div>
+    <div class="editor-body"><label>完整分发密钥<input id="secret" class="mono" readonly spellcheck="false"></label><p class="hint" id="secret-note" role="status">密钥已加密保存，可从分发密钥列表再次查看。</p></div>
     <footer><button type="button" data-close>完成</button><button id="copy-key" type="button" class="primary"><i data-icon="Copy"></i>复制密钥</button></footer>
   </div></dialog>
+  <dialog id="tier-dialog" class="tier-dialog" aria-labelledby="tier-title"><form id="tier-form" class="editor">
+    <header><div><h2 id="tier-title">新建功能档位</h2><p class="hint">权限调整会同步到绑定此档位的密钥。</p></div><button type="button" class="icon-button" data-close aria-label="关闭"><i data-icon="X"></i></button></header>
+    <div class="editor-body tier-editor-body">
+      <div class="pair"><label>档位名称<input name="name" maxlength="120" required placeholder="例如 基础、专业、完整"></label><label>说明<input name="description" maxlength="500" placeholder="简要说明适用范围"></label></div>
+      <div id="tier-permissions" class="tier-permission-groups"></div>
+      <section class="tier-limits"><h3>生成上限</h3><div class="pair">
+        <label>最大分辨率<select name="maxResolution"><option value="1536">标清 · 最长边 1536 px</option><option value="2560">高清 · 最长边 2560 px</option><option value="3840">超清 · 最长边 3840 px</option></select></label>
+        <label>每次最多生成<input type="number" name="maxImages" min="1" max="9" required></label>
+        <label>最多参考图片<input type="number" name="maxReferences" min="0" max="16" required></label>
+        <label>GIF 最大帧数<select name="maxGifFrames"><option>4</option><option>9</option><option>12</option><option>16</option></select></label>
+      </div></section>
+      <section><h3>附加功能</h3><div id="tier-switches" class="tier-switch-grid"></div></section>
+      <div id="tier-live-summary" class="tier-assignment-summary" aria-live="polite"></div>
+      <p class="error" role="alert" hidden></p>
+    </div><footer><button type="button" data-close>取消</button><button type="submit" class="primary">保存档位</button></footer>
+  </form></dialog>
+  <dialog id="delete-key-dialog" aria-labelledby="delete-key-title"><form id="delete-key-form" class="editor">
+    <header><h2 id="delete-key-title">删除分发密钥</h2><button type="button" class="icon-button" data-close aria-label="关闭"><i data-icon="X"></i></button></header>
+    <div class="editor-body"><p id="delete-key-name"></p><p id="delete-key-note" class="hint">删除后立即停止该密钥的新请求，历史用量回执保留。</p><p class="error" role="alert" hidden></p></div>
+    <footer><button type="button" data-close>取消</button><button id="delete-key-confirm" type="submit" class="danger">删除密钥</button></footer>
+  </form></dialog>
 </body>
 </html>

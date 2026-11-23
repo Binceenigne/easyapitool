@@ -36,7 +36,7 @@ func (a *admin) routes(m *mobile) http.Handler {
 		panic(err)
 	}
 	files := http.FileServerFS(web)
-	for _, path := range []string{"/{$}", "/admin.css", "/admin.js", "/admin-models.js", "/icons.svg", "/mirra.png"} {
+	for _, path := range []string{"/{$}", "/admin.css", "/admin.js", "/admin-models.js", "/admin-tiers.js", "/icons.svg", "/mirra.png"} {
 		mux.Handle("GET "+path, files)
 	}
 	if m != nil {
@@ -55,6 +55,9 @@ func (a *admin) routes(m *mobile) http.Handler {
 	mux.HandleFunc("POST /admin/models", a.protected(a.configureModels))
 	mux.HandleFunc("POST /admin/keys/{id}/reset", a.protected(a.resetQuota))
 	mux.HandleFunc("POST /admin/keys", a.protected(a.saveKey))
+	mux.HandleFunc("POST /admin/keys/{id}/reveal", a.protected(a.revealKey))
+	mux.HandleFunc("POST /admin/keys/{id}/delete", a.protected(a.deleteKey))
+	mux.HandleFunc("POST /admin/tiers", a.protected(a.saveTier))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.Host)
 		if err != nil {
@@ -247,6 +250,15 @@ func (a *admin) saveKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	k := input.accessKey
+	a.gateway.modelMu.Lock()
+	defer a.gateway.modelMu.Unlock()
+	if k.Policy.TierID == "" {
+		k.Policy.TierID = "default"
+	}
+	if _, ok := a.gateway.appModels().tier(k.Policy.TierID); !ok {
+		jsonError(w, 400, "请选择有效的功能档位")
+		return
+	}
 	k.Name = strings.TrimSpace(k.Name)
 	if len(k.Name) == 0 || len(k.Name) > 120 || len(k.ID) > 40 {
 		jsonError(w, http.StatusBadRequest, "请填写有效的密钥名称")

@@ -213,6 +213,8 @@
       const result = await api('upstreams/' + encodeURIComponent(currentSource) + '/models');
       if (round !== fetchRound) return;
       found = result.models;
+      window.mirraModelCatalog = found;
+      window.renderTiers?.();
       foundImages = result.imageModels || [];
       foundReasoning = result.reasoningCapabilities || {};
       updateCatalog();

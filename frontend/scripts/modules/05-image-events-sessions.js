@@ -5,7 +5,7 @@
             if (performance.now() < pending.unlockAt) return;
             window.imageEditState.pendingSubmission = null;
             const button = document.getElementById('generateEditedImageButton');
-            button.disabled = false;
+            button.disabled = !imageGenerationAllowed();
             button.removeAttribute('aria-busy');
         }
 
@@ -389,6 +389,7 @@
         }
 
         function enterImageEditSession(setId) {
+            if (!imageTierFeature('imageEditing') || !imageReferenceLimit()) return showToast('当前档位未开放续作编辑', 'info');
             const set = imageGenerationSetById(setId);
             if (!set) return;
             const results = set.items.filter(item => item.result).map(item => item.result);
@@ -453,7 +454,7 @@
                 setImageTransparency(draft.transparency || 'auto', false);
                 setImageModel(draft.imageModel || 'gpt-image-2', false);
                 setImageAspectRatio(draft.aspectRatio || 'auto', false);
-                setImageQuality(draft.quality || 'auto', false);
+                setImageQuality(draft.quality || 'medium', false);
                 window.imageEditState.preferredImageComplexity = draft.complexity || 'auto';
                 window.imageEditState.preferredImageFormat = draft.outputFormat || 'png';
                 setImageComplexity(window.imageEditState.preferredImageComplexity, false);
@@ -732,7 +733,7 @@
             try {
                 const copied = await window.pywebview.api.copy_generated_image(result.path);
                 if (!copied.ok) throw new Error(copied.error || '复制图片失败');
-                showToast('图片已复制到剪贴板');
+                showToast(copied.message || '图片已复制到剪贴板');
                 return true;
             } catch (error) {
                 showToast(error.message || String(error), 'error');
@@ -901,6 +902,7 @@
             const button = document.getElementById('generateEditedImageButton');
             const status = document.getElementById('imageEditStatus');
             const requestId = globalThis.crypto?.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            if (!imageGenerationAllowed()) return showToast('当前档位未开放这些生图选项，请调整模型、格式或参考图', 'error');
             const imageCount = window.imageEditState.imageCount;
             const aspectRatio = effectiveImageRatio();
             const transparency = window.imageEditState.transparency;
@@ -931,8 +933,8 @@
                 reasoningDepth: window.imageEditState.reasoningAdvanced
                     ? window.imageEditState.reasoningAdvancedEffort
                     : '',
-                webSearchEnabled: window.imageEditState.reasoningAdvanced
-                    || useReasoning && window.imageEditState.webSearchEnabled
+                webSearchEnabled: imageTierFeature('webSearch') && (window.imageEditState.reasoningAdvanced
+                    || useReasoning && window.imageEditState.webSearchEnabled)
             };
             window.imageEditState.pendingSubmission = { requestId, unlockAt: performance.now() + 500, confirmed: false };
             button.disabled = true;

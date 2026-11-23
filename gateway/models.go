@@ -18,6 +18,18 @@ type modelPreset struct {
 	Effort string `json:"effort"`
 }
 
+// An omitted effort keeps the upstream's model default. Authorization and the
+// client profile must use that same effective value without changing the saved
+// administrator setting.
+func effectiveReasoningEffort(model, effort string) string {
+	if effort == "" {
+		if capability, known := documentedReasoning(model); known {
+			return capability.Default
+		}
+	}
+	return effort
+}
+
 type svgSettings struct {
 	Enabled bool `json:"enabled"`
 	modelPreset
@@ -32,6 +44,10 @@ type imageFeatures struct {
 }
 
 type modelSettings struct {
+	Tiers                 []featureTier                  `json:"tiers,omitempty"`
+	Tier                  *featureTier                   `json:"tier,omitempty"`
+	Polish                modelPreset                    `json:"polish"`
+	Continuation          modelPreset                    `json:"continuation"`
 	Revision              int64                          `json:"revision"`
 	DefaultImage          string                         `json:"defaultImage"`
 	ImageModels           []string                       `json:"imageModels"`
@@ -88,6 +104,7 @@ func modelDefaults(cfg config) modelSettings {
 		settings.Reasoning[slot] = modelPreset{Model: model, Effort: effort}
 	}
 	settings.ReasoningModes = defaultReasoningModes(settings.Reasoning)
+	settings.ensureTiers()
 	settings.applyCapabilities()
 	return settings
 }
@@ -167,6 +184,7 @@ func (g *gateway) loadModels(ctx context.Context) error {
 		if settings.ReasoningModes == nil {
 			settings.ReasoningModes = defaultReasoningModes(settings.Reasoning)
 		}
+		settings.ensureTiers()
 		if settings.validate() != nil {
 			return errors.New("已保存的模型配置无效")
 		}
@@ -198,6 +216,19 @@ func (g *gateway) saveModels(ctx context.Context, proposed modelSettings) (*mode
 	if proposed.ReasoningModes == nil {
 		proposed.ReasoningModes = current.ReasoningModes
 	}
+	if proposed.Tiers == nil {
+		proposed.Tiers = current.Tiers
+	}
+	proposed.ensureTiers()
+	if err := validateTiers(proposed.Tiers); err != nil {
+		return nil, err
+	}
+	if err := g.validateTierAssignments(ctx, &proposed); err != nil {
+		return nil, err
+	}
+	proposed.Tiers = sortedTiers(proposed.Tiers)
+	proposed.Tier = nil
+	proposed.Polish, proposed.Continuation = modelPreset{}, modelPreset{}
 	if err := proposed.validate(); err != nil {
 		return nil, err
 	}
@@ -224,7 +255,7 @@ var errModelsStorage = errors.New("模型配置暂时无法保存")
 
 func (a *admin) configureModels(w http.ResponseWriter, r *http.Request) {
 	var input modelSettings
-	if !decodeRequest(w, r, 64<<10, &input) {
+	if !decodeRequest(w, r, 256<<10, &input) {
 		return
 	}
 	saved, err := a.gateway.saveModels(r.Context(), input)

@@ -104,7 +104,7 @@ func TestHourlyAffinity(t *testing.T) {
 func TestReservationAndBudgets(t *testing.T) {
 	g := testGateway(t)
 	u := addUpstream(t, g, "quota", "", openAIBaseURL)
-	now := time.Now()
+	now := time.Date(2026, 11, 23, 8, 0, 0, 0, billingZone)
 	k, _ := issue(t, g, accessKey{Name: "bounded", Upstream: u.ID, Policy: keyPolicy{H5: 3000, D1: 4000, D7: 5000}})
 	selected := route{key: k, upstream: u}
 	var started atomic.Int32
@@ -206,6 +206,7 @@ func TestProxyReportsTruncatedImageStream(t *testing.T) {
 
 func TestAdminAndTransparentMetering(t *testing.T) {
 	g := testGateway(t)
+	g.cfg.imageModel = "test-image"
 	const input = `{"model":"test-image","complexity":"high","output_format":"webp","size":"1024x768","mask":"untouched"}`
 	const usage = `{"input_tokens":100,"output_tokens":200,"total_tokens":300}`
 	const output = "data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"partial\"}\n\n" +

@@ -1,7 +1,7 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
-const pages = { overview: '总览', pools: '上游号池', keys: '分发密钥', usage: '用量明细', models: '模型配置', proxy: '代理配置' };
+const pages = { overview: '总览', pools: '上游号池', keys: '分发密钥', usage: '用量明细', models: '模型配置', tiers: '档位对比', proxy: '代理配置' };
 const modeNames = { environment: '跟随 .env', direct: '直接连接', custom: '自定义代理' };
 const usd = amount => new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:6}).format(amount);
 const number = value => Number(value).toLocaleString('zh-CN');
@@ -269,12 +269,12 @@ function renderKeys() {
     const windows=state.usage[k.id].windows;
     const costs=node('div','budgets');
     for (const [id,label] of [['5h','5h'],['1d','1d'],['7d','7d']]) costs.append(node('small','',label+'  '+budgetText(windows[id])));
-    return [stacked(k.name,k.prefix+'…'),u?.pool || u?.name || '—',status(label,keyStatus(k)==='active'?'good':keyStatus(k)==='expired'?'warn':''),costs,ends,actions(action('编辑',()=>openKey(k)),action('用量',()=>{$('usage-filter').value=k.id;renderUsage();location.hash='/usage';}),action('重置额度',()=>openReset(k)),action(k.enabled?'停用':'启用',async()=>{
+    return [stacked(k.name,k.prefix+'…'),window.keyTierBadge?.(k)||'完整权限',u?.pool || u?.name || '—',status(label,keyStatus(k)==='active'?'good':keyStatus(k)==='expired'?'warn':''),costs,ends,actions(action('查看',()=>window.viewDistributedKey(k)),action('编辑',()=>openKey(k)),action('删除',()=>window.confirmDeleteDistributedKey(k)),action('用量',()=>{$('usage-filter').value=k.id;renderUsage();location.hash='/usage';}),action('重置额度',()=>openReset(k)),action(k.enabled?'停用':'启用',async()=>{
       await api('keys',{...k,revision:state.usage[k.id].quotaRevision,enabled:!k.enabled});
       await afterSave('密钥已'+(k.enabled?'停用':'启用'));
     }))];
   });
-  $('key-list').replaceChildren(table(['密钥','号池 / 上游','状态','已用 / 限额（USD）','有效期','操作'],rows,true));
+  $('key-list').replaceChildren(table(['密钥','功能档位','号池 / 上游','状态','已用 / 限额（USD）','有效期','操作'],rows,true));
 }
 
 function renderUsage() {
@@ -404,6 +404,7 @@ function openKey(k=null) {
     choices.push(new Option((group.named ? group.name : member.name+'（独立上游）')+' · '+group.base,member.id));
   }
   f.upstreamId.replaceChildren(...choices);
+  window.prepareKeyTier?.(k);
   $('key-title').textContent=$('save-key').textContent=k?'保存密钥修改':'签发密钥';
   $('custom-line').hidden=!!k;f.customOn.disabled=!!k;
   $('pricing-hint').textContent=state.gateway.pricingReady?'USD 为单位，0 表示不限。每次请求先预留 '+usd(state.gateway.reserveMicroUSD/1e6)+'，收到可计价回执后结算。':'服务器需先配置模型费率和预留金额才可启用 USD 限额。';
@@ -445,7 +446,7 @@ async function refresh() {
   const fresh=await api('state');
   if(id!==loadID)return;
   state=fresh;$('auth').hidden=true;$('app').hidden=false;
-  renderOverview();renderPools();renderKeys();renderUsage();renderProxy();window.renderModelSettings?.();navigate();
+  renderOverview();renderPools();renderKeys();renderUsage();renderProxy();window.renderModelSettings?.();window.renderTiers?.();navigate();
   $('last-sync').textContent='更新于 '+new Date().toLocaleTimeString('zh-CN',{hour12:false});
 }
 async function afterSave(message) {
@@ -477,11 +478,11 @@ submit('key-form',async form=>{
   const issued=await api('keys',{
     id:editingKey?.id||'',revision:editingKey?keyRevision:null,name:f.name.value,upstreamId:f.upstreamId.value,enabled:f.enabled.checked,
     customKey:f.customOn.checked?f.customKey.value:'',
-    policy:{ips:f.ipOn.checked?f.ips.value.split(/[\s,]+/).filter(Boolean):[],expiresAt:end,totalMicroUSD:micro('totalUsd'),
+    policy:{tierId:f.tierId.value,ips:f.ipOn.checked?f.ips.value.split(/[\s,]+/).filter(Boolean):[],expiresAt:end,totalMicroUSD:micro('totalUsd'),
       fiveHourMicroUSD:micro('fiveHourUsd'),dayMicroUSD:micro('dayUsd'),weekMicroUSD:micro('weekUsd')}
   });
   $('key-dialog').close();
-  if(issued.secret){$('secret').value=issued.secret;$('secret-note').textContent='完整值仅显示一次，请复制后妥善保存。';openDialog('secret-dialog');}
+  if(issued.secret){$('secret-title').textContent='密钥已签发';$('secret').value=issued.secret;$('secret-note').textContent='密钥已加密保存，可从分发密钥列表再次查看。';openDialog('secret-dialog');}
   await afterSave(issued.secret?'已签发分发密钥':'已保存密钥修改');
 });
 function showResetAmounts() {

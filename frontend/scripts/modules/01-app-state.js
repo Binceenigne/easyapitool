@@ -46,7 +46,7 @@
             aspectRatio: 'auto',
             transparency: 'auto',
             imageModel: 'gpt-image-2',
-            quality: 'auto',
+            quality: 'medium',
             complexity: 'auto',
             outputFormat: 'png',
             resolution: 'sd',

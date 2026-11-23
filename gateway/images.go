@@ -61,7 +61,7 @@ func (g *gateway) imageOptions(options object, edit bool, settings *modelSetting
 		}
 	}
 	if o.quality == "" {
-		o.quality = "auto"
+		o.quality = "medium"
 	}
 	if o.background == "" {
 		o.background = objectString(options, "transparency")
@@ -167,6 +167,9 @@ func validImageSize(size string) bool {
 func (m *mobile) renderImage(ctx context.Context, id credentialID, key keyInput, ip netip.Addr, prompt string, o imageOptions, refs []asset, index int) (object, error) {
 	selected, err := m.resolveKey(ctx, key, ip, true)
 	if err != nil {
+		return nil, err
+	}
+	if err := m.g.checkImageTier(selected.key, o, len(refs)); err != nil {
 		return nil, err
 	}
 	model := o.model

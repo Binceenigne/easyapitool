@@ -5,12 +5,12 @@
             instant: 'Instant', flash: 'Flash', medium: 'Medium', high: 'High', extra: 'Extra', max: 'Max', advanced: '高级'
         };
         const IMAGE_REASONING_DESCRIPTIONS = {
-            instant: '直接快速获得结果',
-            flash: '快速思考，优化生成质量',
-            medium: '增强推理，丰富画面细节',
-            high: '深入编排方案，强化视觉表现',
-            extra: '延长思维链，持续推演与优化',
-            max: '使用顶级模型持续反思，获得最优结果'
+            instant: '直接生成，适合目标明确、希望快速看到结果的任务。',
+            flash: '快速整理提示词，适合简单构思和多次尝试。',
+            medium: '兼顾思考与速度，适合需要补充画面细节的任务。',
+            high: '深入整理构图与约束，适合较复杂的视觉方案。',
+            extra: '进一步推演并优化方案，适合多条件任务，等待可能更长。',
+            max: '使用预设的更高思考档处理困难任务，等待可能更长。'
         };
         const IMAGE_REASONING_TRACK_COLORS = [
             ['#64748b', '#74849a', '#8494a9', '#94a3b8'],
@@ -33,9 +33,9 @@
             high: '#5865f2', extra: '#6d5dfc', max: '#536dfe', advanced: '#6366f1'
         };
         const IMAGE_ADVANCED_MODEL_DETAILS = {
-            luna: { name: 'gpt6luna', hue: 199, description: '轻快响应 · 日常问答首选' },
-            terra: { name: 'gpt6.1terra', hue: 229, description: '均衡全能 · 复杂任务更稳' },
-            sol: { name: 'gpt6.1sol', hue: 258, description: '旗舰推理 · 挑战最难问题' }
+            luna: { name: 'gpt-6-luna', hue: 199, description: '轻快响应 · 日常问答首选' },
+            terra: { name: 'gpt-6.1-terra', hue: 229, description: '均衡全能 · 复杂任务更稳' },
+            sol: { name: 'gpt-6.1-sol', hue: 258, description: '旗舰推理 · 挑战最难问题' }
         };
         const IMAGE_ADVANCED_EFFORT_DETAILS = {
             low: '低耗速答', medium: '适度思考', high: '深度推理', xhigh: '超长思维链', max: '极限反思'
@@ -83,6 +83,19 @@
         let imageReasoningPulseTimer = 0;
         let imageReasoningMaxTransitionTimer = 0;
 
+        function availableImageReasoningModes() {
+            const profile = activeImageProfile();
+            return !profile?.tier ? IMAGE_REASONING_MODES : IMAGE_REASONING_MODES.filter(mode => mode === 'instant' || imageTierAllows('reasoningModes', mode) && Object.hasOwn(profile.reasoningModes || {}, mode));
+        }
+
+        function availableImageAdvancedModels() {
+            return IMAGE_ADVANCED_MODELS.filter(slot => imageAdvancedCapabilities(slot).model && imageAdvancedCapabilities(slot).efforts.length);
+        }
+
+        function imageAdvancedAllowed() {
+            return imageTierFeature('advanced') && availableImageAdvancedModels().length > 0;
+        }
+
         function normalizeImageReasoningMode(mode) {
             const cleanMode = String(mode || 'instant').toLowerCase();
             return cleanMode === 'advanced' || IMAGE_REASONING_MODES.includes(cleanMode) ? cleanMode : 'instant';
@@ -106,17 +119,18 @@
         function imageAdvancedCapabilities(slot) {
             const profile = activeImageProfile();
             const preset = profile?.reasoning?.[slot];
-            const model = preset?.model || IMAGE_REASONING_MODEL_IDS[slot];
+            const model = preset?.model || (profile?.reasoning ? '' : IMAGE_REASONING_MODEL_IDS[slot]);
+            if (!model || !imageTierAllows('reasoningModels', model)) return { model: '', efforts: [], preferred: '' };
             const caps = profile?.reasoningCapabilities?.[model];
             if (caps) {
-                return { model, efforts: IMAGE_ADVANCED_EFFORTS.filter(effort => caps.efforts.includes(effort)),
+                return { model, efforts: IMAGE_ADVANCED_EFFORTS.filter(effort => caps.efforts.includes(effort) && imageTierAllows('reasoningEfforts', effort)),
                     preferred: caps.default };
             }
             const base = model.replace(/-\d{4}-\d{2}-\d{2}$/, '');
             if (Object.values(IMAGE_REASONING_MODEL_IDS).includes(base)) {
-                return { model, efforts: IMAGE_ADVANCED_EFFORTS, preferred: 'medium' };
+                return { model, efforts: IMAGE_ADVANCED_EFFORTS.filter(effort => imageTierAllows('reasoningEfforts', effort)), preferred: 'medium' };
             }
-            return { model, efforts: IMAGE_ADVANCED_EFFORTS.filter(effort => preset?.effort === effort),
+            return { model, efforts: IMAGE_ADVANCED_EFFORTS.filter(effort => preset?.effort === effort && imageTierAllows('reasoningEfforts', effort)),
                 preferred: preset?.effort || '' };
         }
 
@@ -125,7 +139,7 @@
             if (!efforts.length) return '';
             if (efforts.includes(effort)) return effort;
             const position = IMAGE_ADVANCED_EFFORTS.indexOf(effort);
-            if (position < 0) return efforts.includes(preferred) ? preferred : efforts[0];
+            if (position < 0) return efforts.includes(preferred) ? preferred : efforts.includes('medium') ? 'medium' : efforts[0];
             const distance = value => Math.abs(IMAGE_ADVANCED_EFFORTS.indexOf(value) - position);
             return efforts.reduce((best, value) => distance(value) < distance(best) ? value : best);
         }
@@ -177,7 +191,7 @@
         function normalReasoningPreset(mode) {
             const profile = activeImageProfile();
             const slot = { flash: 'luna', medium: 'luna', high: 'terra', extra: 'terra', max: 'sol' }[mode];
-            return profile?.reasoningModes?.[mode] || profile?.reasoning?.[slot];
+            return profile?.reasoningModes ? profile.reasoningModes[mode] : profile?.reasoning?.[slot];
         }
 
         function imageModeUsesReasoning(mode) {
@@ -193,9 +207,18 @@
         function syncImageReasoningLabels() {
             const state = window.imageEditState;
             const mode = normalizeImageReasoningMode(state.reasoningMode);
+            document.getElementById('advancedEntryButton').hidden = !imageAdvancedAllowed();
+            if (state.reasoningAdvanced && !imageAdvancedAllowed()) { returnToNormalImageReasoningMode(false); return; }
+            if (!state.reasoningAdvanced && !availableImageReasoningModes().includes(mode)) { setImageReasoningMode('instant', false); return; }
+            if (state.reasoningAdvanced) setImageAdvancedMode(state.reasoningAdvancedModel, state.reasoningAdvancedEffort, false);
+            document.querySelectorAll('#reasoningSliderTrack .slider-dot').forEach((dot, index) => {
+                const permitted = availableImageReasoningModes().includes(IMAGE_REASONING_MODES[index]);
+                dot.classList.toggle('is-unavailable', !permitted); dot.title = permitted ? IMAGE_REASONING_LABELS[IMAGE_REASONING_MODES[index]] : '当前档位未开放';
+            });
             document.querySelectorAll('.advanced-y-label').forEach(label => {
                 const slot = IMAGE_ADVANCED_MODELS[Number(label.dataset.yLabel)];
                 const { model, efforts } = imageAdvancedCapabilities(slot);
+                label.hidden = !model || !efforts.length;
                 label.firstElementChild.textContent = model;
                 label.dataset.imageTip = imageReasoningModelTip(model) + (efforts.length
                     ? ' 可选思考档位 ' + efforts.join('、') + '。' : ' 使用上游默认思考设置。');
@@ -207,13 +230,10 @@
             else {
                 const description = document.getElementById('reasoningSliderDesc');
                 description.textContent = reasoningPresetText(mode);
-                const configured = normalReasoningPreset(mode);
-                const tip = configured?.model ? imageReasoningModelTip(configured.model) : '';
-                description.dataset.imageTip = [IMAGE_REASONING_DESCRIPTIONS[mode], tip,
-                    IMAGE_REASONING_EFFORT_TIPS[configured?.effort]].filter(Boolean).join(' ');
+                description.dataset.imageTip = IMAGE_REASONING_DESCRIPTIONS[mode];
                 document.getElementById('reasoningSliderTrack').dataset.imageTip = description.dataset.imageTip;
             }
-            document.getElementById('imageWebSearchEnabled').disabled = !imageModeUsesReasoning(mode);
+            document.getElementById('imageWebSearchEnabled').disabled = !imageModeUsesReasoning(mode) || !imageTierFeature('webSearch');
         }
 
         function imageReasoningModeLabel(mode, model = '', effort = '') {
@@ -353,7 +373,7 @@
             if (pad) pad.style.boxShadow = imageAdvancedPadGlow(effortIndex, modelIndex);
             const badge = document.getElementById('advancedStateBadge');
             if (badge) {
-                badge.textContent = `${cleanModel} · ${cleanEffort || '默认'}`;
+                badge.textContent = `${available.model} · ${cleanEffort || '默认'}`;
                 badge.style.color = `hsl(${modelDetails.hue}, 78%, ${46 - effortIndex}%)`;
             }
             const description = document.getElementById('advancedDesc');
@@ -361,8 +381,7 @@
                 const configured = activeImageProfile()?.reasoning?.[cleanModel]?.model;
                 description.textContent = [configured || available.model,
                     IMAGE_ADVANCED_EFFORT_DETAILS[cleanEffort] || '上游默认'].join(' · ');
-                description.dataset.imageTip = [imageReasoningModelTip(available.model),
-                    IMAGE_REASONING_EFFORT_TIPS[cleanEffort]].filter(Boolean).join(' ');
+                description.dataset.imageTip = '自行选择思维模型和思考档位；较高档位通常需要更长等待。';
             }
             updateImageAdvancedHighlights(effortIndex, modelIndex, false);
             applyImageAdvancedButtonTheme(modelIndex, effortIndex);
@@ -370,7 +389,10 @@
 
         function setImageAdvancedMode(model, effort, persist = true) {
             const state = window.imageEditState;
-            const cleanModel = normalizeImageAdvancedModel(model);
+            if (!imageAdvancedAllowed()) { returnToNormalImageReasoningMode(false); return; }
+            const permittedModels = availableImageAdvancedModels();
+            const requestedModel = normalizeImageAdvancedModel(model);
+            const cleanModel = permittedModels.includes(requestedModel) ? requestedModel : permittedModels[0];
             const cleanEffort = compatibleImageAdvancedEffort(cleanModel, effort);
             if (state.reasoningMode !== 'advanced') {
                 state.reasoningPreviousMode = normalizeImageReasoningPreset(state.reasoningMode);
@@ -389,7 +411,7 @@
             document.getElementById('imageReasoningMenuButton').title = `高级模式：${cleanModel} · ${cleanEffort || '默认'}`;
             const searchToggle = document.getElementById('imageWebSearchEnabled');
             if (searchToggle) {
-                searchToggle.checked = true;
+                searchToggle.checked = imageTierFeature('webSearch');
                 searchToggle.disabled = true;
             }
             updateImageAdvancedSelectionUi(cleanModel, cleanEffort);
@@ -573,7 +595,9 @@
         }
 
         function setImageReasoningMode(mode, persist = true) {
-            const cleanMode = normalizeImageReasoningPreset(mode);
+            const wantedMode = normalizeImageReasoningPreset(mode);
+            const permittedModes = availableImageReasoningModes();
+            const cleanMode = permittedModes.includes(wantedMode) ? wantedMode : permittedModes.reduce((best, candidate) => Math.abs(IMAGE_REASONING_MODES.indexOf(candidate) - IMAGE_REASONING_MODES.indexOf(wantedMode)) < Math.abs(IMAGE_REASONING_MODES.indexOf(best) - IMAGE_REASONING_MODES.indexOf(wantedMode)) ? candidate : best, 'instant');
             const modeIndex = IMAGE_REASONING_MODES.indexOf(cleanMode);
             const previousMode = window.imageEditState.reasoningMode;
             window.imageEditState.reasoningMode = cleanMode;
@@ -623,8 +647,8 @@
             syncImageReasoningLabels();
             document.getElementById('imageReasoningMenuButton').title = `思维深度：${IMAGE_REASONING_LABELS[cleanMode]}`;
             const searchToggle = document.getElementById('imageWebSearchEnabled');
-            searchToggle.disabled = !imageModeUsesReasoning(cleanMode);
-            searchToggle.checked = window.imageEditState.webSearchEnabled;
+            searchToggle.disabled = !imageModeUsesReasoning(cleanMode) || !imageTierFeature('webSearch');
+            searchToggle.checked = window.imageEditState.webSearchEnabled && imageTierFeature('webSearch');
             scheduleNextImageReasoningPulse(true);
             if (persist) persistImageGenerationPreferences();
         }
@@ -632,10 +656,10 @@
         function setImageWebSearchEnabled(enabled, persist = true) {
             if (window.imageEditState.reasoningAdvanced) {
                 const toggle = document.getElementById('imageWebSearchEnabled');
-                if (toggle) toggle.checked = true;
+                if (toggle) toggle.checked = imageTierFeature('webSearch');
                 return;
             }
-            window.imageEditState.webSearchEnabled = enabled === true;
+            window.imageEditState.webSearchEnabled = enabled === true && imageTierFeature('webSearch');
             const toggle = document.getElementById('imageWebSearchEnabled');
             if (toggle) toggle.checked = window.imageEditState.webSearchEnabled;
             if (persist) persistImageGenerationPreferences();
@@ -671,15 +695,16 @@
             sliderTrack.addEventListener('pointercancel', endDrag);
             sliderTrack.addEventListener('keydown', event => {
                 if (window.imageEditState.busy) return;
-                const currentIndex = IMAGE_REASONING_MODES.indexOf(window.imageEditState.reasoningMode);
+                const permitted = availableImageReasoningModes();
+                const currentIndex = permitted.indexOf(window.imageEditState.reasoningMode);
                 let nextIndex = currentIndex;
                 if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextIndex -= 1;
                 else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextIndex += 1;
                 else if (event.key === 'Home') nextIndex = 0;
-                else if (event.key === 'End') nextIndex = IMAGE_REASONING_MODES.length - 1;
+                else if (event.key === 'End') nextIndex = permitted.length - 1;
                 else return;
                 event.preventDefault();
-                setImageReasoningMode(IMAGE_REASONING_MODES[Math.max(0, Math.min(IMAGE_REASONING_MODES.length - 1, nextIndex))]);
+                setImageReasoningMode(permitted[Math.max(0, Math.min(permitted.length - 1, nextIndex))]);
             });
         }
 
@@ -691,6 +716,7 @@
         }
 
         function showImageReasoningAdvancedView(activate = true) {
+            if (!imageAdvancedAllowed()) { showImageReasoningMainView(); return; }
             const state = window.imageEditState;
             if (activate) {
                 setImageAdvancedMode(state.reasoningAdvancedModel, state.reasoningAdvancedEffort);
@@ -820,6 +846,7 @@
         }
 
         async function polishImagePrompt() {
+            if (!imageTierFeature('promptPolish')) return showToast('当前档位未开放提示词润色', 'info');
             if (window.imageEditState.polishing || window.imageEditState.busy) return;
             const activeKey = getActiveKey();
             const prompt = document.getElementById('imageEditPrompt');
@@ -834,7 +861,7 @@
             button.querySelector('[data-lucide], svg')?.classList.add('is-spinning');
             prompt.value = '';
             try {
-                const result = await window.pywebview.api.polish_prompt(activeKey.id, originalPrompt);
+                const result = await window.pywebview.api.polish_prompt(activeKey.id, originalPrompt, currentNativeImageOptions());
                 if (!result.ok) throw new Error(result.error || '提示词润色失败');
                 prompt.value = result.prompt;
                 document.getElementById('imagePromptModalTextarea').value = result.prompt;
@@ -846,7 +873,7 @@
                 showToast(error.message || String(error), 'error');
             } finally {
                 window.imageEditState.polishing = false;
-                button.disabled = false;
+                button.disabled = !imageTierFeature('promptPolish');
                 button.classList.remove('is-active');
                 setLucideIcon(button.querySelector('[data-lucide], svg'), 'sparkles');
             }
@@ -1127,18 +1154,19 @@
             set.loadingPreviews = true;
             renderImageGenerationSets();
             await Promise.all(set.items.map(async item => {
-                const previewPath = item.previewPath || item.result?.previewPath;
+                const previewPath = item.previewPath || item.result?.previewPath || item.path || item.result?.path;
                 if (!previewPath || item.previewUri || !window.pywebview?.api?.load_generated_image) return;
                 try {
                     const loaded = await window.pywebview.api.load_generated_image(previewPath);
                     if (!loaded.ok || !loaded.dataUrl) return;
+                    if (!set.expanded) return;
                     item.previewUri = loaded.dataUrl;
                     if (item.result) item.result.previewUri = loaded.dataUrl;
                 } catch (error) {
                     console.warn('历史缩略图加载失败:', error);
                 }
             }));
-            set.previewsLoaded = true;
+            set.previewsLoaded = set.expanded && set.items.filter(item => item.status === 'completed').every(item => Boolean(browserImageSource(item.previewUri, item.result?.previewUri)));
             set.loadingPreviews = false;
             renderImageGenerationSets();
         }
@@ -1148,7 +1176,7 @@
         }
 
         async function loadImageGenerationSetOriginals(set) {
-            if (!set || !isLatestImageGenerationSet(set) || set.originalsLoaded || set.loadingOriginals) return;
+            if (!set?.expanded || !isLatestImageGenerationSet(set) || set.originalsLoaded || set.loadingOriginals) return;
             const completedItems = set.items.filter(item => item.status === 'completed' && !item.fullUri && !item.originalLoadAttempted);
             if (!completedItems.length) {
                 const completed = set.items.filter(item => item.status === 'completed');
@@ -1165,7 +1193,7 @@
                 if (!sourcePath) return false;
                 try {
                     const loaded = await loadImage(sourcePath);
-                    if (!loaded.ok || !loaded.dataUrl) return false;
+                    if (!loaded.ok || !loaded.dataUrl || !set.expanded) return false;
                     const currentItem = set.items.find(candidate => Number(candidate.itemIndex) === Number(item.itemIndex)) || item;
                     currentItem.fullUri = loaded.dataUrl;
                     currentItem.originalLoadAttempted = true;
@@ -1320,16 +1348,21 @@
             const set = imageGenerationSetById(setId);
             if (!set) return;
             set.expanded = !set.expanded;
-            if (set.expanded) set.justCompleted = false;
+            if (set.expanded) {
+                set.justCompleted = false;
+                set.items.forEach(item => { if (!item.fullUri) item.originalLoadAttempted = false; });
+            }
             if (set.expanded && set.history && !set.previewsLoaded) {
+                renderImageGenerationSets();
                 void loadImageGenerationSetPreviews(set);
                 return;
             }
             if (!set.expanded && set.history) {
                 set.previewsLoaded = false;
+                set.originalsLoaded = false;
                 set.items.forEach(item => {
-                    item.previewUri = '';
-                    if (item.result) item.result.previewUri = '';
+                    item.previewUri = ''; item.fullUri = ''; item.revealFrames = [];
+                    if (item.result) { item.result.previewUri = ''; item.result.fullUri = ''; }
                 });
             }
             renderImageGenerationSets();

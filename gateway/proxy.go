@@ -97,6 +97,11 @@ func (g *gateway) proxyError(w http.ResponseWriter, err error) {
 		writeJSON(w, status, object{"error": object{"type": code, "code": code, "message": message, "quota": detail}})
 		return
 	default:
+		var tier *tierError
+		if errors.As(err, &tier) {
+			openAIError(w, http.StatusForbidden, "tier_permission_denied", tier.Error())
+			return
+		}
 		log.Printf("gateway storage error: %v", err)
 	}
 	openAIError(w, status, code, message)
@@ -117,7 +122,14 @@ func (g *gateway) proxyUsage(w http.ResponseWriter, r *http.Request) {
 		g.proxyError(w, err)
 		return
 	}
-	payload["appModels"] = g.appModels()
+	payload["appModels"], err = g.modelsForKey(selected.key)
+	if err != nil {
+		g.proxyError(w, err)
+		return
+	}
+	if profile, ok := payload["appModels"].(*modelSettings); ok {
+		payload["planName"] = profile.Tier.Name
+	}
 	writeJSON(w, http.StatusOK, payload)
 }
 
@@ -141,6 +153,21 @@ func (g *gateway) proxy(path string) http.HandlerFunc {
 				return
 			}
 			body = http.MaxBytesReader(w, r.Body, maxProxyBody)
+			var cleanup func()
+			body, cleanup, err = g.authorizeProxyBody(r, selected.key, path, body)
+			if err != nil {
+				var denied *tierError
+				var tooLarge *http.MaxBytesError
+				if errors.As(err, &denied) {
+					g.proxyError(w, err)
+				} else if errors.As(err, &tooLarge) {
+					openAIError(w, 413, "body_too_large", "请求体超过网关上限")
+				} else {
+					openAIError(w, 400, "invalid_request", err.Error())
+				}
+				return
+			}
+			defer cleanup()
 			if len(g.cfg.pricing) > 0 && r.Header.Get("Content-Encoding") == "" {
 				body, metadata = inspectRequest(body, r.Header.Get("Content-Type"))
 			}

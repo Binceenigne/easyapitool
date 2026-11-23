@@ -58,12 +58,32 @@ func (m *mobile) createGeneration(w http.ResponseWriter, r *http.Request, owner 
 	}
 	var settings *modelSettings
 	if m.g.managedKey(key) {
-		settings = m.g.appModels()
+		selected, routeErr := m.resolveKey(r.Context(), key, m.g.clientIP(r), false)
+		if routeErr != nil {
+			m.g.proxyError(w, routeErr)
+			return
+		}
+		settings, err = m.g.modelsForKey(selected.key)
+		if err != nil {
+			m.g.proxyError(w, err)
+			return
+		}
 	}
 	options, err := m.g.imageOptions(req.Options, len(req.ReferenceIDs) > 0, settings)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if settings != nil {
+		selected, routeErr := m.resolveKey(r.Context(), key, m.g.clientIP(r), false)
+		if routeErr != nil {
+			m.g.proxyError(w, routeErr)
+			return
+		}
+		if err := m.g.checkImageTier(selected.key, options, len(req.ReferenceIDs)); err != nil {
+			m.g.proxyError(w, err)
+			return
+		}
 	}
 	ip := m.g.clientIP(r)
 	payload, _ := json.Marshal(req)
