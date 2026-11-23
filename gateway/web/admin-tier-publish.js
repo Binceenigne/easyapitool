@@ -18,24 +18,61 @@
     $('landing-preview-snapshot').disabled = !current.publishedAt;
     $('landing-preview-snapshot').title = current.publishedAt ? '查看上次同步保存的内容' : '同步后可查看已发布快照';
     $('landing-preview-hint').textContent = snapshot
-      ? current.enabled ? '当前落地页展示的已同步内容。' : '已保存的公开快照；落地页当前已隐藏。'
-      : '同步后将展示以下 '+selected.length+' 个档位，未同步的修改不会影响当前落地页。';
-    const cards = selected.map(tier => {
-      const q = quota(tier), card = node('article','landing-tier-preview-card');
-      const head = node('header'); head.append(node('strong','',tier.name),node('p','hint',tier.description || '按功能需求选择适合的档位。'));
-      const total = node('div','landing-tier-preview-total'); total.append(node('span','caption','总创作额度'),node('strong','number',amount(q.totalMicroUSD)));
-      const details = node('dl','landing-tier-preview-details');
-      for (const [label,value] of [['5 小时额度',amount(q.fiveHourMicroUSD)],['每日额度',amount(q.dayMicroUSD)],['7 天额度',amount(q.weekMicroUSD)],['有效期',validity(q.expiresInDays)]]) {
-        const row=node('div');row.append(node('dt','caption',label),node('dd','',value));details.append(row);
+      ? current.enabled ? '当前落地页展示的已同步内容。可横向滚动对比档位，纵向查看更多功能。' : '已保存的公开快照；落地页当前已隐藏。可横向滚动对比档位。'
+      : '同步后将展示以下 '+selected.length+' 个档位，未同步的修改不会影响当前落地页。可横向滚动对比档位，纵向查看更多功能。';
+    const preview = $('landing-tier-preview');
+    preview.className = 'landing-preview-table-wrap';
+    preview.replaceChildren();
+    if (!selected.length) {
+      preview.append(empty('Layers3',snapshot?'尚无已同步档位':'选择要展示的档位',snapshot?'先同步所选档位，再核对公开快照。':'勾选左侧档位即可预览。',null,false));
+      return;
+    }
+    const table = node('table','landing-preview-table');
+    table.append(node('caption','sr-only',snapshot?'已发布档位的额度与功能对比':'待同步档位的额度与功能对比'));
+    const header = table.createTHead().insertRow(), corner = node('th','','额度 / 功能');
+    corner.scope = 'col'; header.append(corner);
+    for (const tier of selected) {
+      const cell = node('th'), name = node('strong','',tier.name), description = node('small','hint',tier.description || '按功能需求选择适合的档位。');
+      cell.scope = 'col'; description.title = description.textContent;
+      cell.append(name,description); header.append(cell);
+    }
+    const allowed = (list,names={}) => (list || []).includes('*') ? '全部' : (list || []).length ? list.map(value=>names[value] || value).join('、') : '未开放';
+    const rows = [
+      ['总创作额度',tier=>amount(quota(tier).totalMicroUSD),'amount'],
+      ['5 小时额度',tier=>amount(quota(tier).fiveHourMicroUSD)],
+      ['每日额度',tier=>amount(quota(tier).dayMicroUSD)],
+      ['7 天额度',tier=>amount(quota(tier).weekMicroUSD)],
+      ['有效期',tier=>validity(quota(tier).expiresInDays)],
+      ['最大分辨率',tier=>displayResolution(tier)+' · '+number(tier.maxResolution)+' px'],
+      ['每次生成张数',tier=>'最多 '+number(tier.maxImages)+' 张'],
+      ['参考图上限',tier=>tier.imageEditing?'最多 '+number(tier.maxReferences)+' 张':'未开放'],
+      ['图片质量',tier=>allowed(tier.qualities,{low:'低',medium:'中',high:'高',xhigh:'超高',max:'最高'})],
+      ['构图复杂度',tier=>allowed(tier.complexities,{low:'低',medium:'中',high:'高'})],
+      ['透明背景',tier=>tier.transparency],
+      ['SVG 矢量图',tier=>hasFormat(tier,'svg')],
+      ['GIF 动图',tier=>hasFormat(tier,'gif')],
+      ['GIF 帧数上限',tier=>hasFormat(tier,'gif')?number(tier.maxGifFrames)+' 帧':'—'],
+      ['高级模式',tier=>tier.advanced],
+      ['联网搜索',tier=>tier.webSearch],
+      ['提示词润色',tier=>tier.promptPolish],
+      ['参考图与编辑',tier=>tier.imageEditing],
+      ['输出格式',tier=>allowed(tier.formats,{png:'PNG',jpeg:'JPEG',webp:'WebP',svg:'SVG',gif:'GIF'})],
+      ['思维深度预设',tier=>allowed(tier.reasoningModes,{instant:'Instant',flash:'Flash',medium:'Medium',high:'High',extra:'Extra',max:'Max'})],
+      ['模型思考深度',tier=>allowed(tier.reasoningEfforts,{none:'不启用',minimal:'最少',low:'低',medium:'中',high:'高',xhigh:'超高',max:'最高'})],
+      ['生图模型',tier=>allowed(tier.imageModels)],
+      ['思维模型',tier=>allowed(tier.reasoningModels)]
+    ];
+    const body=table.createTBody();
+    for (const [label,getValue,kind] of rows) {
+      const row=body.insertRow(), title=node('th','',label); title.scope='row'; row.append(title);
+      if (kind) row.className='landing-preview-'+kind+'-row';
+      for (const tier of selected) {
+        const value=getValue(tier), cell=row.insertCell();
+        if (typeof value==='boolean') cell.append(status(value?'允许':'未开放',value?'good':'tier-unavailable'));
+        else cell.append(node(kind==='amount'?'strong':'span',kind==='amount'?'number':'',value));
       }
-      const tags=node('div','tier-tags');tags.append(status(displayResolution(tier)),status('最多 '+tier.maxImages+' 张'));
-      if (hasFormat(tier,'svg')) tags.append(status('SVG 矢量图'));
-      if (hasFormat(tier,'gif')) tags.append(status('GIF 动图'));
-      if (tier.transparency) tags.append(status('透明背景'));
-      card.append(head,total,details,tags);return card;
-    });
-    $('landing-tier-preview').replaceChildren(...cards);
-    if (!cards.length) $('landing-tier-preview').append(empty('Layers3',snapshot?'尚无已同步档位':'选择要展示的档位',snapshot?'先同步所选档位，再核对公开快照。':'勾选左侧档位即可预览。',null,false));
+    }
+    preview.append(table);
   }
 
   window.renderLandingTierSettings = () => {

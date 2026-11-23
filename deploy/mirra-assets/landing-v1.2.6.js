@@ -1,5 +1,5 @@
 import { createIcons } from './icons.min.js';
-import './landing-tiers-v1.js';
+import './landing-tiers-v1.js?v=table-1';
 
 createIcons();
 
