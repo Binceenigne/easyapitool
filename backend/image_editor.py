@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import http.client
 import io
 import json
 import math
@@ -1381,6 +1382,10 @@ def prepare_image_generation(
     )
 
 
+class ImageResponseError(RuntimeError):
+    pass
+
+
 class ImageGenerationClient:
     @staticmethod
     def _opener() -> urllib.request.OpenerDirector:
@@ -1414,14 +1419,23 @@ class ImageGenerationClient:
         stream: bool,
         on_partial: Callable[[str, int], None] | None = None,
     ) -> dict[str, Any]:
-        if not stream:
-            return json.loads(response.read().decode("utf-8"))
+        headers = getattr(response, "headers", None) or {}
+        content_type = headers.get("Content-Type", "").partition(";")[0].strip().lower()
+        if content_type == "application/json" or (not stream and content_type != "text/event-stream"):
+            try:
+                result = json.load(response)
+            except (ValueError, http.client.IncompleteRead, OSError) as exc:
+                raise ImageResponseError("上游响应中断或缺损，未收到完整图片") from exc
+            if not isinstance(result, dict):
+                raise ImageResponseError("上游图片响应格式无效")
+            return result
 
         def image_data(payload: Any) -> str:
             if isinstance(payload, dict):
-                direct = payload.get("b64_json")
-                if isinstance(direct, str) and direct:
-                    return direct
+                for key in ("b64_json", "partial_image_b64"):
+                    direct = payload.get(key)
+                    if isinstance(direct, str) and direct:
+                        return direct
                 for key in ("data", "result", "image", "output", "response"):
                     nested = image_data(payload.get(key))
                     if nested:
@@ -1438,27 +1452,28 @@ class ImageGenerationClient:
         last_partial_image = ""
         partial_count = 0
 
-        def process_event(payload: str, sse_event_type: str = "") -> None:
+        def process_event(event: Any, sse_event_type: str) -> None:
             nonlocal completed, completed_image, last_partial_image, partial_count
             event_name = sse_event_type.strip().lower()
             named_completion = event_name in {"completed", "complete", "done"} or event_name.endswith(
                 (".completed", ".complete", ".done")
             )
-            if not payload:
-                return
-            if payload == "[DONE]":
+            if event == "[DONE]":
                 if named_completion:
                     completed = {"type": event_name}
                 return
-            event = json.loads(payload)
+            if not isinstance(event, dict):
+                return
             event_type = str(event.get("type") or event_name).strip().lower()
+            if event_type == "error" or event_type.endswith((".error", ".failed")) or event.get("error"):
+                raise ImageResponseError("上游生图服务报告了生成失败")
             encoded_image = image_data(event)
             if event_type.endswith(".partial_image"):
-                partial_count += 1
-                if encoded_image:
+                if encoded_image and completed is None:
+                    partial_count += 1
                     last_partial_image = encoded_image
-                if encoded_image and on_partial is not None:
-                    on_partial(encoded_image, partial_count)
+                    if on_partial is not None:
+                        on_partial(encoded_image, partial_count)
                 return
             is_completed = event_type in {"completed", "complete", "done"} or event_type.endswith(
                 (".completed", ".complete", ".done")
@@ -1472,40 +1487,52 @@ class ImageGenerationClient:
                 completed_image = encoded_image
 
         pending_event_type = ""
-        pending_data: list[str] = []
+        pending_data: list[bytes] = []
+        malformed_event = False
+        transport_error = None
 
-        def flush_pending() -> None:
-            nonlocal pending_event_type, pending_data
-            if pending_data:
-                process_event("\n".join(pending_data), pending_event_type)
+        def flush_pending(*, boundary: bool) -> None:
+            nonlocal pending_event_type, malformed_event
+            if not pending_data:
+                if boundary:
+                    pending_event_type = ""
+                return
+            payload = b"\n".join(pending_data)
+            try:
+                event = "[DONE]" if payload.strip() == b"[DONE]" else json.loads(payload)
+            except ValueError:
+                if not boundary:
+                    return
+                malformed_event = True
+            else:
+                process_event(event, pending_event_type)
+            pending_data.clear()
             pending_event_type = ""
-            pending_data = []
 
-        for raw_line in response:
-            line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
-            if not line:
-                flush_pending()
-                continue
-            if line.startswith(":"):
-                continue
-            if line.startswith("event:"):
-                pending_event_type = line[6:].strip()
-                continue
-            if line.startswith("data:"):
-                pending_data.append(line[5:].lstrip())
-                try:
-                    flush_pending()
-                except json.JSONDecodeError:
-                    continue
-                continue
-            flush_pending()
-            if line.lstrip().startswith("{"):
-                process_event(line.strip())
-        flush_pending()
+        try:
+            for raw_line in response:
+                line = raw_line.rstrip(b"\r\n")
+                if not line:
+                    flush_pending(boundary=True)
+                elif line.startswith(b"event:"):
+                    flush_pending(boundary=True)
+                    pending_event_type = line[6:].strip().decode("utf-8", "replace")
+                elif line.startswith(b"data:"):
+                    pending_data.append(line[5:].lstrip())
+                    flush_pending(boundary=False)
+                elif line.lstrip().startswith(b"{"):
+                    flush_pending(boundary=True)
+                    pending_data.append(line.strip())
+                    flush_pending(boundary=True)
+        except (http.client.IncompleteRead, OSError) as exc:
+            transport_error = exc
+        flush_pending(boundary=True)
         if completed is not None and not completed_image and last_partial_image:
             completed_image = last_partial_image
         if completed is None or not completed_image:
-            raise RuntimeError("流式生图接口未返回最终图片")
+            if transport_error is not None or malformed_event:
+                raise ImageResponseError("上游图片流中断或缺损，未收到完整成图") from transport_error
+            raise ImageResponseError("流式生图接口未返回最终图片")
         return {
             "data": [{"b64_json": completed_image}],
             "output_format": completed.get("output_format"),
@@ -1531,6 +1558,7 @@ class ImageGenerationClient:
         request_details = {
             "operation": "generation",
             "model": str(fields.get("model") or ""),
+            "size": str(fields.get("size") or ""),
             "quality": str(fields.get("quality") or ""),
             "outputFormat": str(fields.get("output_format") or ""),
             "moderation": str(fields.get("moderation") or ""),
@@ -1609,6 +1637,8 @@ class ImageGenerationClient:
                 details=request_details,
                 secrets=(secret,),
             )
+            if isinstance(exc, ImageResponseError):
+                raise RuntimeError(f"{exc}（诊断 ID: {request_id}）") from None
             if not isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
                 raise
             raise RuntimeError(
@@ -1658,6 +1688,7 @@ class ImageGenerationClient:
         request_details = {
             "operation": "edit",
             "model": str(fields.get("model") or ""),
+            "size": str(fields.get("size") or ""),
             "size": str(fields.get("size") or ""),
             "quality": str(fields.get("quality") or ""),
             "outputFormat": str(fields.get("output_format") or ""),
@@ -1741,6 +1772,8 @@ class ImageGenerationClient:
                 details=request_details,
                 secrets=(secret,),
             )
+            if isinstance(exc, ImageResponseError):
+                raise RuntimeError(f"{exc}（诊断 ID: {request_id}）") from None
             if not isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
                 raise
             raise RuntimeError(

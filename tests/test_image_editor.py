@@ -629,6 +629,28 @@ class ImageEditorTests(unittest.TestCase):
 
         self.assertEqual(result["data"][0]["b64_json"], final_image)
 
+    def test_stream_reports_truncated_uhd_frame_after_delivering_named_preview(self):
+        lines = [
+            b"event: image_generation.partial_image\r\n",
+            b'data: {"partial_image_b64":\r\n',
+            b'data: "preview-image"}\r\n',
+            b"\r\n",
+            b'data: {"type":"image_generation.completed","b64_json":"' + b"A" * (16 << 20),
+        ]
+        partials = []
+        with self.assertRaisesRegex(RuntimeError, "图片流中断"):
+            image_editor.ImageGenerationClient._read_response(
+                lines, stream=True, on_partial=lambda data, index: partials.append((index, data))
+            )
+        self.assertEqual(partials, [(1, "preview-image")])
+
+    def test_stream_request_accepts_pretty_printed_json_response(self):
+        response = io.BytesIO(b'{\n  "data": [{"b64_json":"image"}],\n  "usage": {"total_tokens":42}\n}')
+        response.headers = {"Content-Type": "application/json; charset=utf-8"}
+        result = image_editor.ImageGenerationClient._read_response(response, stream=True)
+        self.assertEqual(result["data"], [{"b64_json": "image"}])
+        self.assertEqual(result["usage"]["total_tokens"], 42)
+
     def test_stream_parser_never_uses_partial_as_final_image(self):
         partial_image = base64.b64encode(b"last-partial").decode("ascii")
         lines = [
