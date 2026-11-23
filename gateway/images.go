@@ -252,6 +252,9 @@ func (m *mobile) renderImage(ctx context.Context, id credentialID, key keyInput,
 	original, metered, err := m.readImageResponse(response, id, index, o.partial, o.format)
 	count = metered
 	if err != nil {
+		if ctx.Err() == nil {
+			status = http.StatusBadGateway
+		}
 		return nil, err
 	}
 	preview := m.preview(original)
@@ -358,21 +361,47 @@ func (m *mobile) readImageResponse(response *http.Response, job credentialID, it
 	scanner.Buffer(make([]byte, 64<<10), maxImageEnvelope)
 	var last asset
 	var count *meter
+	var pending []byte
+	var eventName string
+	malformed := false
 	partialIndex, completed := 0, false
 	for scanner.Scan() {
 		raw := bytes.TrimSpace(scanner.Bytes())
+		if len(raw) == 0 || bytes.HasPrefix(raw, []byte("event:")) {
+			malformed = malformed || len(pending) != 0
+			pending, eventName = nil, ""
+			if len(raw) != 0 {
+				eventName = string(bytes.TrimSpace(raw[6:]))
+			}
+			continue
+		}
 		if !bytes.HasPrefix(raw, []byte("data:")) {
 			continue
 		}
 		raw = bytes.TrimSpace(raw[5:])
+		if len(pending) != 0 {
+			if len(raw) >= maxImageEnvelope-len(pending) {
+				return asset{}, count, errors.New("上游图片事件超过大小上限")
+			}
+			pending = append(append(pending, '\n'), raw...)
+			raw = pending
+		}
 		if bytes.Equal(raw, []byte("[DONE]")) {
+			completed = completed || strings.HasSuffix(eventName, ".completed")
 			break
 		}
 		var e imageEnvelope
 		if json.Unmarshal(raw, &e) != nil {
+			if len(pending) == 0 {
+				pending = bytes.Clone(raw)
+			}
 			continue
 		}
-		if e.Type == "error" || strings.HasSuffix(e.Type, ".failed") || (len(e.Err) > 0 && string(e.Err) != "null") {
+		if e.Type == "" {
+			e.Type = eventName
+		}
+		pending, eventName = nil, ""
+		if e.Type == "error" || strings.HasSuffix(e.Type, ".error") || strings.HasSuffix(e.Type, ".failed") || (len(e.Err) > 0 && string(e.Err) != "null") {
 			return asset{}, count, errors.New("上游生图流报告生成失败")
 		}
 		if strings.HasSuffix(e.Type, ".partial_image") && !completed && partialIndex < partialTotal {
@@ -401,6 +430,9 @@ func (m *mobile) readImageResponse(response *http.Response, job credentialID, it
 	if completed && last.id != "" {
 		// Some relay streams signal completion after sending the full image in their last frame.
 		return last, count, nil
+	}
+	if scanner.Err() != nil || malformed || len(pending) != 0 {
+		return asset{}, count, errors.New("上游图片流中断或缺损，未收到完整成图")
 	}
 	return asset{}, count, errors.New("上游图片流未返回完成的图片")
 }

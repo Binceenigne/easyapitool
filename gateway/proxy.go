@@ -211,45 +211,82 @@ func (g *gateway) proxy(path string) http.HandlerFunc {
 		}
 		w.WriteHeader(status)
 		observer.sse = stream
+		var reader io.Reader = response.Body
 		if reservation != 0 && status >= 200 && status < 300 && (stream || strings.HasPrefix(kind, "application/json")) && response.Header.Get("Content-Encoding") == "" {
 			// Observe only metadata; the upstream body is forwarded immediately.
-			transfer(w, io.TeeReader(response.Body, &observer), stream)
-			count = observer.meter()
-		} else {
-			transfer(w, response.Body, stream)
+			reader = io.TeeReader(reader, &observer)
+		}
+		delivered, readErr := transfer(w, reader, stream)
+		count = observer.meter()
+		if readErr != nil && r.Context().Err() == nil {
+			log.Printf("upstream response interrupted upstream=%s path=%s bytes=%d reason=%s", u.ID, path, delivered, upstreamFailureReason(readErr))
+			if status >= 200 && status < 300 {
+				status = http.StatusBadGateway
+			}
+			// Headers were already sent. Abort the downstream response so clients
+			// can distinguish a truncated body from a complete HTTP 200 response.
+			panic(http.ErrAbortHandler)
 		}
 	}
 }
 
-func transfer(w http.ResponseWriter, reader io.Reader, stream bool) {
-	if !stream {
-		io.Copy(w, reader)
-		return
-	}
+func transfer(w http.ResponseWriter, reader io.Reader, stream bool) (int64, error) {
 	controller := http.NewResponseController(w)
-	controller.Flush()
+	if stream && controller.Flush() != nil {
+		return 0, nil
+	}
+	var delivered int64
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := reader.Read(buf)
 		if n != 0 {
-			if _, err := w.Write(buf[:n]); err != nil || controller.Flush() != nil {
-				return
+			written, writeErr := w.Write(buf[:n])
+			delivered += int64(written)
+			if writeErr != nil || (stream && controller.Flush() != nil) {
+				return delivered, nil
 			}
 		}
+		if err == io.EOF {
+			return delivered, nil
+		}
 		if err != nil {
-			return
+			return delivered, err
 		}
 	}
 }
 
 func (g *gateway) connectionError(u upstream, err error) error {
 	trace := randomID(9)
-	log.Printf("upstream connection error trace=%s upstream=%s kind=%T", trace, u.ID, errors.Unwrap(err))
+	log.Printf("upstream connection error trace=%s upstream=%s reason=%s", trace, u.ID, upstreamFailureReason(err))
 	var rejection *proxyConnectError
 	if errors.As(err, &rejection) {
 		return fmt.Errorf("%s（诊断 ID %s）", rejection.Error(), trace)
 	}
 	return fmt.Errorf("无法连接上游服务（诊断 ID %s）", trace)
+}
+
+func upstreamFailureReason(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
+		return "unexpected_eof"
+	}
+	var connect *proxyConnectError
+	if errors.As(err, &connect) {
+		return "proxy_connect_" + strconv.Itoa(connect.status)
+	}
+	for cause := err; cause != nil; cause = errors.Unwrap(cause) {
+		switch cause.Error() {
+		case "http2: client connection lost", "http2: client connection force closed via ClientConn.Close":
+			return "http2_connection_lost"
+		case "net/http: TLS handshake timeout":
+			return "tls_handshake_timeout"
+		}
+	}
+	return fmt.Sprintf("%T", err)
 }
 
 func (g *gateway) recordPriced(id int64, status int, count *meter, model string, svg bool) {

@@ -165,6 +165,45 @@ func TestReservationAndBudgets(t *testing.T) {
 	}
 }
 
+func TestProxyReportsTruncatedImageStream(t *testing.T) {
+	g := testGateway(t)
+	const beforeBreak = "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"cut"
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, beforeBreak)
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Error(err)
+		}
+		panic(http.ErrAbortHandler)
+	}))
+	defer upstream.Close()
+	g.client = upstream.Client()
+	account := addUpstream(t, g, "truncated", "", upstream.URL+"/v1")
+	key, secret := issue(t, g, accessKey{Name: "truncated", Upstream: account.ID})
+	mux := http.NewServeMux()
+	g.registerProxy(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	r, err := http.NewRequestWithContext(t.Context(), "POST", server.URL+"/v1/images/generations", strings.NewReader("{\"stream\":true}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Header.Set("Authorization", "Bearer "+secret)
+	reply, err := server.Client().Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reply.Body.Close()
+	body, err := io.ReadAll(reply.Body)
+	if !errors.Is(err, io.ErrUnexpectedEOF) || string(body) != beforeBreak {
+		t.Fatalf("downstream stream termination: %q (%v)", body, err)
+	}
+	var status int
+	if err := g.store.db.QueryRow("SELECT status FROM requests WHERE key_id = ?", key.ID).Scan(&status); err != nil || status != 502 {
+		t.Fatalf("interrupted request recorded status %d: %v", status, err)
+	}
+}
+
 func TestAdminAndTransparentMetering(t *testing.T) {
 	g := testGateway(t)
 	const input = `{"model":"test-image","complexity":"high","output_format":"webp","size":"1024x768","mask":"untouched"}`

@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"image/gif"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -224,6 +225,31 @@ func TestLegacyModelSettingsSeedNormalModes(t *testing.T) {
 	modes := g.appModels().ReasoningModes
 	if len(modes) != 6 || modes["instant"].Model != "" || modes["extra"] != legacy.Reasoning["terra"] {
 		t.Fatalf("legacy presets were not preserved: %+v", modes)
+	}
+}
+
+func TestMobileImageStreamPublishesNamedPreview(t *testing.T) {
+	g := testGateway(t)
+	m := newMobile(t.Context(), g, t.TempDir())
+	var picture bytes.Buffer
+	if err := png.Encode(&picture, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString(picture.Bytes())
+	job := credentialID{"device", "stream"}
+	_, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	m.tasks[job] = &task{cancel: cancel}
+	stream := "event: image_generation.partial_image\r\ndata: {\"b64_json\":\r\ndata: \"" + encoded + "\"}\r\n\r\n" +
+		"event: image_generation.completed\ndata: {\"b64_json\":\"" + encoded + "\",\"usage\":{\"total_tokens\":42}}\n\n"
+	response := &http.Response{Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(stream))}
+	defer response.Body.Close()
+	final, count, err := m.readImageResponse(response, job, 0, 3, "png")
+	if err != nil || final.format != "png" || count == nil || count.Total != 42 {
+		t.Fatalf("named completion was missed: %v", err)
+	}
+	if event := m.tasks[job].lastEvent; event["type"] != "item_partial" || event["partialIndex"] != 1 {
+		t.Fatalf("named preview was missed: %+v", event)
 	}
 }
 

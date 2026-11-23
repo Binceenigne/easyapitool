@@ -136,6 +136,11 @@ func (m *egressManager) prepare(s proxySettings) (*http.Transport, *url.URL, err
 	}
 	transport.DialContext = (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.MaxIdleConnsPerHost = 16
+	if proxy != nil {
+		// Keep long image requests active on the other side of the CONNECT tunnel.
+		transport.HTTP2 = &http.HTTP2Config{SendPingTimeout: 25 * time.Second, PingTimeout: 10 * time.Second}
+		transport.IdleConnTimeout = 45 * time.Second
+	}
 	return transport, proxy, nil
 }
 
