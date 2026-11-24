@@ -889,7 +889,7 @@
                 );
             }, { passive: false });
             canvas.addEventListener('pointerdown', event => {
-                if (event.button !== 0) return;
+                if (event.pointerType !== 'touch' && event.button !== 0) return;
                 const viewer = window.imageEditState.viewer;
                 if (event.pointerType === 'touch') {
                     viewer.touchPointers = viewer.touchPointers || new Map();
@@ -898,8 +898,13 @@
                         const points = [...viewer.touchPointers.values()];
                         viewer.pinchDistance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
                         viewer.dragging = false;
+                    } else {
+                        viewer.dragging = true;
+                        viewer.pointerX = event.clientX;
+                        viewer.pointerY = event.clientY;
                     }
                     canvas.setPointerCapture(event.pointerId);
+                    canvas.classList.add('is-dragging');
                     return;
                 }
                 viewer.dragging = true;
@@ -911,6 +916,7 @@
             canvas.addEventListener('pointermove', event => {
                 const viewer = window.imageEditState.viewer;
                 if (event.pointerType === 'touch' && viewer.touchPointers?.has(event.pointerId)) {
+                    const previous = viewer.touchPointers.get(event.pointerId);
                     viewer.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
                     if (viewer.touchPointers.size >= 2) {
                         const points = [...viewer.touchPointers.values()];
@@ -923,6 +929,13 @@
                             );
                         }
                         viewer.pinchDistance = distance;
+                    } else if (previous) {
+                        viewer.dragging = true;
+                        viewer.x += event.clientX - previous.x;
+                        viewer.y += event.clientY - previous.y;
+                        viewer.pointerX = event.clientX;
+                        viewer.pointerY = event.clientY;
+                        applyImageViewerTransform();
                     }
                     return;
                 }
@@ -939,6 +952,15 @@
                     viewer.touchPointers.delete(event.pointerId);
                     viewer.pinchDistance = 0;
                     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+                    const remaining = [...viewer.touchPointers.values()][0];
+                    if (remaining) {
+                        viewer.dragging = true;
+                        viewer.pointerX = remaining.x;
+                        viewer.pointerY = remaining.y;
+                    } else {
+                        viewer.dragging = false;
+                        canvas.classList.remove('is-dragging');
+                    }
                     return;
                 }
                 viewer.dragging = false;
@@ -1026,9 +1048,8 @@
                 requestId,
                 sessionId: session?.sessionId || requestId,
                 parentSetId: session?.setId || '',
+                roundNumber: session ? session.roundNumber + 1 : 1,
                 continuation: Boolean(session),
-                aspectRatio,
-                transparency,
                 ...reasoningOptions,
                 reasoningDepth: window.imageEditState.reasoningAdvanced
                     ? window.imageEditState.reasoningAdvancedEffort
@@ -1095,6 +1116,9 @@
                 promptInput.value = '';
                 document.getElementById('imagePromptModalTextarea').value = '';
                 resizeImagePrompt();
+            }
+            if (isAndroidPlatform() && window.matchMedia('(max-width: 600px)').matches) {
+                setWorkspaceMode('image-edit', true);
             }
             let finalStatus = '';
             try {
