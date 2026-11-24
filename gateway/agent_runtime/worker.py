@@ -171,13 +171,18 @@ class Handler(BaseHTTPRequestHandler):
                 from mirra_agents import AgentRequest, run_agent_stream
                 from visual import WorkerVisualSession
                 options = dict(parameters)
+                workspace_enabled = options.pop("workspace_enabled", False)
                 visual = WorkerVisualSession(options, cancellation)
+                workspace = None
+                if workspace_enabled:
+                    from workspace import WorkerWorkspaceSession
+                    workspace = WorkerWorkspaceSession(options, cancellation)
+                    await workspace.initialize()
                 if visual.limit:
-                    options["instructions"] += ("\n联网使用 OpenAI 官方图片与网页搜索。检索得到图片候选后，使用 inspect_visual_references 检视真实画面，再使用 select_visual_references 明确采用或不采用。"
-                        f"最多可检视 {visual.limit} 张、采用 {visual.adopt_limit} 张；已附的用户图片占用参考槽位。只把实际采用的图作为图片生成参考，SVG等不允许参考图的输出可检视但应选择空数组。")
+                    from mirra_agents.reference_policy import VISUAL_REFERENCE_POLICY
+                    options["instructions"] += "\n" + VISUAL_REFERENCE_POLICY
                     options["response_observer"] = visual.observe
-                    options["final_output_feedback"] = visual.feedback
-                events = run_agent_stream(AgentRequest(**options), cancel_event=cancellation, tools=visual.tools())
+                events = run_agent_stream(AgentRequest(**options), cancel_event=cancellation, tools=[*visual.tools(), *(workspace.tools() if workspace else [])])
             else:
                 events = self.server.runner(parameters, cancellation)
             queue = asyncio.Queue()
@@ -203,6 +208,10 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     if isinstance(event, BaseException):
                         raise event
+                    if self.server.runner is None and event.get("type") == "result":
+                        event.update(visual.metadata())
+                        if workspace:
+                            event.update(workspace.metadata())
                     emit(event)
             finally:
                 cancellation.set()
@@ -233,7 +242,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(request, dict):
             raise ValueError("Missing request")
         allowed = {"base_url", "api_key", "model", "instructions", "input", "effort", "mode", "web_search_enabled",
-                   "max_turns", "max_output_tokens", "max_attempts", "timeout", "visual_reference_limit", "visual_reference_adopt_limit"}
+                   "max_turns", "max_output_tokens", "max_attempts", "timeout", "visual_reference_limit", "visual_reference_adopt_limit", "workspace_enabled"}
         if (set(request) - allowed or not isinstance(request.get("base_url"), str)
                 or request["base_url"].rstrip("/") != self.server.proxy_base):
             raise ValueError("Invalid proxy")
@@ -271,6 +280,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Invalid mode")
         if not isinstance(request.get("web_search_enabled", False), bool):
             raise ValueError("Invalid search setting")
+        if not isinstance(request.get("workspace_enabled", False), bool):
+            raise ValueError("Invalid workspace setting")
         # Missing output limits are intentionally left missing: AgentRequest
         # resolves the official per-model maximum and compaction policy. Keep
         # explicit caller limits only when they fit that model's documented

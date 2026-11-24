@@ -33,23 +33,30 @@ var visualReservedNetworks = []netip.Prefix{netip.MustParsePrefix("100.64.0.0/10
 // A scope belongs to one device task. Only genuine image_result items seen on
 // the metered provider response can enter its URL allowlist.
 type agentVisualScope struct {
-	mu           sync.Mutex
-	mobile       *mobile
-	id           credentialID
-	options      imageOptions
-	uploaded     int
-	initial      []asset
-	allowed      map[string]object
-	order        []string
-	inspected    map[string]object
-	assets       map[string]asset
-	selected     []string
-	sources      []any
-	stats        object
-	planning     object
-	mode, effort string
-	turns        []any
-	lookup       func(context.Context, string) ([]net.IPAddr, error)
+	mu                                                      sync.Mutex
+	mobile                                                  *mobile
+	id                                                      credentialID
+	options                                                 imageOptions
+	uploaded                                                int
+	initial                                                 []asset
+	allowed                                                 map[string]object
+	order                                                   []string
+	inspected                                               map[string]object
+	assets                                                  map[string]asset
+	selected                                                []string
+	attempted                                               map[string]bool
+	failures                                                map[string]object
+	rationale                                               string
+	candidateRevision, inspectionRevision                   int
+	selectionCandidateRevision, selectionInspectionRevision int
+	selectionMade                                           bool
+	workspace                                               *agentWorkspace
+	sources                                                 []any
+	stats                                                   object
+	planning                                                object
+	mode, effort                                            string
+	turns                                                   []any
+	lookup                                                  func(context.Context, string) ([]net.IPAddr, error)
 }
 
 func visualPreview(decoded image.Image) (string, error) {
@@ -99,7 +106,7 @@ func (s *agentVisualScope) initialInput(prompt string) (any, error) {
 }
 
 func newAgentVisualScope(m *mobile, id credentialID, o imageOptions, uploaded int) *agentVisualScope {
-	return &agentVisualScope{mobile: m, id: id, options: o, uploaded: uploaded, allowed: map[string]object{}, inspected: map[string]object{}, assets: map[string]asset{}, lookup: net.DefaultResolver.LookupIPAddr}
+	return &agentVisualScope{mobile: m, id: id, options: o, uploaded: uploaded, allowed: map[string]object{}, inspected: map[string]object{}, assets: map[string]asset{}, attempted: map[string]bool{}, failures: map[string]object{}, lookup: net.DefaultResolver.LookupIPAddr}
 }
 func visualCandidateID(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
@@ -137,9 +144,15 @@ func (s *agentVisualScope) limits(key accessKey) (int, int, error) {
 		}
 		limit = profile.Tier.MaxReferences
 	}
-	inspect := min(12, max(0, limit-s.uploaded))
+	viewed, selected := s.uploaded, s.uploaded
+	if s.workspace != nil {
+		s.workspace.mu.Lock()
+		viewed, selected = len(s.workspace.viewed), len(s.workspace.selected)
+		s.workspace.mu.Unlock()
+	}
+	inspect := min(12, max(0, limit-viewed))
 	_, modelReferences := visualPlanningBudget(s.mode, s.effort)
-	adopt := min(modelReferences, inspect)
+	adopt := min(modelReferences, max(0, limit-selected))
 	if s.options.format == "svg" {
 		adopt = 0
 	}
@@ -167,6 +180,7 @@ func (s *agentVisualScope) registerResponse(response object) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	added := false
 	for _, call := range arrayObjects(response["output"]) {
 		if objectString(call, "type") != "web_search_call" {
 			continue
@@ -176,7 +190,7 @@ func (s *agentVisualScope) registerResponse(response object) {
 				continue
 			}
 			raw := objectString(result, "image_url")
-			if raw == "" || len(raw) > 4096 {
+			if !validVisualCandidateURL(raw, false) || strings.HasPrefix(raw, "http://") && !validVisualCandidateURL(objectString(result, "thumbnail_url"), true) {
 				continue
 			}
 			if _, exists := s.allowed[raw]; exists {
@@ -187,8 +201,24 @@ func (s *agentVisualScope) registerResponse(response object) {
 			}
 			s.allowed[raw] = object{"id": visualCandidateID(raw), "imageUrl": raw, "thumbnailUrl": objectString(result, "thumbnail_url"), "sourceUrl": objectString(result, "source_website_url"), "caption": objectString(result, "caption"), "title": objectString(result, "title")}
 			s.order = append(s.order, raw)
+			added = true
 		}
 	}
+	if added {
+		s.candidateRevision++
+		s.selectionMade = false
+	}
+}
+
+func validVisualCandidateURL(raw string, httpsOnly bool) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || len(raw) > 4096 || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || strings.ContainsAny(raw, "\r\n\t") {
+		return false
+	}
+	if parsed.Scheme == "https" {
+		return parsed.Port() == "" || parsed.Port() == "443"
+	}
+	return !httpsOnly && parsed.Scheme == "http" && (parsed.Port() == "" || parsed.Port() == "80")
 }
 
 type visualResponseObserver struct {
@@ -356,6 +386,7 @@ func (s *agentVisualScope) inspect(ctx context.Context, key accessKey, urls []st
 	defer cancel()
 	candidates := []object{}
 	failures := []object{}
+	changed := false
 	for _, raw := range urls {
 		source := s.allowed[raw]
 		id := objectString(source, "id")
@@ -373,6 +404,10 @@ func (s *agentVisualScope) inspect(ctx context.Context, key accessKey, urls []st
 		if len(s.inspected) >= limit {
 			break
 		}
+		if !s.attempted[raw] {
+			changed = true
+		}
+		s.attempted[raw] = true
 		original, preview, err := s.fetchImage(ctx, raw)
 		downloadedURL := raw
 		if err != nil && ctx.Err() == nil {
@@ -388,7 +423,9 @@ func (s *agentVisualScope) inspect(ctx context.Context, key accessKey, urls []st
 			}
 		}
 		if err != nil {
-			failures = append(failures, object{"id": id, "imageUrl": raw, "error": err.Error()})
+			failure := object{"id": id, "imageUrl": raw, "message": err.Error()}
+			failures = append(failures, failure)
+			s.failures[raw] = failure
 			continue
 		}
 		item := object{}
@@ -401,12 +438,18 @@ func (s *agentVisualScope) inspect(ctx context.Context, key accessKey, urls []st
 		item["previewDataUrl"], item["width"], item["height"] = preview, original.width, original.height
 		item["actualDownloadedUrl"] = downloadedURL
 		s.inspected[id], s.assets[id] = item, original
+		delete(s.failures, raw)
+		changed = true
 		s.mobile.mu.Lock()
 		held := s.mobile.assets[original.id]
 		held.holds++
 		s.mobile.assets[original.id] = held
 		s.mobile.mu.Unlock()
 		candidates = append(candidates, item)
+	}
+	if changed {
+		s.inspectionRevision++
+		s.selectionMade = false
 	}
 	return object{"candidates": candidates, "failures": failures, "inspectedCount": len(s.inspected), "maxReferences": limit}, nil
 }
@@ -421,6 +464,9 @@ func (s *agentVisualScope) selectReferences(key accessKey, ids []string, rationa
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if strings.TrimSpace(rationale) == "" || len([]rune(rationale)) > 1600 {
+		return nil, errors.New("请简短说明参考图选择依据")
+	}
 	seen := map[string]bool{}
 	selected := []string{}
 	for _, id := range ids {
@@ -433,8 +479,38 @@ func (s *agentVisualScope) selectReferences(key accessKey, ids []string, rationa
 		}
 	}
 	s.selected = selected
+	s.rationale, s.selectionMade = rationale, true
+	s.selectionCandidateRevision, s.selectionInspectionRevision = s.candidateRevision, s.inspectionRevision
 	references := s.referencesLocked()
 	return object{"selectedIds": selected, "webReferences": references, "rationale": rationale}, nil
+}
+
+func (s *agentVisualScope) referenceMetadata() object {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inspected, failures := []object{}, []object{}
+	for _, raw := range s.order {
+		if item := s.inspected[visualCandidateID(raw)]; item != nil {
+			copy := object{}
+			for key, value := range item {
+				if key != "previewDataUrl" {
+					copy[key] = value
+				}
+			}
+			inspected = append(inspected, copy)
+		}
+		if failure := s.failures[raw]; failure != nil {
+			failures = append(failures, failure)
+		}
+	}
+	status := "pending"
+	if s.selectionMade && s.selectionCandidateRevision == s.candidateRevision && s.selectionInspectionRevision == s.inspectionRevision {
+		status = "declined"
+		if len(s.selected) > 0 {
+			status = "selected"
+		}
+	}
+	return object{"webInspectedReferences": inspected, "webReferenceFailures": failures, "webSelectionRationale": s.rationale, "webImageCandidateCount": len(s.allowed), "webSelectionStatus": status}
 }
 
 func numberInt(value any) int {
@@ -567,6 +643,9 @@ func (s *agentVisualScope) adopted() []asset {
 	return items
 }
 func (s *agentVisualScope) release() {
+	if s.workspace != nil {
+		s.workspace.release()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mobile.mu.Lock()
@@ -620,7 +699,13 @@ func (g *gateway) agentVisual(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if input.Operation == "select" {
-		scope.mobile.publish(scope.id, object{"type": "react_visual_selected", "webReferences": result["webReferences"], "webReferenceCount": len(scope.references()), "rationale": input.Rationale}, false)
+		event := scope.referenceMetadata()
+		event["type"], event["webReferences"], event["webReferenceCount"], event["rationale"] = "react_visual_selected", result["webReferences"], len(scope.references()), input.Rationale
+		scope.mobile.publish(scope.id, event, false)
+	} else {
+		event := scope.referenceMetadata()
+		event["type"], event["candidates"], event["errors"] = "react_visual_results", result["candidates"], result["failures"]
+		scope.mobile.publish(scope.id, event, false)
 	}
 	writeJSON(w, 200, result)
 }

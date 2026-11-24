@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from .common import *
 from .platform import get_small_url_bytes, open_url_with_direct_fallback
+from mirra_agents.reference_policy import reference_download_urls
+from mirra_agents.retry import safe_text
 
 class BingImageResultParser(HTMLParser):
     def __init__(self) -> None:
@@ -192,6 +194,7 @@ class WebSearchService:
             ),
         )
         errors: list[str] = []
+        last_error: Exception | None = None
         for opener in openers:
             try:
                 with opener.open(request, timeout=20) as response:
@@ -214,7 +217,8 @@ class WebSearchService:
                 if task_context is not None:
                     task_context.check_cancelled()
                 errors.append(str(exc))
-        raise RuntimeError(errors[-1] if errors else "无法下载远程图片")
+                last_error = exc
+        raise RuntimeError(errors[-1] if errors else "无法下载远程图片") from last_error
 
     @staticmethod
     def _normalized_image_bytes(image_bytes: bytes, max_side: int | None = None) -> bytes:
@@ -407,6 +411,77 @@ class WebSearchService:
             "errors": errors,
         }
 
+    def inspect_image_results(
+        self,
+        candidates: list[dict[str, Any]],
+        max_count: int = 6,
+        task_context: Any = None,
+    ) -> dict[str, Any]:
+        """Verify images discovered by the hosted search; never run another search engine."""
+        selected = candidates[:max(0, min(12, max_count))]
+
+        def inspect_candidate(candidate: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+            if task_context is not None:
+                task_context.check_cancelled()
+            image_url = str(candidate.get("imageUrl") or "")
+            errors: list[dict[str, Any]] = []
+            # A hosted result may use HTTP for its canonical image identity.
+            # Preserve that provenance, but read only its publicly validated
+            # HTTPS original/official thumbnail. Never upgrade or fetch HTTP.
+            for url in reference_download_urls(image_url, candidate.get("thumbnailUrl")):
+                try:
+                    payload = self._public_image_bytes(url, WEB_REFERENCE_IMAGE_MAX_BYTES, task_context)
+                    image_bytes = self._normalized_image_bytes(payload)
+                    with Image.open(io.BytesIO(image_bytes)) as preview_source:
+                        preview_image = preview_source.convert("RGB")
+                    preview_image.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                    for quality in (75, 60, 45):
+                        preview_buffer = io.BytesIO()
+                        preview_image.save(preview_buffer, format="JPEG", quality=quality, optimize=True)
+                        preview = preview_buffer.getvalue()
+                        if len(preview) <= 96 * 1024:
+                            break
+                    if len(preview) > 96 * 1024:
+                        raise ValueError("参考图缩略图超过检视大小限制")
+                    with Image.open(io.BytesIO(image_bytes)) as image:
+                        width, height = image.size
+                    return {
+                        **candidate,
+                        "id": self._candidate_id(image_url),
+                        "provider": "OpenAI web search",
+                        "width": width,
+                        "height": height,
+                        "downloadUrl": url,
+                        "downloadAttempts": [*errors, {"downloadUrl": url, "succeeded": True}],
+                        "_imageBytes": image_bytes,
+                        "_previewBytes": preview,
+                        "previewDataUrl": "data:image/jpeg;base64," + base64.b64encode(preview).decode("ascii"),
+                    }, None
+                except (OSError, RuntimeError, ValueError, Image.UnidentifiedImageError) as error:
+                    if task_context is not None:
+                        task_context.check_cancelled()
+                    detail: dict[str, Any] = {"downloadUrl": url, "message": safe_text(error), "code": "image_download_failed"}
+                    current: BaseException | None = error
+                    for _ in range(8):
+                        if current is None:
+                            break
+                        if isinstance(current, urllib.error.HTTPError):
+                            detail.update(code="http_error", status=current.code)
+                            break
+                        current = current.__cause__
+                    errors.append(detail)
+            failure = errors[-1] if errors else {"message": "未提供可公开读取的HTTPS原图或官方缩略图", "code": "no_public_https_image"}
+            return None, {"id": self._candidate_id(image_url), "imageUrl": image_url, **failure, "attempts": errors}
+
+        if not selected:
+            return {"candidates": [], "errors": []}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(selected)), thread_name_prefix="official-image-reference") as pool:
+            results = list(pool.map(inspect_candidate, selected))
+        return {
+            "candidates": [record for record, _ in results if record is not None],
+            "errors": [error for _, error in results if error is not None],
+        }
+
     def stage_reference_records(
         self,
         candidates: list[dict[str, Any]],
@@ -417,8 +492,9 @@ class WebSearchService:
         records: list[dict[str, Any]] = []
         target_dir.mkdir(parents=True, exist_ok=True)
         for candidate in candidates[:max_count]:
-            image_bytes = b""
-            for url in (candidate.get("imageUrl"), candidate.get("thumbnailUrl")):
+            cached = candidate.get("_imageBytes")
+            image_bytes = cached if isinstance(cached, bytes) else b""
+            for url in (() if image_bytes else (candidate.get("imageUrl"), candidate.get("thumbnailUrl"))):
                 if not url:
                     continue
                 try:
@@ -445,6 +521,7 @@ class WebSearchService:
                     "provider": str(candidate.get("provider") or "")[:120],
                     "sourceUrl": str(candidate.get("sourceUrl") or "")[:4096],
                     "imageUrl": str(candidate.get("imageUrl") or "")[:4096],
+                    "downloadUrl": str(candidate.get("downloadUrl") or "")[:4096],
                     "path": str(output_path),
                 }
             )

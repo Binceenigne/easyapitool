@@ -23,7 +23,7 @@ class WorkerVisualTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(session.feedback("imagined image"))
         url = "https://cdn.example/photo.png"
         session.observe({"output": [{"id": "ws-1", "type": "web_search_call", "results": [{"type": "image_result", "image_url": url}]}]})
-        self.assertIn("inspect_visual_references", session.feedback("premature final"))
+        self.assertIsNone(session.feedback("the model can finish without images"))
         requests = []
         async def request(payload):
             requests.append(payload)
@@ -38,7 +38,7 @@ class WorkerVisualTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(output), 2)
         self.assertEqual(output[1].type, "image")
         self.assertNotIn("base64", output[0].text)
-        self.assertIn("select_visual_references", session.feedback("not selected"))
+        self.assertIsNone(session.feedback("the model controls its own next step"))
         duplicate = await session.inspect(None, {"image_urls": []})
         self.assertEqual(len(duplicate), 1, "do not append an image twice to SDK history")
         invalid = await session.select(None, {"candidate_ids": ["not-inspected"], "rationale": "invalid"})

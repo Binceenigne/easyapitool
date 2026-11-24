@@ -427,12 +427,17 @@ public class AndroidStoragePlugin extends Plugin {
                 }
                 String route = switch (operation) {
                     case "models" -> "/models";
+                    case "usage" -> "/usage";
                     case "respond" -> "/responses";
                     case "generate" -> references.isEmpty() ? "/images/generations" : "/images/edits";
                     default -> throw new IOException("不支持的直连接口");
                 };
-                boolean models = "models".equals(operation);
+                boolean models = "models".equals(operation) || "usage".equals(operation);
                 connection = openConnection(base + route, secret, models ? "GET" : "POST");
+                String reasoningMode = call.getString("reasoningMode", "");
+                if (sdkTransport && reasoningMode.matches("instant|flash|medium|high|extra|max|advanced|polish|continuation")) {
+                    connection.setRequestProperty("X-Mirra-Reasoning-Mode", reasoningMode);
+                }
                 connection.setInstanceFollowRedirects(false);
                 if (models) connection.setReadTimeout(20_000);
                 if (!requestId.isEmpty() && directRequests.putIfAbsent(requestId, connection) != null) {
@@ -509,7 +514,8 @@ public class AndroidStoragePlugin extends Plugin {
                     org.json.JSONObject image = results.optJSONObject(j);
                     if (image == null || !"image_result".equals(image.optString("type"))) continue;
                     String url = image.optString("image_url");
-                    if (!url.startsWith("https://") || url.length() > 4096) continue;
+                    String thumbnailUrl = image.optString("thumbnail_url");
+                    if (!(url.startsWith("https://") || url.startsWith("http://") && thumbnailUrl.startsWith("https://")) || url.length() > 4096) continue;
                     known.putIfAbsent(url, new JSObject().put("imageUrl", url).put("sourceUrl", image.optString("source_website_url"))
                         .put("thumbnailUrl", image.optString("thumbnail_url")).put("caption", image.optString("caption")).put("title", image.optString("title")));
                 }
@@ -766,7 +772,15 @@ public class AndroidStoragePlugin extends Plugin {
     }
 
     private JSArray secureKeysMetadata() {
-        return database.listKeys();
+        JSArray keys = database.listKeys();
+        for (int index = 0; index < keys.length(); index++) {
+            if (!(keys.optJSONObject(index) instanceof JSObject item)) continue;
+            try {
+                JSObject stored = database.key(item.getString("id", ""));
+                item.put("distributed", stored != null && decrypt(stored.getString("encrypted", "")).startsWith("sk-mirra-"));
+            } catch (Exception unavailable) { item.put("distributed", false); }
+        }
+        return keys;
     }
 
     private SecretKey getMasterKey() throws Exception {
@@ -1246,6 +1260,7 @@ public class AndroidStoragePlugin extends Plugin {
                     JSObject asset = new JSObject();
                     asset.put("resourceId", cursor.getString(0));
                     asset.put("path", cursor.getString(1));
+                    asset.put("exists", new File(cursor.getString(1)).isFile());
                     asset.put("previewPath", cursor.getString(2));
                     asset.put("sessionId", cursor.getString(3));
                     asset.put("setId", cursor.getString(4));

@@ -291,7 +291,7 @@ func (g *gateway) modelsForKey(k accessKey) (*modelSettings, error) {
 		profile.Polish = authorizedUtilityPreset(&profile, g.cfg.polishModel, "medium", []string{"terra", "luna", "sol"})
 	}
 	if t.ImageEditing {
-		profile.Continuation = authorizedUtilityPreset(&profile, "", "low", []string{"luna", "terra", "sol"})
+		profile.Continuation = g.minimumContinuationPreset()
 	}
 	return &profile, nil
 }
@@ -415,6 +415,12 @@ func (g *gateway) checkReasoningTier(k accessKey, model, effort, mode string, we
 	if mode == "svg" && p.SVG.Enabled && model == p.SVG.Model && effort == p.SVG.Effort {
 		return nil
 	}
+	if mode == "continuation" {
+		if model == p.Continuation.Model && effort == p.Continuation.Effort {
+			return nil
+		}
+		return denied("此继续编辑模型组合")
+	}
 	if !permits(t.ReasoningModels, model) || !permits(t.ReasoningEfforts, effort) {
 		return denied("此思维模型或深度")
 	}
@@ -422,10 +428,6 @@ func (g *gateway) checkReasoningTier(k accessKey, model, effort, mode string, we
 	case "polish":
 		if model != p.Polish.Model || effort != p.Polish.Effort {
 			return denied("此提示词润色模型组合")
-		}
-	case "continuation":
-		if model != p.Continuation.Model || effort != p.Continuation.Effort {
-			return denied("此续作规划模型组合")
 		}
 	case "advanced":
 	case "":

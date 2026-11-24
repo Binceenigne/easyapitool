@@ -200,7 +200,7 @@
                 set.webSearchResultCount = Number(event.webSearchResultCount) || set.webSearchResultCount;
             } else if (event.type === 'react_visual_selected') {
                 set.webSearchStatus = 'completed';
-                set.webReferenceCount = Number(event.selectedCount) || 0;
+                set.webReferenceCount = Number(event.webReferenceCount ?? event.selectedCount ?? event.selectedCandidateIds?.length) || 0;
             } else if (event.type === 'react_continuation_planned') {
                 set.operation = event.operation || set.operation;
                 set.continuation = true;
@@ -711,6 +711,8 @@
                             webSearchSources: normalizeWebSearchSources(set.webSearchSources),
                             webSearchSourcesExpanded: false,
                             webReferences: Array.isArray(set.webReferences) ? set.webReferences : [],
+                            webInspectedReferences: Array.isArray(set.webInspectedReferences) ? set.webInspectedReferences : [],
+                            webReferenceFailures: Array.isArray(set.webReferenceFailures) ? set.webReferenceFailures : [],
                             webReferencesExpanded: false,
                             finalPromptExpanded: false,
                             webReferencesLoading: false,

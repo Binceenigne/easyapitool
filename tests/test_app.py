@@ -1,3 +1,4 @@
+from tests.sdk_fixture import sdk_text_fixture
 import json
 import re
 import sys
@@ -55,6 +56,16 @@ class StoreTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_saved_mirra_key_moves_to_ip_gateway(self):
+        key_id = self.store.add_key("Mirra", "sk-mirra-fixture", "https://imggen.djyx.me/openai/v1")
+        direct_id = self.store.add_key("Direct", "fixture", "https://example.test/v1")
+        reopened = app.Store(self.store.path)
+        self.assertEqual(reopened.get_key_record(key_id)["base_url"], "https://39.105.74.222/openai/v1")
+        self.assertEqual(reopened.get_secret(key_id), "sk-mirra-fixture")
+        self.assertEqual(reopened.get_key_record(direct_id)["base_url"], "https://example.test/v1")
+        with patch.dict(__import__("os").environ, {"MIRRA_PUBLIC_OPENAI_BASE_URL": "https://imggen.djyx.me/openai/v1/"}):
+            self.assertEqual(app.api_base_url_for_key("sk-mirra-fixture"), "https://39.105.74.222/openai/v1")
 
     def test_changelog_between_includes_only_uninstalled_versions(self):
         markdown = (
@@ -685,6 +696,7 @@ class UtilityTests(unittest.TestCase):
                 )
 
             controller.client = SimpleNamespace(stream_response=stream_response)
+            controller._run_sdk_agent = Mock(side_effect=sdk_text_fixture(controller.client.stream_response))
             plan = controller._run_instant_image_continuation_planner(
                 {"base_url": "https://example.test/v1"},
                 "secret",
@@ -695,8 +707,8 @@ class UtilityTests(unittest.TestCase):
 
         self.assertEqual(captured["model"], app.IMAGE_CONTINUATION_PLANNER_MODEL)
         self.assertEqual(captured["kwargs"]["reasoning_effort"], "low")
-        self.assertNotIn("tools", captured["kwargs"])
-        self.assertNotIn("on_delta", captured["kwargs"])
+        self.assertFalse(controller._run_sdk_agent.call_args.args[0].web_search_enabled)
+        self.assertEqual(controller._run_sdk_agent.call_args.args[0].mode, "continuation")
         self.assertIn("不润色", captured["instructions"])
         self.assertIn("让她走进雨夜车站", captured["input"][0]["content"][0]["text"])
         self.assertEqual(captured["input"][0]["content"][1]["type"], "input_image")
@@ -1697,7 +1709,9 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="imageQualityChoices"', page)
         self.assertIn('id="imageComplexityChoices"', page)
         self.assertIn('id="imageOutputChoices"', page)
+        self.assertIn("['webp', 'WebP',", page)
         self.assertIn('id="imageCountChoices"', page)
+        self.assertIn("id=\"imageFrameChoices\"", page)
         self.assertIn('id="imageGenerationQualitySummary" data-quality="medium"', page)
         self.assertNotIn('id="imageGenerationOutputSummary"', page)
         self.assertIn('id="imageModelSection"', page)
@@ -1744,8 +1758,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("keySwitcherStatusClass", page)
         self.assertIn(".key-switcher-status.is-error", stylesheet)
         self.assertIn("set_window_background(window.__pendingNativeTheme)", page)
-        self.assertIn("set_window_background(resolvedMode)", page)
-        self.assertIn("systemThemeMedia.addEventListener('change', handleSystemThemeChange)", page)
+        self.assertIn("set_window_background(normalizedMode)", page)
         self.assertIn("syncVisibleBackendState", page)
         self.assertIn("setInterval(syncVisibleBackendState, 5000)", page)
         self.assertIn('id="manualRefreshButton"', page)
@@ -1900,11 +1913,12 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn("app.min.css", page)
         self.assertNotIn("tailwind", build_script.lower())
         self.assertNotIn('<script defer src="../vendor/lucide/lucide.min.js"></script>', page)
-        self.assertIn(
-            '<script src="vendor/lucide/lucide.min.js?v=0.468.0"></script>\n'
-            '    <script src="scripts/modules/00-core-ui.js?v=2"></script>',
+        self.assertRegex(
             page,
+            r'<script src="vendor/lucide/lucide\.min\.js"></script>\s+'
+            r'<script src="scripts/modules/00-core-ui\.js\?v=\d+"></script>',
         )
+        self.assertIn('button [data-lucide][aria-hidden="true"] { pointer-events: none; }', scss_source)
         self.assertIn("window.addEventListener('load', () => {\n            renderLucideIcons();", page)
         self.assertIn("npm.cmd", build_script.lower())
         self.assertIn("run build:css", build_script.lower())
@@ -1938,9 +1952,6 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("handlePageZoomShortcut(event)", page)
         self.assertIn("localStorage.setItem(PAGE_ZOOM_STORAGE_KEY", page)
         self.assertIn("restorePageZoom()", page)
-        self.assertIn("const DEFAULT_ANDROID_PAGE_ZOOM = 0.8", page)
-        self.assertIn("isAndroidPlatform() ? DEFAULT_ANDROID_PAGE_ZOOM", page)
-        self.assertIn("html[data-platform=android] #pageZoomLayer {\n  min-width: 0;", stylesheet)
         self.assertIn("#windowTitleBar {\n  z-index: auto", stylesheet)
         self.assertIn("document.getElementById('settingsHeader')?.addEventListener('mousedown', beginWindowDrag)", page)
         self.assertNotIn("fa-solid", page)
@@ -1967,6 +1978,15 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn('.image-generation-set-checkbox', stylesheet)
         self.assertIn('.image-generation-set.is-batch-selected {', stylesheet)
         self.assertIn('background: color-mix(in srgb, #8b5cf6 9%, var(--bg));', stylesheet)
+        self.assertIn('aspect-ratio: 2/1;', stylesheet)
+        self.assertIn("const scrollHost = container;", page)
+        self.assertIn(".find(section => section.getBoundingClientRect().bottom", page)
+        self.assertIn("scrollHost.scrollTop = scrollTop + nextAnchor.getBoundingClientRect().top", page)
+        self.assertIn("viewer.touchPointers = viewer.touchPointers || new Map();", page)
+        self.assertIn("viewer.scale * distance / viewer.pinchDistance", page)
+        self.assertIn("function reasoningToolIcon(tool)", page)
+        self.assertNotIn("'search-check'", page)
+        self.assertIn("syncReasoningSupplements(current, set)", page)
 
     def test_image_prompt_assistance_controls_and_streaming_summary(self):
         self.maxDiff = 600
@@ -2062,8 +2082,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("function toggleWebReferences(setId)", page)
         self.assertIn("set.webReferencesExpanded", page)
         self.assertIn("image-reasoning-web-references", page)
-        self.assertIn("查看采用的网络参考图", page)
-        self.assertIn("采用的参考图 ${set.webReferenceCount}", page)
+        self.assertIn("查看检视图片、采用状态与说明", page)
+        self.assertIn("已检视 ${referenceGallery.length}", page)
         self.assertIn("function toggleFinalPrompt(setId)", page)
         self.assertIn("set.finalPromptExpanded = !set.finalPromptExpanded", page)
         self.assertIn("if (set.finalPromptExpanded) set.webReferencesExpanded = false", page)
@@ -2330,7 +2350,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("reasoningTurnsForSet(set).forEach(turn =>", page)
         self.assertNotIn("pendingSet?.reasoningTurns.find", page)
         self.assertNotIn("control.closest('.image-generation-footer')?.getBoundingClientRect()", page)
-        self.assertIn("const anchorTop = (controlRect.top - layerRect.top) / scale", page)
+        self.assertIn("positionImagePopover(menu, controlRect, metrics)", page)
+        self.assertIn("const viewportTop = (viewport.top - rect.top) / scale", page)
         self.assertIn("if (appMain && menu.parentElement !== appMain) appMain.append(menu)", page)
         self.assertIn("function copyImagePrompt(text, label)", page)
         self.assertIn("复制原始提示词", page)
@@ -2420,6 +2441,25 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertNotIn("@keyframes imageFinalReveal", stylesheet)
         self.assertIn("@media (prefers-reduced-motion: reduce)", stylesheet)
 
+    def test_generation_controls_do_not_leak_into_visible_prompt(self):
+        page = frontend_source()
+        controls = (
+            PROJECT_ROOT / "frontend" / "scripts" / "modules" / "02-image-controls.js"
+        ).read_text(encoding="utf-8")
+        rendering = (
+            PROJECT_ROOT / "frontend" / "scripts" / "modules" / "04-image-stream-rendering.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("const aspectRatio = effectiveImageRatio();", page)
+        self.assertIn("function visibleImagePrompt(prompt)", controls)
+        self.assertIn("const finalPrompt = visibleImagePrompt(prompt);", page)
+        self.assertNotIn("imageGenerationConstraintSuffixes", page)
+        self.assertIn('id="imageModelChoices"', page)
+        self.assertIn('id="imageTransparencyButtons"', page)
+        self.assertIn("is-transparency-preview", rendering)
+        self.assertIn("createImageGenerationSet(requestId, imageCount, finalPrompt", page)
+        self.assertIn("activeKey.id,\n                    finalPrompt,", page)
+
     def test_main_page_window_controls_use_lucide_icons(self):
         page = frontend_source()
         stylesheet = frontend_stylesheet()
@@ -2438,6 +2478,65 @@ class StaticAssetCacheTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_save_key_returns_state_from_sqlite_records(self):
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "backend.controller.app_data_dir", return_value=Path(temp)
+        ), patch.object(app.Store, "import_environment_key"):
+            controller = app.AppController(asset_cache=Mock())
+            controller.client.fetch = Mock(return_value=(
+                {"status": "active", "usage": {"total": {"cost": 0}}},
+                ["gpt-image-2"],
+            ))
+            api = app.WebApi(controller)
+
+            mirra = api.add_key("网关", "sk-mirra-test-fixture", app.MIRRA_API_URL)
+            direct = api.add_key("直连", "sk-proj-test-fixture", app.OPENAI_API_URL)
+
+            self.assertTrue(mirra["ok"])
+            self.assertTrue(direct["ok"])
+            by_id = {item["id"]: item for item in direct["state"]["keys"]}
+            self.assertFalse(by_id[mirra["activeKeyId"]]["directApi"])
+            self.assertTrue(by_id[direct["activeKeyId"]]["directApi"])
+            self.assertEqual(by_id[direct["activeKeyId"]]["status"], "active")
+            self.assertNotEqual(by_id[direct["activeKeyId"]]["value"], "sk-proj-test-fixture")
+            reopened = app.AppController(asset_cache=Mock())
+            self.assertEqual(reopened.get_state()["keys"], direct["state"]["keys"])
+
+    def test_reasoning_does_not_restart_an_exhausted_sdk_run(self):
+        from backend.controller_mixins.image_reasoning import ImageReasoningMixin, ImageTaskContext
+        from mirra_agents.retry import AgentRunFailure, ProviderResponseError, failure_details
+        controller = ImageReasoningMixin()
+        failure = AgentRunFailure(failure_details(ProviderResponseError("server_error", "overloaded", status=503), "agent", 3, 3))
+        controller._run_sdk_agent = Mock(side_effect=failure)
+        context = ImageTaskContext()
+        with self.assertRaises(AgentRunFailure) as caught:
+            controller._call_reasoning_with_retries("https://provider.test/v1", "secret", "model", "instructions", "input", task_context=context)
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(controller._run_sdk_agent.call_count, 1)
+        self.assertIs(controller._run_sdk_agent.call_args.kwargs["cancel_event"], context.cancel_event)
+
+    def test_reasoning_sdk_preserves_cancellation_and_selected_configuration(self):
+        from backend.controller_mixins.image_reasoning import ImageReasoningMixin, ImageTaskContext, ImageGenerationCancelled
+        from mirra_agents.retry import AgentCancelled
+        controller = ImageReasoningMixin()
+        controller._run_sdk_agent = Mock(return_value={"text": "ok"})
+        context = ImageTaskContext()
+        self.assertEqual(controller._call_reasoning_with_retries("https://provider.test/v1", "secret", "model", "instructions", "input", task_context=context, reasoning_effort="high", reasoning_mode="polish"), "ok")
+        request = controller._run_sdk_agent.call_args.args[0]
+        self.assertEqual((request.model, request.effort, request.mode), ("model", "high", "polish"))
+        self.assertEqual(request.max_attempts, 3)
+        controller._run_sdk_agent = Mock(side_effect=AgentCancelled("任务已取消"))
+        with self.assertRaises(ImageGenerationCancelled):
+            controller._call_reasoning_with_retries("https://provider.test/v1", "secret", "model", "instructions", "input", task_context=context)
+        self.assertEqual(controller._run_sdk_agent.call_count, 1)
+
+    def test_delete_missing_failed_image_set_is_idempotent(self):
+        from backend.controller_mixins.image_files import ImageFilesMixin
+        controller = ImageFilesMixin()
+        controller._image_session_is_active = Mock(return_value=False)
+        controller._image_session_store = Mock(return_value=SimpleNamespace(delete_set=Mock(return_value=False)))
+        self.assertTrue(controller.delete_image_set('failed-session', 'failed-set')['ok'])
+
     def test_image_task_context_cancel_closes_active_responses(self):
         class FakeResponse:
             def __init__(self):
@@ -2457,40 +2556,6 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(all(response.closed for response in responses))
         with self.assertRaises(controller_image_reasoning.ImageGenerationCancelled):
             context.check_cancelled()
-
-    def test_reasoning_never_replays_an_ambiguous_submitted_request(self):
-        from backend.controller_mixins.image_reasoning import ImageReasoningMixin, ImageTaskContext
-        controller = ImageReasoningMixin()
-        controller.client = SimpleNamespace(stream_response=Mock(side_effect=RuntimeError('overloaded')))
-        context = ImageTaskContext()
-        context.cancel_event.wait = Mock(return_value=False)
-        with self.assertRaisesRegex(RuntimeError, 'overloaded'):
-            controller._call_reasoning_with_retries(task_context=context)
-        self.assertEqual(controller.client.stream_response.call_count, 1)
-        context.cancel_event.wait.assert_not_called()
-
-    def test_reasoning_only_retries_unsent_connection_once_and_can_cancel(self):
-        from backend.controller_mixins.image_reasoning import ImageReasoningMixin, ImageTaskContext, ImageGenerationCancelled
-        from backend.transport import UnsentConnectionError
-        controller = ImageReasoningMixin()
-        controller.client = SimpleNamespace(stream_response=Mock(side_effect=[UnsentConnectionError('refused before send'), 'ok']))
-        context = ImageTaskContext()
-        context.cancel_event.wait = Mock(return_value=False)
-        self.assertEqual(controller._call_reasoning_with_retries(task_context=context), 'ok')
-        self.assertEqual(controller.client.stream_response.call_count, 2)
-        context.cancel_event.wait.assert_called_once_with(0.35)
-        controller.client.stream_response = Mock(side_effect=UnsentConnectionError('refused before send'))
-        context.cancel_event.wait = Mock(side_effect=lambda delay: context.cancel())
-        with self.assertRaises(ImageGenerationCancelled):
-            controller._call_reasoning_with_retries(task_context=context)
-        self.assertEqual(controller.client.stream_response.call_count, 1)
-
-    def test_delete_missing_failed_image_set_is_idempotent(self):
-        from backend.controller_mixins.image_files import ImageFilesMixin
-        controller = ImageFilesMixin()
-        controller._image_session_is_active = Mock(return_value=False)
-        controller._image_session_store = Mock(return_value=SimpleNamespace(delete_set=Mock(return_value=False)))
-        self.assertTrue(controller.delete_image_set('failed-session', 'failed-set')['ok'])
 
     def test_import_reference_image_validates_and_persists_image_data(self):
         controller = app.AppController.__new__(app.AppController)
@@ -2572,6 +2637,7 @@ class ControllerTests(unittest.TestCase):
             controller = app.AppController.__new__(app.AppController)
             controller.image_generator = service
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -2613,8 +2679,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(args[2].fields["model"], "gpt-image-2")
         self.assertEqual(args[2].fields["quality"], "low")
         self.assertEqual(args[2].fields["output_format"], "png")
-        self.assertNotIn("background", args[2].fields)
-        self.assertNotIn("size", args[2].fields)
+        self.assertEqual(args[2].fields["background"], "opaque")
+        self.assertEqual(args[2].fields["size"], "1024x1024")
         self.assertEqual(args[2].fields["moderation"], "low")
         self.assertNotIn("imageCount", args[2].fields)
         self.assertEqual(
@@ -2654,6 +2720,7 @@ class ControllerTests(unittest.TestCase):
             controller = app.AppController.__new__(app.AppController)
             controller.image_generator = SimpleNamespace(generate=generate_until_cancelled)
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -2713,6 +2780,7 @@ class ControllerTests(unittest.TestCase):
             controller = app.AppController.__new__(app.AppController)
             controller.image_generator = SimpleNamespace(generate=generate_with_overlap)
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -2765,6 +2833,7 @@ class ControllerTests(unittest.TestCase):
                 )
             )
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {"id": key_id, "base_url": "https://example.test/v1"},
                 get_secret=lambda _key_id: "secret",
             )
@@ -2774,349 +2843,8 @@ class ControllerTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
 
-    def test_instant_continuation_uses_parent_asset_for_semantic_generate_without_frontend_files(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            pictures_root = root / "Pictures"
-            session_store = image_editor.ImageSessionStore(pictures_root)
-            parent_source = root / "parent.png"
-            output_source = root / "output.png"
-            Image.new("RGB", (8, 8), "purple").save(parent_source)
-            Image.new("RGB", (8, 8), "blue").save(output_source)
-            session_store.begin_round(
-                "world-session",
-                "set-1",
-                "设计紫色披风角色",
-                1,
-                0,
-                {"originalPrompt": "设计紫色披风角色", "operation": "generate"},
-            )
-            parent_result = session_store.persist_result(
-                "world-session",
-                "set-1",
-                0,
-                parent_source,
-                {"width": 8, "height": 8, "format": "png"},
-            )
-            session_store.complete_round("world-session", "set-1")
-            service = SimpleNamespace(
-                generate=__import__("unittest.mock").mock.Mock(
-                    return_value={
-                        "ok": True,
-                        "path": str(output_source),
-                        "uri": output_source.as_uri(),
-                        "width": 8,
-                        "height": 8,
-                        "format": "png",
-                        "actualSize": "8x8",
-                    }
-                )
-            )
-            controller = app.AppController.__new__(app.AppController)
-            controller.active_image_sets = set()
-            controller.image_generator = service
-            controller.store = SimpleNamespace(
-                get_key_record=lambda key_id: {
-                    "id": key_id,
-                    "base_url": "https://example.test/v1",
-                },
-                get_secret=lambda _key_id: "secret",
-            )
-
-            def stream_response(*_args, **_kwargs):
-                return json.dumps(
-                    {
-                        "operation": "generate",
-                        "selected_asset_ids": [parent_result["assetId"]],
-                        "descriptions": [
-                            {
-                                "asset_id": parent_result["assetId"],
-                                "description": "紫色披风、银色肩甲的角色正面图",
-                            }
-                        ],
-                        "rationale": "延续角色身份并创作新的车站场景。",
-                    },
-                    ensure_ascii=False,
-                )
-
-            controller.client = SimpleNamespace(stream_response=stream_response)
-            events = []
-            with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
-                controller_image_files, "generated_pictures_dir", return_value=pictures_root
-            ):
-                result = controller.generate_image(
-                    "key-1",
-                    "让她走进雨夜车站",
-                    [],
-                    {
-                        "requestId": "set-2",
-                        "sessionId": "world-session",
-                        "parentSetId": "set-1",
-                        "continuation": True,
-                        "reasoningMode": "instant",
-                    },
-                    events.append,
-                )
-
-            generated_request = service.generate.call_args.args[2]
-            manifest = json.loads(
-                session_store._manifest_path("world-session").read_text(
-                    encoding="utf-8"
-                )
-            )
-
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["prompt"], "让她走进雨夜车站")
-        self.assertEqual(result["operation"], "generate")
-        self.assertEqual(result["transportOperation"], "edit")
-        self.assertEqual(result["selectedAssetIds"], [parent_result["assetId"]])
-        self.assertEqual(generated_request.operation, "generate")
-        self.assertEqual(len(generated_request.image_paths), 1)
-        self.assertIn("sessions", str(generated_request.image_paths[0]))
-        set_started = next(event for event in events if event["type"] == "set_started")
-        self.assertEqual(set_started["operation"], "generate")
-        self.assertEqual(set_started["selectedAssetIds"], [parent_result["assetId"]])
-        self.assertEqual(manifest["rounds"][1]["options"]["operation"], "generate")
-        self.assertEqual(
-            manifest["rounds"][1]["options"]["selectedAssetIds"],
-            [parent_result["assetId"]],
-        )
-        self.assertEqual(
-            manifest["assets"][0]["description"],
-            "紫色披风、银色肩甲的角色正面图",
-        )
-
-    def test_continuation_new_input_is_visible_to_planner_and_required_for_generation(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            pictures_root = root / "Pictures"
-            session_store = image_editor.ImageSessionStore(pictures_root)
-            parent_source = root / "parent.png"
-            added_source = root / "added.png"
-            output_source = root / "output.png"
-            Image.new("RGB", (8, 8), "purple").save(parent_source)
-            Image.new("RGB", (8, 8), "gold").save(added_source)
-            Image.new("RGB", (8, 8), "blue").save(output_source)
-            added_asset_id = app.image_asset_record(added_source)["assetId"]
-            session_store.begin_round(
-                "world-session",
-                "set-1",
-                "设计紫色披风角色",
-                1,
-                0,
-                {"originalPrompt": "设计紫色披风角色", "operation": "generate"},
-            )
-            parent_result = session_store.persist_result(
-                "world-session",
-                "set-1",
-                0,
-                parent_source,
-                {"width": 8, "height": 8, "format": "png"},
-            )
-            session_store.complete_round("world-session", "set-1")
-            service = SimpleNamespace(
-                generate=__import__("unittest.mock").mock.Mock(
-                    return_value={
-                        "ok": True,
-                        "path": str(output_source),
-                        "uri": output_source.as_uri(),
-                        "width": 8,
-                        "height": 8,
-                        "format": "png",
-                        "actualSize": "8x8",
-                    }
-                )
-            )
-            controller = app.AppController.__new__(app.AppController)
-            controller.active_image_sets = set()
-            controller.image_generator = service
-            controller.store = SimpleNamespace(
-                get_key_record=lambda key_id: {
-                    "id": key_id,
-                    "base_url": "https://example.test/v1",
-                },
-                get_secret=lambda _key_id: "secret",
-            )
-            planner_inputs = []
-
-            def stream_response(*args, **_kwargs):
-                planner_inputs.append(args[4])
-                return json.dumps(
-                    {
-                        "operation": "generate",
-                        "selected_asset_ids": [parent_result["assetId"]],
-                        "descriptions": [
-                            {
-                                "asset_id": parent_result["assetId"],
-                                "description": "紫色披风角色正面图",
-                            },
-                            {
-                                "asset_id": added_asset_id,
-                                "description": "金色材质与纹理参考图",
-                            },
-                        ],
-                        "rationale": "保留原有角色设计。",
-                    },
-                    ensure_ascii=False,
-                )
-
-            controller.client = SimpleNamespace(stream_response=stream_response)
-            with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
-                controller_image_files, "generated_pictures_dir", return_value=pictures_root
-            ):
-                result = controller.generate_image(
-                    "key-1",
-                    "加入这张金色材质参考图",
-                    [str(added_source)],
-                    {
-                        "requestId": "set-2",
-                        "sessionId": "world-session",
-                        "parentSetId": "set-1",
-                        "continuation": True,
-                        "reasoningMode": "instant",
-                    },
-                )
-
-            generated_paths = {str(path) for path in service.generate.call_args.args[2].image_paths}
-            planner_content = planner_inputs[0][0]["content"]
-            manifest = json.loads(
-                session_store._manifest_path("world-session").read_text(
-                    encoding="utf-8"
-                )
-            )
-            added_asset = next(
-                asset for asset in manifest["assets"] if asset["assetId"] == added_asset_id
-            )
-            parent_asset = next(
-                asset for asset in manifest["assets"] if asset["assetId"] == parent_result["assetId"]
-            )
-
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["selectedAssetIds"], [parent_result["assetId"]])
-        self.assertEqual(sum(item["type"] == "input_image" for item in planner_content), 2)
-        self.assertIn(added_asset["assetId"], planner_content[0]["text"])
-        self.assertIn(str(Path(parent_result["path"]).parents[2] / added_asset["original"]), generated_paths)
-        self.assertIn(str(Path(parent_result["path"]).parents[2] / parent_asset["original"]), generated_paths)
-
-    def test_continuation_planner_and_image_request_exclude_sibling_branch_assets(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            pictures_root = root / "Pictures"
-            session_store = image_editor.ImageSessionStore(pictures_root)
-            sources = {}
-            for name, color in (
-                ("root", "red"),
-                ("branch-a", "green"),
-                ("branch-b", "blue"),
-                ("result", "white"),
-            ):
-                source_path = root / f"{name}.png"
-                Image.new("RGB", (8, 8), color).save(source_path)
-                sources[name] = source_path
-
-            session_store.begin_round("branch-world", "set-root", "根", 1, 0, {})
-            root_result = session_store.persist_result(
-                "branch-world", "set-root", 0, sources["root"],
-                {"width": 8, "height": 8, "format": "png"},
-            )
-            session_store.complete_round("branch-world", "set-root")
-            session_store.begin_round(
-                "branch-world", "set-a", "A", 1, 0, {}, parent_set_id="set-root"
-            )
-            branch_a_result = session_store.persist_result(
-                "branch-world", "set-a", 0, sources["branch-a"],
-                {"width": 8, "height": 8, "format": "png"},
-            )
-            session_store.complete_round("branch-world", "set-a")
-            session_store.begin_round(
-                "branch-world", "set-b", "B", 1, 0, {}, parent_set_id="set-root"
-            )
-            branch_b_result = session_store.persist_result(
-                "branch-world", "set-b", 0, sources["branch-b"],
-                {"width": 8, "height": 8, "format": "png"},
-            )
-            session_store.complete_round("branch-world", "set-b")
-            session_store.update_asset_descriptions(
-                "branch-world",
-                {
-                    root_result["assetId"]: "红色根场景",
-                    branch_a_result["assetId"]: "绿色 A 分支场景",
-                    branch_b_result["assetId"]: "蓝色 B 分支场景",
-                },
-            )
-            branch_b_asset_path = next(
-                asset["path"]
-                for asset in session_store.continuation_context(
-                    "branch-world", "set-b"
-                )["assets"]
-                if asset["assetId"] == branch_b_result["assetId"]
-            )
-            service = SimpleNamespace(
-                generate=__import__("unittest.mock").mock.Mock(
-                    return_value={
-                        "ok": True,
-                        "path": str(sources["result"]),
-                        "uri": sources["result"].as_uri(),
-                        "width": 8,
-                        "height": 8,
-                        "format": "png",
-                        "actualSize": "8x8",
-                    }
-                )
-            )
-            controller = app.AppController.__new__(app.AppController)
-            controller.active_image_sets = set()
-            controller.image_generator = service
-            controller.store = SimpleNamespace(
-                get_key_record=lambda key_id: {
-                    "id": key_id,
-                    "base_url": "https://example.test/v1",
-                },
-                get_secret=lambda _key_id: "secret",
-            )
-            planner_inputs = []
-
-            def stream_response(*args, **_kwargs):
-                planner_inputs.append(__import__("copy").deepcopy(args[4]))
-                return json.dumps(
-                    {
-                        "operation": "generate",
-                        "selected_asset_ids": [branch_a_result["assetId"]],
-                        "descriptions": [],
-                        "rationale": "仅延续 A 分支。",
-                    },
-                    ensure_ascii=False,
-                )
-
-            controller.client = SimpleNamespace(stream_response=stream_response)
-            with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
-                controller_image_files, "generated_pictures_dir", return_value=pictures_root
-            ):
-                result = controller.generate_image(
-                    "key-1",
-                    "继续 A 分支",
-                    [],
-                    {
-                        "requestId": "set-a-child",
-                        "sessionId": "branch-world",
-                        "parentSetId": "set-a",
-                        "continuation": True,
-                        "reasoningMode": "instant",
-                    },
-                )
-
-            planner_payload = json.dumps(planner_inputs, ensure_ascii=False)
-            generated_request = service.generate.call_args.args[2]
-            generated_paths = {str(path) for path in generated_request.image_paths}
-
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["roundNumber"], 3)
-        self.assertIn(branch_a_result["assetId"], planner_payload)
-        self.assertNotIn(branch_b_result["assetId"], planner_payload)
-        self.assertNotIn(branch_b_asset_path, planner_payload)
-        self.assertEqual(len(generated_paths), 1)
-        self.assertNotIn(branch_b_asset_path, generated_paths)
-        self.assertNotIn(str(sources["branch-b"]), generated_paths)
+    # Main-Agent continuation integration (including uploads and sibling history)
+    # lives in test_agent_workspace.py and exercises real SDK function calls.
 
     def test_continuation_describes_more_than_sixteen_old_assets_in_batches_before_planning(self):
         controller = app.AppController.__new__(app.AppController)
@@ -3172,6 +2900,7 @@ class ControllerTests(unittest.TestCase):
     def test_polish_prompt_uses_terra_and_streams_events(self):
         controller = app.AppController.__new__(app.AppController)
         controller.store = SimpleNamespace(
+            latest_payload=lambda _key_id: None,
             get_key_record=lambda key_id: {
                 "id": key_id,
                 "base_url": "https://example.test/v1",
@@ -3188,6 +2917,7 @@ class ControllerTests(unittest.TestCase):
         controller.client = SimpleNamespace(
             stream_response=__import__("unittest.mock").mock.Mock(side_effect=stream_response)
         )
+        controller._run_sdk_agent = Mock(side_effect=sdk_text_fixture(controller.client.stream_response))
 
         result = controller.polish_prompt("key-1", "rough prompt", events.append)
 
@@ -3351,8 +3081,10 @@ class ControllerTests(unittest.TestCase):
                 )
             )
             controller = app.AppController.__new__(app.AppController)
+            controller.web_search = app.WebSearchService()
             controller.image_generator = service
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -3373,6 +3105,7 @@ class ControllerTests(unittest.TestCase):
             controller.client = SimpleNamespace(
                 stream_response=__import__("unittest.mock").mock.Mock(side_effect=stream_response)
             )
+            controller._run_sdk_agent = Mock(side_effect=sdk_text_fixture(controller.client.stream_response))
             events = []
             with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
                 controller_image_files, "generated_pictures_dir", return_value=root / "Pictures"
@@ -3391,8 +3124,9 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["imageModel"], "gpt-image-2.5")
         sent_request = service.generate.call_args.args[2]
         self.assertEqual(sent_request.fields["model"], "gpt-image-2.5")
-        self.assertIn("alpha", sent_request.fields["prompt"])
-        self.assertIn("16:9", sent_request.fields["prompt"])
+        self.assertEqual(sent_request.fields["prompt"], "A clean professional chart")
+        self.assertEqual(sent_request.fields["background"], "transparent")
+        self.assertEqual(sent_request.fields["size"], "1280x720")
         self.assertNotIn("内部输出约束", json.dumps(events, ensure_ascii=False))
         self.assertEqual(result["reasoningModel"], "gpt-6-luna")
         self.assertEqual(result["reasoningEffort"], "high")
@@ -3401,8 +3135,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(response_call.args[2], "gpt-6-luna")
         self.assertEqual(response_call.kwargs["reasoning_effort"], "high")
         self.assertEqual(
-            [tool["name"] for tool in response_call.kwargs["tools"]],
-            ["search_web", "search_visual_references", "select_visual_references"],
+            [tool["type"] for tool in response_call.kwargs["tools"]],
+            ["web_search"],
         )
         response_input = response_call.args[4]
         self.assertEqual(response_input[0]["content"][0]["type"], "input_text")
@@ -3444,8 +3178,10 @@ class ControllerTests(unittest.TestCase):
                 )
             )
             controller = app.AppController.__new__(app.AppController)
+            controller.web_search = app.WebSearchService()
             controller.image_generator = service
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -3460,6 +3196,7 @@ class ControllerTests(unittest.TestCase):
                 return text
 
             controller.client = SimpleNamespace(stream_response=Mock(side_effect=stream_response))
+            controller._run_sdk_agent = Mock(side_effect=sdk_text_fixture(controller.client.stream_response))
             with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
                 controller_image_files, "generated_pictures_dir", return_value=root / "Pictures"
             ):
@@ -3486,14 +3223,16 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(response_call.args[2], "gpt-6.1-sol")
         self.assertEqual(response_call.kwargs["reasoning_effort"], "high")
         self.assertEqual(
-            [tool["name"] for tool in response_call.kwargs["tools"]],
-            ["search_web", "search_visual_references", "select_visual_references"],
+            [tool["type"] for tool in response_call.kwargs["tools"]],
+            ["web_search"],
         )
-        self.assertIn("必须完整执行需求理解", response_call.args[3])
-        self.assertIn("不得因深度较低而关闭任何阶段或工具", response_call.args[3])
+        self.assertIn("advanced", response_call.args[3])
+        self.assertLess(len(response_call.args[3]), 700)
+        self.assertTrue(controller._run_sdk_agent.call_args.args[0].web_search_enabled)
 
     def test_flash_agent_assesses_information_gaps_and_keeps_search_tools(self):
         controller = app.AppController.__new__(app.AppController)
+        controller.web_search = app.WebSearchService()
         captured = {}
         events = []
 
@@ -3515,6 +3254,7 @@ class ControllerTests(unittest.TestCase):
             return text
 
         controller.client = SimpleNamespace(stream_response=stream_response)
+        controller._run_sdk_agent = Mock(side_effect=sdk_text_fixture(controller.client.stream_response))
         result = controller._run_image_prompt_agent(
             {"base_url": "https://example.test/v1"},
             "secret",
@@ -3526,9 +3266,9 @@ class ControllerTests(unittest.TestCase):
         )
 
         self.assertEqual(captured["reasoning_effort"], "medium")
-        self.assertIn("第一步都必须先判断", captured["instructions"])
-        self.assertIn("不得因为处于 Flash 模式就跳过", captured["instructions"])
-        self.assertIn("若缺口会影响事实", captured["instructions"])
+        self.assertIn("flash", captured["instructions"])
+        self.assertIn("自主", captured["instructions"])
+        self.assertLess(len(captured["instructions"]), 700)
         self.assertEqual(result["reasoningUsage"]["totalTokens"], 225)
         self.assertEqual(result["reasoningUsage"]["callCount"], 1)
         self.assertAlmostEqual(result["reasoningUsage"]["costUsd"], 0.0036)
@@ -3540,8 +3280,8 @@ class ControllerTests(unittest.TestCase):
         completed = next(event for event in events if event["type"] == "react_completed")
         self.assertEqual(completed["reasoningUsage"], result["reasoningUsage"])
         self.assertEqual(
-            [tool["name"] for tool in captured["tools"]],
-            ["search_web", "search_visual_references", "select_visual_references"],
+            [tool["type"] for tool in captured["tools"]],
+            ["web_search"],
         )
         self.assertEqual(result["prompt"], "Fast final prompt")
 
@@ -3560,6 +3300,7 @@ class ControllerTests(unittest.TestCase):
             stream_response=stream_response,
             get_json=Mock(return_value={"usage": {"total": {"cost": 999.0}}}),
         )
+        controller._run_sdk_agent = Mock(side_effect=sdk_text_fixture(controller.client.stream_response))
 
         result = controller._run_image_prompt_agent(
             {"base_url": "https://example.test/v1"},
@@ -3594,6 +3335,7 @@ class ControllerTests(unittest.TestCase):
             return text
 
         controller.client = SimpleNamespace(stream_response=stream_response)
+        controller._run_sdk_agent = Mock(side_effect=sdk_text_fixture(controller.client.stream_response))
         result = controller._run_image_prompt_agent(
             {"base_url": "https://example.test/v1"},
             "secret",
@@ -3606,286 +3348,11 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(captured["model"], "gpt-6.1-terra")
         self.assertEqual(captured["reasoning_effort"], "max")
-        self.assertIn(app.IMAGE_REASONING_MODES["max"]["depth"], captured["instructions"])
+        self.assertIn("extra", captured["instructions"])
+        self.assertLess(len(captured["instructions"]), 700)
         self.assertEqual(result["prompt"], "Extra final prompt")
 
-    def test_react_continuation_plans_assets_then_loads_only_selected_older_image(self):
-        with tempfile.TemporaryDirectory() as temp:
-            parent_path = Path(temp) / "parent.png"
-            older_path = Path(temp) / "older.png"
-            Image.new("RGB", (8, 8), "purple").save(parent_path)
-            Image.new("RGB", (8, 8), "silver").save(older_path)
-            parent_asset = app.image_asset_record(parent_path)
-            older_asset = {
-                **app.image_asset_record(older_path),
-                "description": "银色城堡大厅背景",
-            }
-            context = {
-                "history": [
-                    {
-                        "setId": "set-1",
-                        "userPrompt": "设计主角",
-                        "reasoningSummary": "采用紫色披风。",
-                        "outputAssetIds": [parent_asset["assetId"]],
-                    }
-                ],
-                "assets": [older_asset, parent_asset],
-            }
-            controller = app.AppController.__new__(app.AppController)
-            response_inputs = []
-            response_tools = []
-            response_index = __import__("itertools").count()
 
-            def stream_response(*args, **kwargs):
-                response_inputs.append(__import__("copy").deepcopy(args[4]))
-                response_tools.append(kwargs.get("tools"))
-                if next(response_index) == 0:
-                    kwargs["on_completed"](
-                        {
-                            "output": [
-                                {
-                                    "type": "function_call",
-                                    "name": "plan_image_continuation",
-                                    "call_id": "call-plan",
-                                    "arguments": json.dumps(
-                                        {
-                                            "operation": "generate",
-                                            "selected_asset_ids": [
-                                                older_asset["assetId"],
-                                                parent_asset["assetId"],
-                                            ],
-                                            "descriptions": [
-                                                {
-                                                    "asset_id": parent_asset["assetId"],
-                                                    "description": "紫色披风角色正面图",
-                                                }
-                                            ],
-                                            "rationale": "保留角色和既有场景语言。",
-                                        },
-                                        ensure_ascii=False,
-                                    ),
-                                }
-                            ]
-                        }
-                    )
-                    return ""
-                text = "已核对角色和场景。\n<<<FINAL_PROMPT>>>角色走入雨夜车站"
-                kwargs["on_delta"](text)
-                kwargs["on_completed"]({"output": []})
-                return text
-
-            controller.client = SimpleNamespace(stream_response=stream_response)
-            result = controller._run_image_prompt_agent(
-                {"base_url": "https://example.test/v1"},
-                "secret",
-                "让她走进雨夜车站",
-                (parent_path,),
-                "medium",
-                False,
-                lambda *_args, **_kwargs: None,
-                context,
-                [parent_asset],
-            )
-
-        self.assertEqual(response_tools[0][0]["name"], "plan_image_continuation")
-        self.assertIsNone(response_tools[1])
-        first_content = response_inputs[0][0]["content"]
-        self.assertEqual(sum(item["type"] == "input_image" for item in first_content), 1)
-        plan_output = next(
-            item
-            for item in response_inputs[1]
-            if item.get("type") == "function_call_output"
-        )["output"]
-        self.assertEqual(sum(item["type"] == "input_image" for item in plan_output), 1)
-        self.assertEqual(result["continuationPlan"]["operation"], "generate")
-        self.assertEqual(
-            result["continuationPlan"]["selectedAssetIds"],
-            [older_asset["assetId"], parent_asset["assetId"]],
-        )
-
-    def test_generate_image_high_uses_custom_visual_search_and_selected_reference(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            output_path = root / "result.png"
-            Image.new("RGB", (8, 8), "blue").save(output_path)
-            service = SimpleNamespace(
-                generate=__import__("unittest.mock").mock.Mock(
-                    return_value={
-                        "ok": True,
-                        "path": str(output_path),
-                        "uri": output_path.as_uri(),
-                        "width": 8,
-                        "height": 8,
-                        "format": "png",
-                        "actualSize": "8x8",
-                    }
-                )
-            )
-            candidate = {
-                "id": "webref-shanghai",
-                "title": "Shanghai Tower exterior",
-                "caption": "Glass facade and twisting silhouette",
-                "imageUrl": "https://images.example/shanghai.jpg",
-                "thumbnailUrl": "https://thumbs.example/shanghai.jpg",
-                "sourceUrl": "https://source.example/shanghai",
-                "width": 1200,
-                "height": 1800,
-                "provider": "Bing Images",
-                "previewDataUrl": "data:image/jpeg;base64,cHJldmlldw==",
-                "_previewBytes": b"preview",
-            }
-            search_service = SimpleNamespace(
-                search_web=__import__("unittest.mock").mock.Mock(),
-                search_visual_references=__import__("unittest.mock").mock.Mock(
-                    return_value={"query": "Shanghai Tower exterior", "results": [candidate]}
-                ),
-                stage_reference_records=__import__("unittest.mock").mock.Mock(),
-            )
-
-            def stage_reference_records(_candidates, target_dir, _max_count):
-                target_dir.mkdir(parents=True, exist_ok=True)
-                reference_path = target_dir / "reference-1.jpg"
-                Image.new("RGB", (16, 16), "silver").save(reference_path, format="JPEG")
-                return [{
-                    "id": candidate["id"],
-                    "title": candidate["title"],
-                    "caption": candidate["caption"],
-                    "provider": candidate["provider"],
-                    "sourceUrl": candidate["sourceUrl"],
-                    "imageUrl": candidate["imageUrl"],
-                    "path": str(reference_path),
-                }]
-
-            search_service.stage_reference_records.side_effect = stage_reference_records
-            controller = app.AppController.__new__(app.AppController)
-            controller.image_generator = service
-            controller.web_search = search_service
-            controller.store = SimpleNamespace(
-                get_key_record=lambda key_id: {
-                    "id": key_id,
-                    "base_url": "https://example.test/v1",
-                },
-                get_secret=lambda _key_id: "secret",
-            )
-            response_inputs = []
-            response_tools = []
-            response_instructions = []
-            response_index = __import__("itertools").count()
-
-            def stream_response(*args, **kwargs):
-                response_inputs.append(args[4])
-                response_tools.append(kwargs.get("tools"))
-                response_instructions.append(args[3])
-                index = next(response_index)
-                if index == 0:
-                    kwargs["on_completed"](
-                        {
-                            "output": [
-                                {
-                                    "type": "function_call",
-                                    "name": "search_visual_references",
-                                    "call_id": "call-search",
-                                    "arguments": json.dumps(
-                                        {"query": "Shanghai Tower exterior", "max_results": 6}
-                                    ),
-                                }
-                            ]
-                        }
-                    )
-                    return ""
-                if index == 1:
-                    kwargs["on_completed"](
-                        {
-                            "output": [
-                                {
-                                    "type": "function_call",
-                                    "name": "select_visual_references",
-                                    "call_id": "call-select",
-                                    "arguments": json.dumps(
-                                        {
-                                            "reference_ids": ["webref-shanghai"],
-                                            "rationale": "The facade and silhouette improve accuracy.",
-                                        }
-                                    ),
-                                }
-                            ]
-                        }
-                    )
-                    return ""
-                text = (
-                    "环境：真实建筑写实创作\n"
-                    "参考：采用已核验的外观轮廓\n"
-                    "<<<FINAL_PROMPT>>>Photorealistic Shanghai Tower with twisting glass facade"
-                )
-                kwargs["on_delta"](text)
-                kwargs["on_completed"](
-                    {
-                        "output": [
-                            {
-                                "type": "message",
-                                "content": [{"type": "output_text", "text": text}],
-                            }
-                        ]
-                    }
-                )
-                return text
-
-            controller.client = SimpleNamespace(
-                stream_response=__import__("unittest.mock").mock.Mock(
-                    side_effect=stream_response
-                )
-            )
-            events = []
-            data_root = root / "data"
-            with patch.object(controller_image_reasoning, "app_data_dir", return_value=data_root), patch.object(
-                controller_image_files, "generated_pictures_dir", return_value=root / "Pictures"
-            ):
-                result = controller.generate_image(
-                    "key-1",
-                    "Create an accurate Shanghai Tower exterior",
-                    [],
-                    {"requestId": "react-high-1", "reasoningMode": "high"},
-                    event_callback=events.append,
-                )
-
-        self.assertTrue(result["ok"])
-        self.assertTrue(result["webSearchEnabled"])
-        self.assertTrue(result["webSearchUsed"])
-        self.assertEqual(result["webSearchResultCount"], 1)
-        self.assertFalse(result["webSearchFailed"])
-        self.assertEqual(result["webReferenceCount"], 1)
-        self.assertEqual(result["referenceCount"], 1)
-        self.assertEqual(len(response_inputs), 3)
-        self.assertTrue(all("必须保留其名称、身份" in value for value in response_instructions))
-        self.assertTrue(all("不要仅因对象属于知名 IP 就改写为原创角色" in value for value in response_instructions))
-        self.assertTrue(response_tools[0])
-        self.assertTrue(response_tools[1])
-        self.assertIsNone(response_tools[2])
-        first_tool_output = next(
-            item for item in response_inputs[1] if item.get("type") == "function_call_output"
-        )
-        self.assertTrue(
-            any(content.get("type") == "input_image" for content in first_tool_output["output"])
-        )
-        selected_tool_output = next(
-            item
-            for item in response_inputs[2]
-            if item.get("type") == "function_call_output" and item.get("call_id") == "call-select"
-        )
-        self.assertEqual(json.loads(selected_tool_output["output"])["acceptedCount"], 1)
-        generation_request = service.generate.call_args.args[2]
-        self.assertEqual(len(generation_request.image_paths), 1)
-        self.assertEqual(generation_request.operation, "generate")
-        self.assertIn("image-search-references", str(generation_request.image_paths[0]))
-        self.assertFalse((data_root / "image-search-references" / "react-high-1").exists())
-        event_types = [event["type"] for event in events]
-        self.assertIn("react_visual_results", event_types)
-        self.assertIn("react_visual_selected", event_types)
-        set_started = next(event for event in events if event["type"] == "set_started")
-        self.assertEqual(set_started["operation"], "generate")
-        self.assertEqual(set_started["webReferences"][0]["title"], "Shanghai Tower exterior")
-        self.assertTrue(set_started["webReferences"][0]["previewUri"].startswith("data:image/jpeg;base64,"))
-        self.assertIn("Pictures", set_started["webReferences"][0]["path"])
 
     def test_generate_image_cleans_staged_web_references_after_unexpected_error(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -3901,6 +3368,7 @@ class ControllerTests(unittest.TestCase):
                 )
             )
             controller.store = SimpleNamespace(
+                latest_payload=lambda _key_id: None,
                 get_key_record=lambda key_id: {
                     "id": key_id,
                     "base_url": "https://example.test/v1",
@@ -3929,290 +3397,21 @@ class ControllerTests(unittest.TestCase):
             with patch.object(controller_image_reasoning, "app_data_dir", return_value=data_root), patch.object(
                 controller_image_files, "generated_pictures_dir", return_value=root / "Pictures"
             ):
-                with self.assertRaisesRegex(TypeError, "unexpected generator failure"):
-                    controller.generate_image(
-                        "key-1",
-                        "Create an accurate landmark",
-                        [],
-                        {"requestId": request_id, "reasoningMode": "high"},
-                    )
+                result = controller.generate_image(
+                    "key-1", "Create an accurate landmark", [],
+                    {"requestId": request_id, "reasoningMode": "high"},
+                )
+                self.assertFalse(result["ok"])
+                self.assertIn("unexpected generator failure", result["error"])
+                self.assertEqual(result["errorDetails"]["attempts"], 1)
+                self.assertEqual(controller.image_generator.generate.call_count, 1)
 
             self.assertNotIn(request_id, controller.active_image_sets)
             self.assertFalse((data_root / "image-search-references" / request_id).exists())
 
-    def test_image_agent_ignores_unknown_visual_reference_ids(self):
-        candidate = {
-            "id": "webref-known",
-            "title": "Known reference",
-            "imageUrl": "https://images.example/known.jpg",
-            "thumbnailUrl": "https://thumbs.example/known.jpg",
-            "sourceUrl": "https://source.example/known",
-            "provider": "Bing Images",
-            "previewDataUrl": "data:image/jpeg;base64,cHJldmlldw==",
-        }
-        controller = app.AppController.__new__(app.AppController)
-        controller.web_search = SimpleNamespace(
-            search_visual_references=lambda *_args, **_kwargs: {
-                "query": "known subject",
-                "results": [candidate],
-            }
-        )
-        response_inputs = []
-        response_index = __import__("itertools").count()
 
-        def stream_response(*args, **kwargs):
-            response_inputs.append(__import__("copy").deepcopy(args[4]))
-            index = next(response_index)
-            if index == 0:
-                kwargs["on_completed"](
-                    {
-                        "output": [{
-                            "type": "function_call",
-                            "name": "search_visual_references",
-                            "call_id": "call-search",
-                            "arguments": '{"query":"known subject"}',
-                        }]
-                    }
-                )
-                return ""
-            if index == 1:
-                kwargs["on_completed"](
-                    {
-                        "output": [{
-                            "type": "function_call",
-                            "name": "select_visual_references",
-                            "call_id": "call-select",
-                            "arguments": '{"reference_ids":["webref-unknown"]}',
-                        }]
-                    }
-                )
-                return ""
-            text = "No candidate adopted\n<<<FINAL_PROMPT>>>Final prompt without a web reference"
-            kwargs["on_delta"](text)
-            kwargs["on_completed"]({"output": []})
-            return text
 
-        controller.client = SimpleNamespace(stream_response=stream_response)
-        events = []
-        result = controller._run_image_prompt_agent(
-            {"base_url": "https://example.test/v1"},
-            "secret",
-            "Create the subject",
-            (),
-            "high",
-            True,
-            lambda event_type, **details: events.append({"type": event_type, **details}),
-        )
 
-        selection_output = next(
-            item
-            for item in response_inputs[2]
-            if item.get("type") == "function_call_output" and item.get("call_id") == "call-select"
-        )
-        self.assertEqual(json.loads(selection_output["output"])["acceptedCount"], 0)
-        self.assertEqual(result["webSearchResultCount"], 1)
-        self.assertEqual(result["webCandidates"], [])
-        selected_event = next(event for event in events if event["type"] == "react_visual_selected")
-        self.assertEqual(selected_event["selectedCount"], 0)
-
-    def test_image_agent_returns_search_error_to_model_and_continues(self):
-        controller = app.AppController.__new__(app.AppController)
-        controller.web_search = SimpleNamespace(
-            search_visual_references=__import__("unittest.mock").mock.Mock(
-                side_effect=RuntimeError("search temporarily unavailable")
-            )
-        )
-        response_inputs = []
-        response_index = __import__("itertools").count()
-
-        def stream_response(*args, **kwargs):
-            response_inputs.append(args[4])
-            if next(response_index) == 0:
-                kwargs["on_completed"](
-                    {
-                        "output": [{
-                            "type": "function_call",
-                            "name": "search_visual_references",
-                            "call_id": "call-failed-search",
-                            "arguments": '{"query":"subject"}',
-                        }]
-                    }
-                )
-                return ""
-            text = "Search unavailable; proceeding from the request\n<<<FINAL_PROMPT>>>Fallback final prompt"
-            kwargs["on_delta"](text)
-            kwargs["on_completed"]({"output": []})
-            return text
-
-        controller.client = SimpleNamespace(stream_response=stream_response)
-        events = []
-        result = controller._run_image_prompt_agent(
-            {"base_url": "https://example.test/v1"},
-            "secret",
-            "Create the subject",
-            (),
-            "high",
-            True,
-            lambda event_type, **details: events.append({"type": event_type, **details}),
-        )
-
-        failed_output = next(
-            item
-            for item in response_inputs[1]
-            if item.get("type") == "function_call_output"
-        )
-        self.assertFalse(json.loads(failed_output["output"])["ok"])
-        self.assertEqual(result["prompt"], "Fallback final prompt")
-        self.assertTrue(result["webSearchUsed"])
-        self.assertTrue(result["webSearchFailed"])
-        self.assertEqual(result["webCandidates"], [])
-        self.assertIn("react_tool_failed", [event["type"] for event in events])
-
-    def test_image_agent_flushes_turn_text_before_tool_event(self):
-        controller = app.AppController.__new__(app.AppController)
-        controller.web_search = SimpleNamespace(
-            search_web=__import__("unittest.mock").mock.Mock(
-                return_value={"query": "Siamese cat", "results": []}
-            )
-        )
-        response_index = __import__("itertools").count()
-
-        def stream_response(*_args, **kwargs):
-            if next(response_index) == 0:
-                kwargs["on_delta"]("先核对产品外观。")
-                kwargs["on_completed"]({
-                    "output": [{
-                        "type": "function_call",
-                        "name": "search_web",
-                        "call_id": "call-search",
-                        "arguments": '{"query":"Siamese cat","max_results":5}',
-                    }]
-                })
-                return "先核对产品外观。"
-            text = "已完成核对。\n<<<FINAL_PROMPT>>>Final image prompt"
-            kwargs["on_delta"](text)
-            kwargs["on_completed"]({"output": []})
-            return text
-
-        controller.client = SimpleNamespace(stream_response=stream_response)
-        events = []
-        result = controller._run_image_prompt_agent(
-            {"base_url": "https://example.test/v1"},
-            "secret",
-            "Create a product image",
-            (),
-            "medium",
-            True,
-            lambda event_type, **details: events.append({"type": event_type, **details}),
-        )
-
-        tool_index = next(
-            index for index, event in enumerate(events)
-            if event["type"] == "react_tool_started"
-        )
-        visible_before_tool = "".join(
-            event.get("delta", "")
-            for event in events[:tool_index]
-            if event["type"] == "react_turn_delta"
-        )
-        first_turn = next(
-            event for event in events[:tool_index]
-            if event["type"] == "react_turn_completed"
-        )
-        self.assertEqual(visible_before_tool, "先核对产品外观。")
-        self.assertEqual(first_turn["text"], "先核对产品外观。")
-        self.assertEqual(result["prompt"], "Final image prompt")
-
-    def test_image_agent_runs_same_turn_visual_searches_concurrently(self):
-        controller = app.AppController.__new__(app.AppController)
-        query_count = app.IMAGE_REASONING_MODES["high"]["search_parallel_queries"]
-        barrier = __import__("threading").Barrier(query_count, timeout=2)
-        search_threads = []
-
-        def search_visual_references(query, _max_results):
-            search_threads.append(__import__("threading").get_ident())
-            barrier.wait()
-            candidate_id = f"webref-{query}"
-            return {
-                "query": query,
-                "results": [{
-                    "id": candidate_id,
-                    "title": f"Reference {query}",
-                    "imageUrl": f"https://images.example/{query}.jpg",
-                    "thumbnailUrl": f"https://thumbs.example/{query}.jpg",
-                    "sourceUrl": f"https://source.example/{query}",
-                    "provider": "Test Search",
-                    "previewDataUrl": "data:image/jpeg;base64,cHJldmlldw==",
-                }],
-            }
-
-        controller.web_search = SimpleNamespace(
-            search_visual_references=search_visual_references,
-        )
-        response_inputs = []
-        response_index = __import__("itertools").count()
-
-        def stream_response(*args, **kwargs):
-            response_inputs.append(__import__("copy").deepcopy(args[4]))
-            index = next(response_index)
-            if index == 0:
-                kwargs["on_completed"]({
-                    "output": [
-                        {
-                            "type": "function_call",
-                            "name": "search_visual_references",
-                            "call_id": f"call-{query_index}",
-                            "arguments": json.dumps({"query": f"query-{query_index}"}),
-                        }
-                        for query_index in range(query_count)
-                    ]
-                })
-                return ""
-            if index == 1:
-                kwargs["on_completed"]({
-                    "output": [{
-                        "type": "function_call",
-                        "name": "select_visual_references",
-                        "call_id": "call-select",
-                            "arguments": json.dumps({
-                                "reference_ids": [
-                                    f"webref-query-{query_index}"
-                                    for query_index in range(query_count)
-                                ],
-                                "rationale": "Compared all concurrent candidates.",
-                            }),
-                    }]
-                })
-                return ""
-            text = "Compared both searches\n<<<FINAL_PROMPT>>>Final prompt with two references"
-            kwargs["on_delta"](text)
-            kwargs["on_completed"]({"output": []})
-            return text
-
-        controller.client = SimpleNamespace(stream_response=stream_response)
-        result = controller._run_image_prompt_agent(
-            {"base_url": "https://example.test/v1"},
-            "secret",
-            "Create a comparison",
-            (),
-            "high",
-            True,
-            lambda *_args, **_kwargs: None,
-        )
-
-        self.assertEqual(len(set(search_threads)), query_count)
-        self.assertEqual(result["webSearchResultCount"], query_count)
-        self.assertEqual(
-            [candidate["id"] for candidate in result["webCandidates"]],
-            [f"webref-query-{query_index}" for query_index in range(query_count)],
-        )
-        first_round_outputs = [
-            item for item in response_inputs[1] if item.get("type") == "function_call_output"
-        ]
-        self.assertEqual(
-            [item["call_id"] for item in first_round_outputs],
-            [f"call-{query_index}" for query_index in range(query_count)],
-        )
 
     def test_github_request_retries_without_system_proxy_when_proxy_refuses(self):
         request = app.urllib.request.Request("https://api.github.com/test")
@@ -4335,6 +3534,7 @@ class ControllerTests(unittest.TestCase):
                 ]
             )
 
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=True)
 
             controller._github_json.assert_called_once_with("/releases?per_page=20")
@@ -4357,12 +3557,13 @@ class ControllerTests(unittest.TestCase):
                 side_effect=app.NetworkTransportError("curl schannel failed")
             )
 
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=True)
 
             self.assertEqual(controller.update_state["status"], "failed")
             self.assertEqual(
                 controller.update_state["message"],
-                "检查更新失败：无法连接 GitHub，请检查网络或代理后重试",
+                "检查更新失败：无法连接更新服务器，请检查网络或代理后重试",
             )
             self.assertNotIn("SSL", controller.update_state["message"])
 
@@ -4717,6 +3918,46 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(thread.return_value.start.call_count, 3)
         controller.check_for_updates.assert_called_once_with(manual=False)
 
+    def test_mirra_update_uses_the_manifest_integrity_on_both_download_sources(self):
+        data = b"new package"
+        download_urls = []
+        controller = app.AppController.__new__(app.AppController)
+        controller.update_lock = __import__("threading").Lock()
+        controller.update_state = {}
+        controller.window = None
+        controller.visible = False
+        controller._github_json = Mock()
+        manifest = {
+            "ok": True, "platform": "windows", "latestVersion": "9.9.9",
+            "fileName": "API_TOOLS.exe", "sha256": app.sha256_bytes(data),
+            "downloadSize": len(data), "releaseNotes": "- 新配置",
+        }
+
+        def download(urls, target, message, size):
+            download_urls.extend(urls)
+            self.assertEqual(size, len(data))
+            target.write_bytes(b"wrong bytes" if len(download_urls) == 1 else data)
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            controller_updates, "get_small_url_bytes", return_value=json.dumps(manifest).encode()
+        ) as fetch, patch.object(
+            controller_updates, "app_data_dir", return_value=Path(temp)
+        ), patch.object(
+            controller, "_download_release_file", side_effect=download
+        ), patch.object(controller, "_download_text") as checksum:
+            controller.store = app.Store(Path(temp) / "test.db")
+            controller._check_for_updates_worker(manual=True)
+            self.assertEqual(controller.update_state["status"], "available")
+            self.assertIn("platform=windows", fetch.call_args.args[0].full_url)
+            self.assertIn("currentVersionCode=", fetch.call_args.args[0].full_url)
+            controller._github_json.assert_not_called()
+            controller._download_update_worker()
+            self.assertEqual(controller.update_state["status"], "ready")
+            self.assertEqual(Path(controller.update_state["downloadedPath"]).read_bytes(), data)
+            self.assertEqual(download_urls[0], "https://39.105.74.222/v1/app/update/download?platform=windows")
+            self.assertIn("/releases/download/imagen-v9.9.9/API_TOOLS.exe", download_urls[1])
+            checksum.assert_not_called()
+
     def test_automatic_update_check_respects_ignored_version(self):
         with tempfile.TemporaryDirectory() as temp:
             controller = app.AppController.__new__(app.AppController)
@@ -4733,6 +3974,7 @@ class ControllerTests(unittest.TestCase):
                 "assets": [{"name": app.RELEASE_ASSET_NAME, "url": "api", "browser_download_url": "web"}],
             }
 
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=False)
 
             self.assertTrue(controller.update_state["available"])
@@ -4754,6 +3996,7 @@ class ControllerTests(unittest.TestCase):
                 "assets": [{"name": app.RELEASE_ASSET_NAME, "url": "api", "browser_download_url": "web"}],
             }
 
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=True)
 
             self.assertTrue(controller.update_state["available"])
@@ -4788,6 +4031,7 @@ class ControllerTests(unittest.TestCase):
                     ],
                 }
             ]
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=True)
 
             self.assertEqual(requested_paths, ["/releases?per_page=20"])
@@ -4827,6 +4071,7 @@ class ControllerTests(unittest.TestCase):
                 ]
             )
 
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=True)
 
             controller._github_json.assert_called_once_with("/releases?per_page=20")
@@ -4902,6 +4147,7 @@ class ControllerTests(unittest.TestCase):
                 },
             ]
 
+            controller._gateway_release = Mock(side_effect=app.NetworkTransportError("gateway test offline"))
             controller._check_for_updates_worker(manual=True)
 
             notes = controller.update_state["releaseNotes"]
@@ -5105,7 +4351,7 @@ class ControllerTests(unittest.TestCase):
         controller.visible = False
 
         with tempfile.TemporaryDirectory() as temp, patch.object(
-            controller_image_files, "app_data_dir", return_value=Path(temp)
+            controller_updates, "app_data_dir", return_value=Path(temp)
         ), patch.object(
             controller,
             "_download_release_file",
@@ -5141,7 +4387,7 @@ class ControllerTests(unittest.TestCase):
         controller.visible = False
 
         with tempfile.TemporaryDirectory() as temp, patch.object(
-            controller_image_files, "app_data_dir", return_value=Path(temp)
+            controller_updates, "app_data_dir", return_value=Path(temp)
         ), patch.object(
             controller,
             "_download_release_file",
@@ -5389,6 +4635,7 @@ class ControllerTests(unittest.TestCase):
                 "defer_update_restart",
                 "dismiss_update_prompt",
                 "download_update",
+                "export_image_sets",
                 "generate_image",
                 "get_asset_status",
                 "get_state",
@@ -5621,6 +4868,43 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(listed["sets"][0]["effectivePrompt"], "专业产品图，三分构图")
         self.assertTrue(deleted["ok"])
         self.assertEqual(listed_after["sets"], [])
+
+    def test_controller_exports_selected_image_set_originals(self):
+        controller = app.AppController.__new__(app.AppController)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pictures_root = root / "Pictures" / app.APP_NAME
+            export_root = root / "export"
+            source = root / "source.png"
+            Image.new("RGB", (12, 8), "teal").save(source)
+            store = image_editor.ImageSessionStore(pictures_root)
+            store.begin_round("session-1", "set-1", "产品图", 1, 0, {})
+            store.persist_result(
+                "session-1",
+                "set-1",
+                0,
+                source,
+                {"width": 12, "height": 8, "format": "png", "actualSize": "12x8"},
+            )
+            store.complete_round("session-1", "set-1")
+            controller.window = SimpleNamespace(
+                create_file_dialog=Mock(return_value=(str(export_root),))
+            )
+
+            with patch.object(
+                controller_image_files, "generated_pictures_dir", return_value=pictures_root
+            ):
+                result = controller.export_image_sets([
+                    {"sessionId": "session-1", "setId": "set-1", "prompt": "产品图"},
+                    {"sessionId": "session-1", "setId": "missing", "prompt": "空集"},
+                ])
+
+            exported_files = list(export_root.rglob("*.png"))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["exported"], 1)
+        self.assertEqual(result["skippedSets"], ["missing"])
+        self.assertEqual(len(exported_files), 1)
 
     def test_controller_rejects_deleting_running_image_set(self):
         controller = app.AppController.__new__(app.AppController)

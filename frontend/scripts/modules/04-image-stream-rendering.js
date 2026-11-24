@@ -511,6 +511,9 @@
             if (tool.name === 'inspect_visual_references' || tool.name === 'inspect_reference_pages') return '查看参考图与视觉细节';
             if (tool.name === 'select_visual_references') return '筛选可用参考图';
             if (tool.name === 'plan_image_continuation') return '规划续作与素材';
+            if (tool.name === 'list_image_workspace') return '查看工作区记录';
+            if (tool.name === 'view_image_workspace_assets') return '查看工作区图片';
+            if (tool.name === 'select_image_workspace_inputs') return '选择生图素材';
             return '调用工具';
         }
 
@@ -524,6 +527,9 @@
             if (tool.name === 'inspect_visual_references' || tool.name === 'inspect_reference_pages') return 'scan-eye';
             if (tool.name === 'select_visual_references') return 'list-checks';
             if (tool.name === 'plan_image_continuation') return 'corner-down-left';
+            if (tool.name === 'list_image_workspace') return 'layers';
+            if (tool.name === 'view_image_workspace_assets') return 'scan-eye';
+            if (tool.name === 'select_image_workspace_inputs') return 'list-checks';
             return 'circle-check';
         }
 
@@ -628,16 +634,19 @@
             logShell.append(expandContent);
             body.append(logShell);
 
-            if ((set.webReferenceCount > 0 && set.webReferences.length > 0) || set.webSearchSources?.length || set.effectivePrompt) {
+            const referenceGallery = imageReferenceGallery(set);
+            const hasReferenceReview = Boolean(referenceGallery.length || set.webImageCandidateCount || set.webReferenceFailures?.length || set.webSelectionRationale);
+            if (hasReferenceReview || set.webSearchSources?.length || set.effectivePrompt) {
                 const supplementTabs = document.createElement('div');
                 supplementTabs.className = 'image-reasoning-supplement-tabs';
-                if (set.webReferenceCount > 0 && set.webReferences.length > 0) {
+                if (hasReferenceReview) {
                 const referenceToggle = document.createElement('button');
                 referenceToggle.type = 'button';
                     referenceToggle.className = `image-reasoning-supplement-toggle${set.webReferencesExpanded ? ' is-active' : ''}`;
-                referenceToggle.title = set.webReferencesExpanded ? '收起网络参考图' : '查看采用的网络参考图';
+                referenceToggle.title = set.webReferencesExpanded ? '收起参考图记录' : '查看检视图片、采用状态与说明';
+                if (set.webImageCandidateCount) referenceToggle.title += `（搜索返回 ${set.webImageCandidateCount} 张图片候选）`;
                 referenceToggle.setAttribute('aria-expanded', String(set.webReferencesExpanded));
-                    referenceToggle.innerHTML = `${iconMarkup('images', 'icon-10')}<span>采用的参考图 ${set.webReferenceCount}</span>`;
+                    referenceToggle.innerHTML = `${iconMarkup('images', 'icon-10')}<span>已检视 ${referenceGallery.length} · 采用 ${Number(set.webReferenceCount) || 0}</span>`;
                 referenceToggle.addEventListener('click', () => void toggleWebReferences(set.setId));
                     supplementTabs.append(referenceToggle);
                 }
@@ -685,22 +694,52 @@
                 body.append(sources);
             }
 
-            if (set.webReferencesExpanded && set.webReferences.length) {
+            if (set.webReferencesExpanded && hasReferenceReview) {
+                if (set.webSelectionRationale) {
+                    const note = document.createElement('p');
+                    note.className = 'image-reasoning-reference-note';
+                    note.textContent = set.webSelectionRationale;
+                    body.append(note);
+                } else if (!set.webReferenceCount && ['completed', 'failed', 'cancelled'].includes(set.reasoningStatus)) {
+                    const note = document.createElement('p');
+                    note.className = 'image-reasoning-reference-note';
+                    note.textContent = '本次未采用网络参考图。';
+                    body.append(note);
+                }
+                if (set.webReferenceFailures?.length) {
+                    const failures = document.createElement('details');
+                    failures.className = 'image-reasoning-reference-failures';
+                    const summary = document.createElement('summary');
+                    summary.textContent = `未能读取 ${set.webReferenceFailures.length} 张候选图`;
+                    failures.append(summary);
+                    for (const failure of set.webReferenceFailures) {
+                        const reason = document.createElement('p');
+                        reason.textContent = String(failure.message || failure.error?.message || '图片未能读取');
+                        reason.title = String(failure.imageUrl || failure.id || '');
+                        failures.append(reason);
+                    }
+                    body.append(failures);
+                }
                 const references = document.createElement('div');
                 references.className = 'image-reasoning-web-references';
                 if (set.webReferencesLoading) {
                     references.innerHTML = `${iconMarkup('loader-circle', 'icon-13 is-spinning')}<span>正在加载网络参考图</span>`;
                 } else {
-                    set.webReferences.forEach((reference, referenceIndex) => {
+                    referenceGallery.forEach((reference, referenceIndex) => {
                         const referenceButton = document.createElement('button');
                         referenceButton.type = 'button';
                         referenceButton.className = 'image-reasoning-web-reference';
+                        const adopted = imageReferenceIsAdopted(set, reference);
+                        referenceButton.dataset.adopted = String(adopted);
                         referenceButton.title = reference.title || `网络参考图 ${referenceIndex + 1}`;
                         const image = document.createElement('img');
                         image.src = browserImageSource(reference.previewUri, reference.uri);
                         image.alt = reference.title || `网络参考图 ${referenceIndex + 1}`;
                         const label = document.createElement('span');
-                        label.textContent = reference.title || reference.provider || `参考图 ${referenceIndex + 1}`;
+                        const decided = Boolean(set.webSelectionRationale)
+                            || ['selected', 'declined', 'no_candidates'].includes(set.webSelectionStatus)
+                            || ['completed', 'failed', 'cancelled'].includes(set.reasoningStatus);
+                        label.textContent = `${adopted ? '已采用' : decided ? '未采用' : '已检视'} · ${reference.title || reference.provider || `参考图 ${referenceIndex + 1}`}`;
                         referenceButton.append(image, label);
                         referenceButton.addEventListener('click', () => openImageResultModal({
                             ...reference,

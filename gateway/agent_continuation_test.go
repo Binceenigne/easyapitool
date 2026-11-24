@@ -42,7 +42,7 @@ func TestInstantContinuationPlansOnceAndSendsExistingReferenceToImageEdit(t *tes
 		}
 		defer file.Close()
 		data, _ := io.ReadAll(file)
-		if !bytes.Equal(data, picture) || r.FormValue("prompt") != "preserve the subject, change jacket to blue" {
+		if !bytes.Equal(data, picture) || r.FormValue("prompt") != "change jacket to blue" {
 			t.Error("reference or planned edit prompt changed")
 		}
 		writeJSON(w, 200, object{"data": []object{{"b64_json": encoded}}})

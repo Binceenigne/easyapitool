@@ -62,6 +62,7 @@ func (g *gateway) upstreamRequest(ctx context.Context, u upstream, method, path,
 func (g *gateway) registerProxy(mux *http.ServeMux) {
 	mux.HandleFunc("POST /internal/agent/v1/responses", g.agentProxy)
 	mux.HandleFunc("POST /internal/agent/v1/reference-images", g.agentVisual)
+	mux.HandleFunc("POST /internal/agent/v1/workspace", g.agentWorkspace)
 	for _, path := range []string{"/images/generations", "/images/edits", "/images/variations", "/responses"} {
 		mux.HandleFunc("POST /v1"+path, g.proxy(path))
 	}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .agent_metadata import IMAGE_AGENT_METADATA_FIELDS
+
 import base64
 import binascii
 import hashlib
@@ -352,7 +354,7 @@ class ImageSessionStore:
                         return new_prefix + value[len(old_prefix):]
                     return value
                 for round_entry in rounds:
-                    for field in ("items", "webReferences"):
+                    for field in ("items", "webReferences", "webInspectedReferences"):
                         round_entry[field] = relocate(round_entry.get(field) or [])
                 manifest["assets"] = relocate(manifest.get("assets") or [])
                 round_data["directory"] = target.relative_to(current).as_posix()
@@ -604,6 +606,7 @@ class ImageSessionStore:
                     "webSearchFailed": bool(options.get("webSearchFailed")),
                     "webSearchResultCount": int(options.get("webSearchResultCount") or 0),
                     "webReferenceCount": int(options.get("webReferenceCount") or 0),
+                    **{name: options[name] for name in IMAGE_AGENT_METADATA_FIELDS if name in options},
                 },
                 "items": [
                     {"itemIndex": item_index, "status": "queued", "error": ""}
@@ -751,6 +754,7 @@ class ImageSessionStore:
         session_id: str,
         set_id: str,
         additional_asset_ids: list[str] | tuple[str, ...] | None = None,
+        *, include_workspace: bool = False,
     ) -> dict[str, Any]:
         clean_session_id = self._safe_id(session_id)
         clean_set_id = self._safe_id(set_id)
@@ -778,9 +782,10 @@ class ImageSessionStore:
                 branch_rounds.append(pending)
                 pending = round_by_id.get(str(pending.get("parentSetId") or ""))
             branch_rounds.reverse()
+            workspace_rounds = rounds if include_workspace else branch_rounds
             session_dir = self._session_dir(clean_session_id)
             dirty = False
-            for existing_round in branch_rounds:
+            for existing_round in workspace_rounds:
                 options = existing_round.get("options")
                 if not isinstance(options, dict):
                     options = {}
@@ -814,14 +819,18 @@ class ImageSessionStore:
                     if asset is not None and item.get("assetId") != asset["assetId"]:
                         item["assetId"] = asset["assetId"]
                         dirty = True
-                for reference in existing_round.get("webReferences") or []:
+                for reference, reference_role in [
+                    (reference, role)
+                    for field, role in (("webReferences", "web"), ("webInspectedReferences", "web-inspected"))
+                    for reference in existing_round.get(field) or []
+                ]:
                     reference_path = session_dir / str(reference.get("original") or "")
                     asset = self._register_asset_locked(
                         manifest,
                         clean_session_id,
                         reference_path,
                         str(existing_round.get("setId") or ""),
-                        "web",
+                        reference_role,
                         str(reference.get("caption") or reference.get("title") or ""),
                     )
                     if asset is not None and reference.get("assetId") != asset["assetId"]:
@@ -831,7 +840,7 @@ class ImageSessionStore:
                 self._write_manifest(manifest)
 
             history: list[dict[str, Any]] = []
-            for branch_round in branch_rounds:
+            for branch_round in workspace_rounds:
                 branch_id = str(branch_round.get("setId") or "")
                 options = branch_round.get("options")
                 if not isinstance(options, dict):
@@ -840,6 +849,10 @@ class ImageSessionStore:
                     {
                         "setId": branch_id,
                         "roundNumber": int(branch_round.get("roundNumber") or 0),
+                        **({"parentSetId": str(branch_round.get("parentSetId") or ""),
+                            "activeBranch": branch_id in seen,
+                            "status": str(branch_round.get("status") or "")}
+                           if include_workspace else {}),
                         "userPrompt": strip_image_prompt_constraints(
                             options.get("originalPrompt") or branch_round.get("prompt") or ""
                         ),
@@ -866,7 +879,7 @@ class ImageSessionStore:
                 for asset_id in additional_asset_ids or ()
                 if asset_id
             }
-            for branch_round in branch_rounds:
+            for branch_round in workspace_rounds:
                 branch_options = branch_round.get("options")
                 if not isinstance(branch_options, dict):
                     branch_options = {}
@@ -883,13 +896,14 @@ class ImageSessionStore:
                 )
                 accessible_asset_ids.update(
                     str(reference.get("assetId") or "")
-                    for reference in branch_round.get("webReferences") or []
+                    for reference in [*(branch_round.get("webReferences") or []),
+                                      *(branch_round.get("webInspectedReferences") or [])]
                     if reference.get("assetId")
                 )
             accessible_asset_ids.discard("")
             branch_set_ids = {
                 str(branch_round.get("setId") or "")
-                for branch_round in branch_rounds
+                for branch_round in workspace_rounds
             }
             for asset in manifest.get("assets") or []:
                 if branch_set_ids.intersection(
@@ -903,9 +917,11 @@ class ImageSessionStore:
                 asset_id = str(asset.get("assetId") or "")
                 if asset_id not in accessible_asset_ids:
                     continue
-                original_path = session_dir / str(asset.get("original") or "")
-                preview_path = session_dir / str(asset.get("preview") or "")
-                if not original_path.is_file():
+                original_path = (session_dir / str(asset.get("original") or "")).resolve()
+                preview_path = (session_dir / str(asset.get("preview") or "")).resolve()
+                if (not original_path.is_relative_to(session_dir.resolve())
+                        or not preview_path.is_relative_to(session_dir.resolve())
+                        or not original_path.is_file()):
                     continue
                 assets.append(
                     {
@@ -925,7 +941,13 @@ class ImageSessionStore:
             return {
                 "history": history,
                 "assets": assets,
-                "parentOutputAssetIds": list(history[-1]["outputAssetIds"]) if history else [],
+                "parentOutputAssetIds": next((list(item["outputAssetIds"]) for item in history
+                                              if item["setId"] == clean_set_id), []),
+                **({"workspaceId": clean_session_id, "parentSetId": clean_set_id,
+                    "workspaceRoot": str(session_dir.resolve()),
+                    "requiredInputAssetIds": [asset_id for asset_id in (additional_asset_ids or ())
+                                              if asset_id in {asset["assetId"] for asset in assets}]}
+                   if include_workspace else {}),
             }
 
     def _update_item(
@@ -1050,6 +1072,7 @@ class ImageSessionStore:
         session_id: str,
         set_id: str,
         references: list[dict[str, Any]],
+        *, inspected_only: bool = False,
     ) -> list[dict[str, Any]]:
         clean_session_id = self._safe_id(session_id)
         clean_set_id = self._safe_id(set_id)
@@ -1067,6 +1090,8 @@ class ImageSessionStore:
             round_dir.mkdir(parents=True, exist_ok=True)
             persisted: list[dict[str, Any]] = []
             stored: list[dict[str, Any]] = []
+            field = "webInspectedReferences" if inspected_only else "webReferences"
+            prefix = "web-inspected" if inspected_only else "web-reference"
             for reference in references:
                 source_path = Path(str(reference.get("path") or ""))
                 if not source_path.is_file():
@@ -1077,9 +1102,10 @@ class ImageSessionStore:
                 except (OSError, ValueError):
                     continue
                 index = len(persisted) + 1
-                original_path = round_dir / f"web-reference-{index:02d}.jpg"
-                preview_path = round_dir / f"web-reference-{index:02d}-preview{image_file_suffix(preview_bytes)}"
-                shutil.copy2(source_path, original_path)
+                original_path = round_dir / f"{prefix}-{index:02d}.jpg"
+                preview_path = round_dir / f"{prefix}-{index:02d}-preview{image_file_suffix(preview_bytes)}"
+                if source_path.resolve() != original_path.resolve():
+                    shutil.copy2(source_path, original_path)
                 preview_path.write_bytes(preview_bytes)
                 stored_reference = {
                     "id": str(reference.get("id") or "")[:80],
@@ -1096,7 +1122,7 @@ class ImageSessionStore:
                     clean_session_id,
                     original_path,
                     clean_set_id,
-                    "web",
+                    "web-inspected" if inspected_only else "web",
                     str(reference.get("caption") or reference.get("title") or ""),
                 )
                 if asset is not None:
@@ -1110,8 +1136,11 @@ class ImageSessionStore:
                         "previewUri": image_data_url(preview_bytes),
                     }
                 )
-            round_data["webReferences"] = stored
+            round_data[field] = stored
             options = round_data.setdefault("options", {})
+            if inspected_only:
+                self._write_manifest(manifest)
+                return persisted
             options["webReferenceCount"] = len(persisted)
             input_asset_ids = list(options.get("inputAssetIds") or [])
             for reference in stored:
@@ -1176,28 +1205,25 @@ class ImageSessionStore:
                         options = {}
                     reasoning_mode = str(options.get("reasoningMode") or "instant")
                     reasoning_summary = str(options.get("reasoningSummary") or "")
-                    web_references: list[dict[str, Any]] = []
-                    for reference in round_data.get("webReferences") or []:
-                        original_path = session_dir / str(reference.get("original") or "")
-                        preview_path = session_dir / str(reference.get("preview") or "")
-                        if not original_path.is_file():
-                            continue
-                        if not preview_path.is_file():
-                            preview_path = original_path
-                        web_references.append(
-                            {
-                                "id": str(reference.get("id") or ""),
-                                "assetId": str(reference.get("assetId") or ""),
-                                "title": str(reference.get("title") or ""),
-                                "caption": str(reference.get("caption") or ""),
-                                "provider": str(reference.get("provider") or ""),
-                                "sourceUrl": str(reference.get("sourceUrl") or ""),
-                                "imageUrl": str(reference.get("imageUrl") or ""),
-                                "path": str(original_path),
-                                "previewPath": str(preview_path),
-                                "previewUri": "",
-                            }
-                        )
+                    reference_collections: dict[str, list[dict[str, Any]]] = {}
+                    for field in ("webReferences", "webInspectedReferences"):
+                        loaded: list[dict[str, Any]] = []
+                        for reference in round_data.get(field) or []:
+                            original_path = (session_dir / str(reference.get("original") or "")).resolve()
+                            preview_path = (session_dir / str(reference.get("preview") or "")).resolve()
+                            if (not original_path.is_relative_to(session_dir.resolve())
+                                    or not preview_path.is_relative_to(session_dir.resolve())
+                                    or not original_path.is_file()):
+                                continue
+                            if not preview_path.is_file():
+                                preview_path = original_path
+                            loaded.append({
+                                **{key: str(reference.get(key) or "") for key in (
+                                    "id", "assetId", "title", "caption", "provider", "sourceUrl", "imageUrl")},
+                                "path": str(original_path), "previewPath": str(preview_path), "previewUri": "",
+                            })
+                        reference_collections[field] = loaded
+                    web_references = reference_collections["webReferences"]
                     items: list[dict[str, Any]] = []
                     for item_data in round_data.get("items") or []:
                         item_index = int(item_data.get("itemIndex") or 0)
@@ -1285,6 +1311,8 @@ class ImageSessionStore:
                             "webSearchResultCount": int(options.get("webSearchResultCount") or 0),
                             "webReferenceCount": len(web_references),
                             "webReferences": web_references,
+                            "webInspectedReferences": reference_collections["webInspectedReferences"],
+                            **{name: options[name] for name in IMAGE_AGENT_METADATA_FIELDS if name in options},
                             "createdAt": str(round_data.get("createdAt") or manifest.get("createdAt") or ""),
                             "status": str(round_data.get("status") or "completed"),
                             "items": items,

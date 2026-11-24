@@ -294,14 +294,31 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 	}()
 	visual := newAgentVisualScope(m, id, opts, len(refs))
 	visual.initial = append([]asset(nil), refs...)
+	workspaceLimit := 16
+	if settings != nil && settings.Tier != nil {
+		workspaceLimit = settings.Tier.MaxReferences
+	}
+	visual.workspace = visual.newWorkspace(ctx, req.Options, workspaceLimit)
 	defer visual.release()
 	ctx = context.WithValue(ctx, agentVisualScopeKey{}, visual)
 	result := object{"ok": false, "requestId": id.id, "setId": id.id, "sessionId": id.id,
 		"prompt": req.Prompt, "originalPrompt": req.Prompt, "imageModel": opts.model,
 		"requestedCount": opts.n, "aspectRatio": opts.ratio, "transparency": opts.background,
 		"createdAt": time.Now().UTC(), "items": []object{}, "reasoningMode": objectString(req.Options, "reasoningMode")}
+	result["inputAssetIds"] = []string{}
+	for _, ref := range refs {
+		result["inputAssetIds"] = append(result["inputAssetIds"].([]string), ref.id)
+	}
+	result["parentSetId"], result["roundNumber"] = objectString(req.Options, "parentSetId"), max(1, numberInt(req.Options["roundNumber"]))
 	defer func() {
 		result["reasoningStats"], result["reasoningTurns"], result["webSearchSources"] = visual.stats, visual.turns, visual.sources
+		for name, value := range visual.referenceMetadata() {
+			result[name] = value
+		}
+		if visual.workspace != nil {
+			result["workspaceId"], result["sessionId"], result["parentSetId"], result["continuationPlan"] = visual.workspace.id, visual.workspace.id, visual.workspace.parent, visual.workspace.plan()
+			result["operation"] = visual.workspace.operation
+		}
 		for name, value := range visual.planning {
 			result[name] = value
 		}
@@ -351,6 +368,13 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 			return
 		}
 		result["prompt"], result["reasoningUsage"] = prompt, usage
+		if visual.workspace != nil {
+			refs = visual.workspace.selectedAssets()
+		}
+		result["inputAssetIds"] = []string{}
+		for _, ref := range refs {
+			result["inputAssetIds"] = append(result["inputAssetIds"].([]string), ref.id)
+		}
 		refs = append(refs, visual.adopted()...)
 		result["webReferences"], result["webReferenceCount"] = visual.references(), len(visual.references())
 		result["webSearchSources"], result["reasoningStats"], result["reasoningTurns"] = visual.sources, visual.stats, visual.turns

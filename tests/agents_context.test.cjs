@@ -63,7 +63,7 @@ test('every canonical model and exact alias stays consistent with the shared reg
     }
 });
 
-test('compaction survives native SDK tool turns and semantic continuation without losing vision or settings', async () => {
+test('compaction survives model-chosen native SDK tool turns without losing vision or settings', async () => {
     const requests = [], events = [], selections = [];
     const compaction = id => ({type: 'compaction', id, encrypted_content: `opaque+${id}/payload==`});
     const configuration = {type: 'configuration_update', reasoning: {effort: 'high'}};
@@ -84,25 +84,23 @@ test('compaction survives native SDK tool turns and semantic continuation withou
             requests.push(body);
             const step = requests.length;
             const output = ({
-                1: [search, compaction('cmp-one'), configuration, message('premature')],
-                2: [call('inspect_visual_references', {image_urls: []}, 2)],
-                3: [compaction('cmp-two'), configuration, message('inspect-complete')],
-                4: [call('select_visual_references', {candidate_ids: ['webref-product'], rationale: 'Preserve product shape'}, 4)],
-                5: [message('faithful-final')],
+                1: [search, compaction('cmp-one'), configuration, call('inspect_visual_references', {image_urls: []}, 1)],
+                2: [compaction('cmp-two'), configuration, call('select_visual_references', {candidate_ids: ['webref-product'], rationale: 'Preserve product shape'}, 2)],
+                3: [message('faithful-final')],
             })[step];
             assert(output, 'completed tools or semantic feedback repeated unexpectedly');
             return response(body.model, output);
         }});
     assert.equal(result.prompt, 'faithful-final');
-    assert.equal(requests.length, 5);
-    for (const [index, id] of [[1, 'cmp-one'], [3, 'cmp-two']]) {
+    assert.equal(requests.length, 3);
+    for (const [index, id] of [[1, 'cmp-one'], [2, 'cmp-two']]) {
         assert.equal(requests[index].input[0].type, 'compaction');
         assert.equal(requests[index].input[0].encrypted_content, `opaque+${id}/payload==`);
         assert.equal(requests[index].input[1].type, 'configuration_update');
         assert.equal(requests[index].input[1].reasoning.effort, 'high');
         assert(!JSON.stringify(requests[index].input).includes('Original owner prompt'));
     }
-    assert(JSON.stringify(requests[2].input).includes('data:image/png;base64,'), 'inspected vision did not reach the next model turn');
+    assert(JSON.stringify(requests[1].input).includes('data:image/png;base64,'), 'inspected vision did not reach the next model turn');
     for (const request of requests) {
         assert.equal(request.store, false);
         assert.equal(request.max_output_tokens, 128000);
@@ -112,8 +110,38 @@ test('compaction survives native SDK tool turns and semantic continuation withou
     }
     assert.equal(selections.length, 1);
     assert.equal(result.webReferences[0].id, 'webref-product');
-    assert.equal(result.reasoningStats.turnCount, 5);
+    assert.equal(result.reasoningStats.turnCount, 3);
     assert.equal(result.reasoningStats.toolCallCount, 3);
-    assert.equal(result.usage.totalTokens, 65);
+    assert.equal(result.usage.totalTokens, 39);
     assert.equal(events.filter(event => event.type === 'tool_completed').length, 2);
+});
+
+test('image candidates do not force another Agent run or fabricate adoption', async () => {
+    let calls = 0;
+    const result = await runNativeAgent({...setup, webSearch: true, maxInspectReferences: 2, maxAdoptReferences: 1,
+        inspectReferences: async () => { throw new Error('model did not request inspection'); },
+        transport: async body => { calls++; return response(body.model, [{type:'web_search_call',id:'web-one',status:'completed',action:{type:'search',query:'reference',sources:[]},results:[{type:'image_result',image_url:'http://legacy.example/image.png',thumbnail_url:'https://cdn.example/thumb.png'}]},message('Text research is sufficient')]); }});
+    assert.equal(calls, 1);
+    assert.equal(result.webImageCandidateCount, 1);
+    assert.equal(result.webReferences.length, 0);
+    assert.equal(result.webInspectedReferences.length, 0);
+});
+
+test('workspace tools execute in the same Agent with true image output and actual selection', async () => {
+    const calls = [], operations = [];
+    const workspace = {
+        async list_image_workspace(args) { operations.push(['list', args]); return {workspaceId:'one',items:[{assetId:'old-photo',path:'workspace://old-photo',viewed:false}]}; },
+        async view_image_workspace_assets(args) { operations.push(['view', args]); return {assets:[{assetId:'old-photo',previewDataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6D0YAAAAASUVORK5CYII='}],errors:[]}; },
+        async select_image_workspace_inputs(args) { operations.push(['select',args]); return {operation:args.operation,selectedAssetIds:args.asset_ids,rationale:args.rationale}; },
+        metadata() { return {workspaceId:'one',continuationPlan:{operation:'edit',selectedAssetIds:['old-photo']}}; }
+    };
+    const functionCall=(name,args,index)=>({type:'function_call',id:`fc-${index}`,call_id:`call-${index}`,name,arguments:JSON.stringify(args),status:'completed'});
+    const result=await runNativeAgent({...setup,workspace,maxTurns:6,transport:async body=>{
+        calls.push(body);const step=calls.length;
+        return response(body.model,({1:[functionCall('list_image_workspace',{kind:'assets',offset:0,limit:10},1)],2:[functionCall('view_image_workspace_assets',{asset_ids:['old-photo']},2)],3:[functionCall('select_image_workspace_inputs',{operation:'edit',asset_ids:['old-photo'],rationale:'Keep the earlier product'},3)],4:[message('Continue using the earlier product photo') ]})[step]);
+    }});
+    assert.equal(calls.length,4);assert.equal(operations.length,3);
+    assert(JSON.stringify(calls[2].input).includes('data:image/png;base64,'));
+    assert.equal(result.continuationPlan.selectedAssetIds[0],'old-photo');
+    assert(calls.every(call=>call.tools.filter(tool=>tool.type==='function').length===3));
 });

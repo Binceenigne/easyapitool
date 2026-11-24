@@ -283,7 +283,13 @@
         } catch (error) {
             state = { status: 'unknown', models: previous?.models || [], lastError: error.message };
         }
-        state = { ...state, directApi: true, mode: 'official', serverQuota: false, hasPricedUsage: false, cachedAt: Date.now() };
+        if (key.distributed) {
+            try {
+                const usage = await pluginCall('requestDirectApi', { keyId: key.id, operation: 'usage' });
+                state = { ...state, appModels: usage.appModels, quota: usage.quota, windows: usage.windows };
+            } catch (error) { state = { ...state, appModels: previous?.appModels, lastError: error.message }; }
+        }
+        state = { ...state, directApi: true, mode: 'official', serverQuota: key.distributed === true, hasPricedUsage: key.distributed === true, cachedAt: Date.now() };
         directKeyStates.set(key.id, state);
         return state;
     }
@@ -461,11 +467,19 @@
             reasoningUsage: result.reasoningUsage || null,
             reasoningStats: result.reasoningStats || null,
             reasoningTurns: Array.isArray(result.reasoningTurns) ? result.reasoningTurns : [],
+            workspaceId: result.workspaceId || sessionId,
+            operation: result.operation || result.continuationPlan?.operation || '',
+            continuationPlan: result.continuationPlan || null,
+            inputAssetIds: result.inputAssetIds || [],
             webSearchEnabled: result.webSearchEnabled === true,
             webSearchUsed: result.webSearchUsed === true,
             webSearchSources: Array.isArray(result.webSearchSources) ? result.webSearchSources : [],
             webReferenceCount: Array.isArray(result.webReferences) ? result.webReferences.length : 0,
             webReferences: (result.webReferences || []).map(({ previewDataUrl, ...reference }) => reference),
+            webInspectedReferences: (result.webInspectedReferences || []).map(({ previewDataUrl, ...reference }) => reference),
+            webReferenceFailures: result.webReferenceFailures || [],
+            webSelectionRationale: result.webSelectionRationale || '',
+            webImageCandidateCount: Number(result.webImageCandidateCount) || 0,
             requestedCount: Number(result.requestedCount || pending?.requestedCount || 1),
             items: (result.items || []).map((item, itemIndex) => ({
                 itemIndex: Number(item.itemIndex ?? itemIndex),
@@ -806,10 +820,10 @@
         let parents = [];
         if (options.parentSetId) {
             const saved = await pluginCall('listAssets', { sessionId: String(options.sessionId || '') });
-            parents = (saved.assets || []).filter(asset => String(asset.setId) === String(options.parentSetId) && asset.path);
-            if (!parents.length) throw new Error('上一轮成品已不可用，请重新选择参考图后生成');
+            const parentRecord = localPreferences.get(IMAGE_SETS_KEY, []).find(record => String(record.setId) === String(options.parentSetId));
+            const outputIds = new Set((parentRecord?.items || []).filter(item => item.ok !== false).map(item => String(item.resourceId)));
+            parents = (saved.assets || []).filter(asset => outputIds.has(String(asset.resourceId)) && String(asset.setId) === String(options.parentSetId) && asset.path && asset.exists !== false);
             const available = limit - supplied.length;
-            if (!available) throw new Error('续作需要为上一轮成品保留至少一个参考图名额');
             parents = parents.filter(asset => !supplied.includes(asset.path)).slice(0, available);
         }
         const parentPaths = parents.map(asset => asset.path);
@@ -902,7 +916,13 @@
         const key = (await secureKeyMetadata()).find(item => String(item.id) === String(keyId));
         try { paths = await resolveGenerationReferences(keyId, paths, options); }
         catch (error) { return persistFailedGeneration(options, prompt, error); }
-        if (usesDirectApi(key)) return generateDirectImage(key, prompt, paths, options);
+        if (usesDirectApi(key)) {
+            if (key.distributed) {
+                const state = await directKeyState(key);
+                if (!state.appModels) return persistFailedGeneration(options, prompt, new Error('无法读取网关模型配置，请刷新密钥后重试'));
+            }
+            return generateDirectImage(key, prompt, paths, options);
+        }
         let pending = null;
         try {
             await ensureDeviceRegistration(keyId);
@@ -951,7 +971,16 @@
         }
     }
 
-    function directReasoning(options) {
+    function directReasoning(options, profile) {
+        if (profile) {
+            if (options.parentSetId && (!options.reasoningMode || options.reasoningMode === 'instant')) {
+                if (profile.tier && !profile.tier.imageEditing || !profile.continuation?.model) throw new Error('当前密钥没有可用的继续编辑模型');
+                return { model: profile.continuation.model, effort: profile.continuation.effort || '' };
+            }
+            const configured = options.reasoningMode === 'advanced' ? profile.reasoning?.[options.reasoningModel] : profile.reasoningModes?.[options.reasoningMode];
+            if (configured?.model) return { model: configured.model, effort: options.reasoningMode === 'advanced' ? options.reasoningEffort : configured.effort };
+        }
+        if (options.parentSetId && (!options.reasoningMode || options.reasoningMode === 'instant')) return { model: 'gpt-6-luna', effort: 'low' };
         const slots = { luna: 'gpt-6-luna', terra: 'gpt-6.1-terra', sol: 'gpt-6.1-sol' };
         const preset = {
             flash: ['luna', 'medium'], medium: ['luna', 'medium'], high: ['terra', 'high'],
@@ -1060,13 +1089,81 @@
         });
     }
 
+    async function createDirectWorkspace(options, initialPaths, totalReferences, referenceBudget, signal) {
+        if (!options.parentSetId) return null;
+        const records = localPreferences.get(IMAGE_SETS_KEY, []);
+        const parent = records.find(record => String(record.setId) === String(options.parentSetId));
+        const workspaceId = String(parent?.sessionId || options.requestId);
+        const history = parent ? records.filter(record => String(record.sessionId) === workspaceId).slice().reverse() : [];
+        const native = parent ? await pluginCall('listAssets', { sessionId: workspaceId }) : { assets: [] };
+        const assets = new Map(), viewed = new Set();
+        for (const asset of native.assets || []) {
+            if (asset.sessionId && String(asset.sessionId) !== workspaceId) continue;
+            if (asset.resourceId && asset.path) assets.set(String(asset.resourceId), { ...asset, assetId: String(asset.resourceId), sourceRoles: ['workspace'], sourceSetIds: [asset.setId || ''], exists: asset.exists !== false });
+        }
+        const selected = [];
+        for (const [index, path] of initialPaths.entries()) {
+            const existing = [...assets.values()].find(asset => asset.path === path);
+            const id = existing?.assetId || `current-${index + 1}`;
+            if (!existing) assets.set(id, { assetId: id, path, previewPath: path, sourceRoles: ['current-input'], sourceSetIds: [options.requestId], exists: true });
+            viewed.add(id); selected.push(id);
+        }
+        let selectedIds = selected, operation = selected.length ? 'edit' : 'generate', rationale = '', webCount = 0, webViewed = 0;
+        const publicAsset = asset => ({ ...asset, viewed: viewed.has(asset.assetId), previewPath: asset.previewPath || asset.path });
+        const fail = message => ({ error: { code: 'workspace_tool_rejected', message } });
+        return {
+            async list_image_workspace({ kind, offset, limit }) {
+                if (!['history', 'assets'].includes(kind) || !Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 50) return fail('工作区分页参数无效');
+                const items = kind === 'assets' ? [...assets.values()].map(publicAsset) : history.map(record => ({ setId: record.setId, parentSetId: record.parentSetId, roundNumber: record.roundNumber, userPrompt: record.originalPrompt || record.prompt, reasoningSummary: record.reasoningSummary, operation: record.operation, inputAssetIds: record.inputAssetIds || [], outputAssetIds: (record.items || []).map(item => item.resourceId).filter(Boolean) }));
+                let end = Math.min(offset + limit, items.length), bytes = 0;
+                for (let index = offset; index < end; index++) { const size = new TextEncoder().encode(JSON.stringify(items[index])).length; if (index > offset && bytes + size > 1024 * 1024) { end = index; break; } bytes += size; }
+                return { workspaceId, parentSetId: options.parentSetId, kind, offset, total: items.length, hasMore: end < items.length, items: items.slice(offset, end), resultCount: end-offset, selectedAssetIds: [...selectedIds], operation, maxReferences: totalReferences, remainingReferenceSlots: Math.max(0, totalReferences - selectedIds.length - webCount) };
+            },
+            async view_image_workspace_assets({ asset_ids }) {
+                if (!Array.isArray(asset_ids) || asset_ids.length > 16 || asset_ids.some(id => !assets.has(id))) return fail('素材不属于当前工作区');
+                const output = [], errors = [];
+                for (const id of [...new Set(asset_ids)]) {
+                    if (signal.aborted) throw directAbort();
+                    const asset = assets.get(id), item = publicAsset(asset);
+                    if (!viewed.has(id)) {
+                        if (viewed.size + webViewed >= totalReferences) { errors.push({ assetId: id, message: '当前档位的图片分析槽位已满' }); continue; }
+                        try {
+                            const image = new Image(); image.src = await readAsDataUrl(asset.path); await image.decode();
+                            const longest = Math.max(image.naturalWidth, image.naturalHeight), scale = Math.min(512, longest) / longest;
+                            const canvas = document.createElement('canvas'); canvas.width = Math.max(1, image.naturalWidth * scale); canvas.height = Math.max(1, image.naturalHeight * scale);
+                            try { canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height); item.previewDataUrl = canvas.toDataURL('image/jpeg', .65); if (item.previewDataUrl.length > 131100) throw new Error('参考预览超过大小限制'); }
+                            finally { image.src = ''; canvas.width = canvas.height = 0; }
+                            viewed.add(id);
+                        } catch (error) { errors.push({ assetId: id, message: directSafeMessage(error.message) }); continue; }
+                    }
+                    item.viewed = true; output.push(item);
+                }
+                return { assets: output, errors, resultCount: output.length };
+            },
+            async select_image_workspace_inputs(args) {
+                if (!Array.isArray(args.asset_ids) || args.asset_ids.length > 16) return fail('工作区选择参数无效');
+                const ids = [...new Set(args.asset_ids)];
+                if (!['edit', 'generate'].includes(args.operation) || !args.rationale?.trim() || ids.some(id => !assets.has(id) || !assets.get(id).exists)) return fail('只能选择本工作区存在的素材');
+                if (ids.length + webCount > totalReferences) return fail('当前档位的参考图总数已满');
+                if (args.operation === 'edit' && !ids.length) return fail('编辑操作至少需要一张参考图片');
+                selectedIds = ids; operation = args.operation; rationale = args.rationale;
+                return { operation, selectedAssetIds: [...selectedIds], descriptions: {}, rationale, resultCount: selectedIds.length };
+            },
+            setWebReferences(refs) { if (selectedIds.length + refs.length > totalReferences) throw new Error('当前档位的参考图总数已满'); webCount = refs.length; },
+            setInspectedWebCount(count) { webViewed = count; },
+            referenceLimits() { return { inspect: Math.min(12, Math.max(0, totalReferences - viewed.size)), adopt: Math.min(referenceBudget, Math.max(0, totalReferences - selectedIds.length)) }; },
+            metadata() { return { workspaceId, continuationPlan: { operation, selectedAssetIds: [...selectedIds], descriptions: {}, rationale }, referencePaths: selectedIds.map(id => assets.get(id).path), inputAssetIds: [...selectedIds] }; }
+        };
+    }
+
     async function prepareDirectPrompt(keyId, prompt, options = {}, sharedProgress = null) {
         if (!window.MirraAgentsSDK?.runNativeAgent) {
             throw Object.assign(new Error('本地 OpenAI Agents SDK 未能加载，请重新启动或更新应用'), { code: 'sdk_unavailable' });
         }
         const progress = sharedProgress || { cancelled: false, controller: new AbortController() };
         const requestId = options.requestId || newRequestId('agent');
-        const { model, effort } = directReasoning(options);
+        const profile = directKeyStates.get(String(keyId))?.appModels || window.appState?.keys?.find(key => String(key.id) === String(keyId))?.appModels;
+        const { model, effort } = directReasoning(options, profile);
         const originalPaths = options.agentReferencePaths || [];
         const tier = window.appState?.keys?.find(key => String(key.id) === String(keyId))?.appModels?.tier;
         const totalReferences = tier ? tier.imageEditing ? Math.max(0, Math.min(16, Number(tier.maxReferences) || 0)) : 0 : 16;
@@ -1074,7 +1171,7 @@
         const [turnBudget, referenceBudget] = ({ instant: [1, 0], flash: [3, 3], medium: [5, 4], high: [7, 6], extra: [10, 6], max: [12, 8] }[depthMode] || [5, 4]);
         const maxInspectReferences = options.purpose === 'polish' ? 0 : Math.min(12, Math.max(0, totalReferences - originalPaths.length));
         const maxAdoptReferences = options.output_format === 'svg' ? 0 : Math.min(referenceBudget, maxInspectReferences);
-        const maxTurns = Math.min(32, turnBudget + (options.webSearchEnabled && maxInspectReferences ? 2 : 0) + (options.parentSetId || options.continuation ? 1 : 0));
+        const maxTurns = Math.min(32, turnBudget + (options.webSearchEnabled && maxInspectReferences ? 2 : 0) + (options.parentSetId || options.continuation ? 4 : 0));
         const initialInput = originalPaths.length ? [{ role: 'user', content: [{ type: 'input_text', text: prompt }, ...await Promise.all(originalPaths.map(async path => {
             const image = new Image(); image.src = await readAsDataUrl(path); await image.decode();
             const longest = Math.max(image.naturalWidth, image.naturalHeight);
@@ -1084,6 +1181,7 @@
                 if (data.length > 131100) throw new Error('参考图预览超过大小限制'); return { type: 'input_image', image_url: data };
             } finally { image.src = ''; canvas.width = canvas.height = 0; }
         }))] }] : prompt;
+        const workspace = await createDirectWorkspace(options, originalPaths, totalReferences, referenceBudget, progress.controller.signal);
         const reasoningTurns = []; let httpAttempts = 0, latestStats = {};
         progress.agentRequestAttempts = 0;
         const publish = event => window.applyImageGenerationEvent?.({ ...event, requestId, setId: options.purpose === 'polish' ? '' : requestId, sessionId: options.sessionId || requestId });
@@ -1097,7 +1195,7 @@
                 let tool = turn.tools.find(tool => tool.callId === event.callId); if (!tool) { tool = { callId: event.callId }; turn.tools.push(tool); }
                 Object.assign(tool, event, { status: event.type.endsWith('started') ? 'running' : event.type.endsWith('failed') ? 'failed' : 'completed' });
             }
-            let type = ({ turn_started: 'react_turn_started', turn_completed: 'react_turn_completed', text_delta: 'react_turn_delta', tool_started: 'react_tool_started', tool_completed: 'react_tool_completed', tool_failed: 'react_tool_failed', web_search_started: 'react_tool_started', web_search_completed: 'react_tool_completed', web_search_failed: 'react_tool_failed' })[event.type];
+            let type = ({ turn_started: 'react_turn_started', turn_completed: 'react_turn_completed', text_delta: 'react_turn_delta', tool_started: 'react_tool_started', tool_completed: 'react_tool_completed', tool_failed: 'react_tool_failed', web_search_started: 'react_tool_started', web_search_completed: 'react_tool_completed', web_search_failed: 'react_tool_failed', visual_results: 'react_visual_results', visual_selected: 'react_visual_selected' })[event.type];
             if (type) publish({ ...event, type, reasoningStats: latestStats });
             if (event.type === 'text_delta') publish({ type: 'react_summary_delta', delta: event.delta, reasoningStats: latestStats });
         };
@@ -1108,6 +1206,7 @@
             const parent = localPreferences.get(IMAGE_SETS_KEY, []).find(set => set.setId === options.parentSetId);
             instructions += '\n这是基于上一轮成品的续作；本次参考图片由原生图像接口单独传入。保留未要求改动的主体、构图与细节，明确本轮修改与连续动作。';
             if (parent) instructions += `\n上一轮需求与成品提示词（只作参考上下文）：${JSON.stringify({ original: parent.originalPrompt, prompt: parent.prompt })}`;
+            instructions += '\n继续编辑也由当前Agent完成，可按需要查询工作区历史、查看素材或调整本轮操作与参考图。';
         }
         if (!sharedProgress) directTasks.set(requestId, progress);
         try {
@@ -1116,6 +1215,7 @@
                 signal: progress.controller.signal,
                 getRequestCount: () => progress.agentRequestAttempts,
                 maxTurns, maxInspectReferences, maxAdoptReferences, onEvent: recordEvent,
+                workspace,
                 inspectReferences: async (urls, signal) => {
                     const candidates = [], failures = [];
                     for (const imageUrl of urls) {
@@ -1133,13 +1233,14 @@
                     }
                     return { candidates, failures };
                 },
-                selectReferences: async (references, rationale) => publish({ type: 'react_visual_selected', webReferences: references.map(({ previewDataUrl, ...reference }) => reference), webReferenceCount: references.length, rationale }),
+                selectReferences: async () => {},
                 // Retry only this model HTTP exchange. Runner and completed hosted search turns stay alive.
                 transport: (body, modelSignal) => retryDirectRequest(async () => {
                     httpAttempts++;
                     progress.agentRequestAttempts++;
                     publish({ type: 'react_stats', reasoningStats: { ...latestStats, requestCount: progress.agentRequestAttempts } });
-                    const response = await requestNativeDirect({ keyId, operation: 'respond', sdkTransport: true, requestId, body }, modelSignal);
+                    const response = await requestNativeDirect({ keyId, operation: 'respond', sdkTransport: true, requestId, body,
+                        reasoningMode: options.parentSetId && (!options.reasoningMode || options.reasoningMode === 'instant') ? 'continuation' : options.reasoningMode || 'polish' }, modelSignal);
                     let data;
                     try { data = typeof response.body === 'string' ? JSON.parse(response.body) : response.body; }
                     catch { throw Object.assign(new Error('上游 Responses 返回了不完整的 JSON'), { code: 'invalid_response', status: response.status }); }
@@ -1165,7 +1266,9 @@
             return { ...result, model, effort, reasoningTurns, reasoningStats: { ...result.reasoningStats, requestCount: httpAttempts } };
         } catch (failure) {
             if (progress.controller.signal.aborted) throw directAbort();
-            const error = directError(failure, 'agent', 1); error.reasoningStats = { ...latestStats, requestCount: httpAttempts }; error.reasoningTurns = reasoningTurns; throw error;
+            const error = directError(failure, 'agent', 1); error.reasoningStats = { ...latestStats, requestCount: httpAttempts }; error.reasoningTurns = reasoningTurns;
+            for (const name of ['webInspectedReferences', 'webReferenceFailures', 'webSelectionRationale', 'webImageCandidateCount', 'continuationPlan', 'workspaceId']) if (failure[name] !== undefined) error[name] = failure[name];
+            throw error;
         } finally { if (!sharedProgress) directTasks.delete(requestId); void pluginCall('clearVisualReferences', { keyId, requestId }).catch(() => {}); }
     }
 
@@ -1181,17 +1284,21 @@
         };
         const emit = event => window.applyImageGenerationEvent?.({ requestId, setId: requestId, sessionId: result.sessionId, ...event });
         const output = options.output_format || 'png';
+        let actualReferencePaths = paths || [];
         try {
             if (options.reasoningMode && options.reasoningMode !== 'instant' || options.continuation || options.parentSetId) {
                 const started = Date.now();
-                const reasoning = directReasoning(options);
+                const reasoning = directReasoning(options, directKeyStates.get(String(key.id))?.appModels || window.appState?.keys?.find(state => String(state.id) === String(key.id))?.appModels);
                 emit({ type: 'react_started', mode: options.reasoningMode, model: reasoning.model,
                     reasoningEffort: reasoning.effort, webSearchEnabled: options.webSearchEnabled === true });
                 const planned = await prepareDirectPrompt(key.id, prompt, { ...options, agentReferencePaths: paths }, progress);
                 Object.assign(result, { prompt: planned.prompt, reasoningModel: planned.model, reasoningEffort: planned.effort,
                     reasoningDurationMs: Date.now() - started, reasoningSummary: planned.prompt, reasoningStatus: 'completed',
                     reasoningUsage: planned.usage, webSearchUsed: planned.webSearchUsed, webSearchEnabled: options.webSearchEnabled === true,
-                    webReferences: planned.webReferences || [], webReferenceCount: planned.webReferences?.length || 0, webSearchSources: planned.webSearchSources || [], reasoningTurns: planned.reasoningTurns || [], reasoningStats: planned.reasoningStats });
+                    webReferences: planned.webReferences || [], webReferenceCount: planned.webReferences?.length || 0, webInspectedReferences: planned.webInspectedReferences || [], webReferenceFailures: planned.webReferenceFailures || [], webSelectionRationale: planned.webSelectionRationale || '', webImageCandidateCount: planned.webImageCandidateCount || 0, webSearchSources: planned.webSearchSources || [], reasoningTurns: planned.reasoningTurns || [], reasoningStats: planned.reasoningStats });
+                if (planned.referencePaths) actualReferencePaths = planned.referencePaths;
+                if (planned.continuationPlan) Object.assign(result, { continuationPlan: planned.continuationPlan, operation: planned.continuationPlan.operation, inputAssetIds: planned.inputAssetIds || [], workspaceId: planned.workspaceId });
+                if (options.parentSetId && (!options.reasoningMode || options.reasoningMode === 'instant')) result.prompt = prompt;
                 emit({ type: 'react_completed', ...result, model: planned.model, summary: planned.prompt });
             }
             const body = { model: options.imageModel, prompt: result.prompt, size: options.size || 'auto',
@@ -1202,8 +1309,9 @@
             for (let itemIndex = 0; itemIndex < imageCount && !progress.cancelled; itemIndex += 1) {
                 try {
                     emit({ type: 'item_started', itemIndex });
+                    const preparedPaths = []; for (const path of actualReferencePaths) preparedPaths.push(await rasterizeReference(path));
                     const asset = await retryDirectRequest(() => requestNativeDirect({
-                        keyId: key.id, operation: 'generate', requestId, body, paths: [...(paths || []), ...(result.webReferences || []).map(reference => reference.path)],
+                        keyId: key.id, operation: 'generate', requestId, body, paths: [...preparedPaths, ...(result.webReferences || []).map(reference => reference.path)],
                         setId: requestId, sessionId: result.sessionId
                     }, progress.controller.signal), { stage: 'image', progress, options, itemIndex });
                     const uri = localImageUrl(asset.path);
@@ -1223,6 +1331,7 @@
             if (progress.cancelled) result.error = '生成已停止';
         } catch (error) {
             result.error = progress.cancelled ? '生成已停止' : error.message || String(error);
+            for (const name of ['webInspectedReferences', 'webReferenceFailures', 'webSelectionRationale', 'webImageCandidateCount', 'continuationPlan', 'workspaceId']) if (error[name] !== undefined) result[name] = error[name];
             if (!progress.cancelled) {
                 result.errorDetails = error.errorDetails || directError(error, 'agent', 1).errorDetails;
                 result.reasoningStatus = 'failed';

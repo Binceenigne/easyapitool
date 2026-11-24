@@ -32,10 +32,13 @@ function linkedSignals(...signals) {
 const inspectSchema={type:'object',properties:{image_urls:{type:'array',items:{type:'string'},maxItems:12}},required:['image_urls'],additionalProperties:false};
 const selectSchema={type:'object',properties:{candidate_ids:{type:'array',items:{type:'string'},maxItems:8},rationale:{type:'string'}},required:['candidate_ids','rationale'],additionalProperties:false};
 const publicCandidate=value=>Object.fromEntries(['id','title','caption','imageUrl','thumbnailUrl','sourceUrl','width','height'].filter(key=>value[key]!=null).map(key=>[key,value[key]]));
-export async function runNativeAgent({model,effort,instructions,input,webSearch=false,signal,transport,onEvent=()=>{},inspectReferences,selectReferences,maxInspectReferences=0,maxAdoptReferences=0,maxTurns=8,getRequestCount}) {
+export async function runNativeAgent({model,effort,instructions,input,webSearch=false,signal,transport,onEvent=()=>{},inspectReferences,selectReferences,maxInspectReferences=0,maxAdoptReferences=0,maxTurns=8,getRequestCount,workspace}) {
  if(typeof transport!=='function')throw new Error('Native Agents transport is unavailable');
- let lastResponseMeta={},turn=0,localToolCount=0,selected=[],selectionMade=false;
+ let lastResponseMeta={},turn=0,localToolCount=0,selected=[],selectionMade=false,selectionRationale='',candidateRevision=0,inspectionRevision=0,selectionRevision='';
  const images=new Map(),sources=new Map(),inspected=new Map(),attempted=new Set(),webCalls=new Set(),toolCalls=new Set(),compactionUpdates=new Map();
+ const referenceFailures=new Map();
+ const visualLimits=()=>workspace?.referenceLimits?.()||{inspect:maxInspectReferences,adopt:maxAdoptReferences};
+ const referenceMetadata=()=>({webImageCandidateCount:images.size,webInspectedReferences:[...inspected.values()].map(({previewDataUrl,...item})=>item),webReferenceFailures:[...referenceFailures.values()],webSelectionRationale:selectionRationale,webSelectionStatus:selectionMade&&selectionRevision===`${candidateRevision}:${inspectionRevision}`?(selected.length?'selected':'declined'):'pending'});
  const stats=()=>{const requests=typeof getRequestCount==='function'?Number(getRequestCount()):NaN;return{turnCount:turn,requestCount:Number.isFinite(requests)&&requests>=0?requests:turn,toolCallCount:toolCalls.size,webSearchCallCount:webCalls.size,localToolCallCount:localToolCount};};
  const emit=event=>onEvent({...event,...stats()});
  const canInspect=webSearch&&maxInspectReferences>0&&typeof inspectReferences==='function';
@@ -45,7 +48,7 @@ export async function runNativeAgent({model,effort,instructions,input,webSearch=
   if(!toolCalls.has(callId)){toolCalls.add(callId);localToolCount++;}
   emit({type:'tool_started',turn,callId,tool:name,arguments:args});
   try{const result=await callback(args);const first=Array.isArray(result)?result[0]?.text:result;let metadata;try{metadata=typeof first==='string'?JSON.parse(first):first;}catch{metadata={};}
-   emit({type:'tool_completed',turn,callId,tool:name,resultCount:metadata?.candidates?.length??metadata?.selectedIds?.length??0,result:{candidateCount:metadata?.candidates?.length,failureCount:metadata?.failures?.length,selectedIds:metadata?.selectedIds,rationale:metadata?.rationale,...(metadata?.error?{ok:false,error:metadata.error.message,code:metadata.error.code}:{})}});return result;
+   emit({type:'tool_completed',turn,callId,tool:name,resultCount:metadata?.resultCount??metadata?.candidates?.length??metadata?.selectedIds?.length??0,result:{candidateCount:metadata?.candidates?.length,failureCount:metadata?.failures?.length,selectedIds:metadata?.selectedIds,rationale:metadata?.rationale,...(metadata?.error?{ok:false,error:metadata.error.message,code:metadata.error.code}:{})}});return result;
   }catch(error){emit({type:'tool_failed',turn,callId,tool:name,error:error.message});throw error;}
  };}
  if(canInspect){
@@ -53,14 +56,23 @@ export async function runNativeAgent({model,effort,instructions,input,webSearch=
    execute:execute('inspect_visual_references',async args=>{
     const urls=args.image_urls.length?args.image_urls:[...images.keys()].slice(0,12);
     if(urls.some(url=>!images.has(url)))return JSON.stringify({error:{code:'unknown_reference',message:'只能检视本轮OpenAI图片搜索返回的图片URL'}});
-    urls.forEach(url=>attempted.add(url));const fresh=urls.filter(url=>![...inspected.values()].some(item=>item.imageUrl===url)).slice(0,Math.max(0,maxInspectReferences-inspected.size));
+    const fresh=urls.filter(url=>!attempted.has(url)&&![...inspected.values()].some(item=>item.imageUrl===url)).slice(0,Math.max(0,visualLimits().inspect-inspected.size));fresh.forEach(url=>attempted.add(url));
     const loaded=await inspectReferences(fresh,signal),output=[],metadata={candidates:[],failures:loaded.failures||[]};
-    for(const candidate of loaded.candidates||[]){if(inspected.has(candidate.id)||inspected.size>=maxInspectReferences||!candidate.previewDataUrl?.startsWith('data:image/'))continue;inspected.set(candidate.id,candidate);selectionMade=false;metadata.candidates.push(publicCandidate(candidate));output.push({type:'image',image:candidate.previewDataUrl});}
+    for(const candidate of loaded.candidates||[]){if(inspected.has(candidate.id)||inspected.size>=visualLimits().inspect||!candidate.previewDataUrl?.startsWith('data:image/'))continue;inspected.set(candidate.id,candidate);referenceFailures.delete(candidate.imageUrl);output.push({type:'image',image:candidate.previewDataUrl});}
+    for(const failure of loaded.failures||[]){const record={id:failure.id||'',imageUrl:failure.imageUrl||'',message:failure.message||failure.error||'参考图读取失败'};referenceFailures.set(record.imageUrl||record.id,record);}
+    if(fresh.length){inspectionRevision++;selectionMade=false;}
+    metadata.candidates=[...inspected.values()].map(publicCandidate);
+    workspace?.setInspectedWebCount?.(inspected.size);
+    emit({type:'visual_results',...referenceMetadata(),candidates:[...inspected.values()].map(item=>({...publicCandidate(item),previewUri:item.previewDataUrl})),errors:[...referenceFailures.values()]});
     return[{type:'text',text:JSON.stringify(metadata)},...output];
    })}));
-  localTools.push(tool({name:'select_visual_references',description:`从已检视的候选选择实际用于生图的ID，最多${maxAdoptReferences}张。不采用时传空数组并说明原因。`,parameters:selectSchema,errorFunction:null,
-   execute:execute('select_visual_references',async args=>{const ids=[...new Set(args.candidate_ids)];if(typeof args.rationale!=='string'||!args.rationale.trim()||args.rationale.length>1600)return JSON.stringify({error:{code:'invalid_reference_selection',message:'请简短说明采用或不采用的原因'}});if(ids.length>maxAdoptReferences||ids.some(id=>!inspected.has(id)))return JSON.stringify({error:{code:'invalid_reference_selection',message:'只能采用已检视且在当前参考槽位上限内的候选'}});selected=ids.map(id=>inspected.get(id));selectionMade=true;if(selectReferences)await selectReferences(selected,args.rationale);return JSON.stringify({selectedIds:ids,rationale:args.rationale});})}));
-  instructions+=`\n得到相关图片候选后先调用inspect_visual_references检视真实画面，再调用select_visual_references明确采用哪些图（最多${maxAdoptReferences}张），或传空数组说明不采用原因。不能把网页引用当成真实图片。`;
+  localTools.push(tool({name:'select_visual_references',description:`选择用于本轮生图的已检视参考图ID，最多${maxAdoptReferences}张。可空选，简短说明选择依据。`,parameters:selectSchema,errorFunction:null,
+   execute:execute('select_visual_references',async args=>{const ids=[...new Set(args.candidate_ids)];if(typeof args.rationale!=='string'||!args.rationale.trim()||args.rationale.length>1600)return JSON.stringify({error:{code:'invalid_reference_selection',message:'请简短说明采用或不采用的原因'}});if(ids.length>visualLimits().adopt||ids.some(id=>!inspected.has(id)))return JSON.stringify({error:{code:'invalid_reference_selection',message:'只能采用已检视且在当前参考槽位上限内的候选'}});const next=ids.map(id=>inspected.get(id));workspace?.setWebReferences?.(next);if(selectReferences)await selectReferences(next,args.rationale);selected=next;selectionRationale=args.rationale;selectionMade=true;selectionRevision=`${candidateRevision}:${inspectionRevision}`;emit({type:'visual_selected',...referenceMetadata(),webReferences:selected.map(({previewDataUrl,...item})=>item),webReferenceCount:selected.length});return JSON.stringify({selectedIds:ids,rationale:args.rationale});})}));
+  instructions+='\n按任务需要自主搜索、查看和选用有帮助的参考图。实际选中的图片会提交生图，网页来源与已检视图片如实记录。';
+ }
+ if(workspace){
+  const specs=[['list_image_workspace',{type:'object',properties:{kind:{type:'string',enum:['history','assets']},offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:50}},required:['kind','offset','limit'],additionalProperties:false},'查询当前工作区的历史和素材目录。'],['view_image_workspace_assets',{type:'object',properties:{asset_ids:{type:'array',items:{type:'string'},minItems:1,maxItems:16}},required:['asset_ids'],additionalProperties:false},'查看当前工作区素材的真实图片。'],['select_image_workspace_inputs',{type:'object',properties:{operation:{type:'string',enum:['edit','generate']},asset_ids:{type:'array',items:{type:'string'},maxItems:16},rationale:{type:'string',minLength:1,maxLength:1600}},required:['operation','asset_ids','rationale'],additionalProperties:false},'按需要调整本轮操作和参考素材。']];
+  for(const[name,parameters,description]of specs)localTools.push(tool({name,parameters,description,errorFunction:null,execute:execute(name,async args=>{const result=await workspace[name](args,signal);if(name==='view_image_workspace_assets'){const images=[],assets=(result.assets||[]).map(({previewDataUrl,...item})=>{if(previewDataUrl?.startsWith('data:image/'))images.push({type:'image',image:previewDataUrl});return item;});return[{type:'text',text:JSON.stringify({...result,assets})},...images];}return JSON.stringify(result);})}));
  }
  const client=new OpenAI({apiKey:'mirra-native-secret-placeholder',baseURL:'https://mirra-native.invalid/v1',dangerouslyAllowBrowser:true,maxRetries:0,timeout:16*60*1000,
   fetch:async(url,init={})=>{
@@ -78,7 +90,7 @@ export async function runNativeAgent({model,effort,instructions,input,webSearch=
     }
     for(const item of data?.output||[]){
      if(item.type==='web_search_call'){const callId=item.id||`web-${turn}-${webCalls.size+1}`;if(!webCalls.has(callId)){webCalls.add(callId);toolCalls.add(callId);emit({type:'web_search_started',turn,callId,tool:'web_search',action:item.action?.type||'search',query:item.action?.query});}
-      for(const image of item.results||[])if(image.type==='image_result'&&image.image_url?.startsWith('https://')&&images.size<48)images.set(image.image_url,image);
+      let added=false;for(const image of item.results||[]){let valid=false;try{const url=new URL(image.image_url);valid=image.type==='image_result'&&!url.username&&!url.password&&(url.protocol==='https:'&&!url.port||url.protocol==='https:'&&url.port==='443'||url.protocol==='http:'&&(!url.port||url.port==='80')&&/^https:\/\//.test(image.thumbnail_url||''));}catch{}if(valid&&!images.has(image.image_url)&&images.size<48){images.set(image.image_url,image);added=true;}}if(added){candidateRevision++;selectionMade=false;}
       for(const source of item.action?.sources||[])if(/^https?:\/\//.test(source.url||''))sources.set(source.url,{url:source.url,title:source.title||''});
       emit({type:'web_search_completed',turn,callId,tool:'web_search',action:item.action?.type||'search',query:item.action?.query,queries:item.action?.queries,url:item.action?.url,sources:[...sources.values()],images:item.results?.filter(item=>item.type==='image_result')||[],resultCount:item.results?.length||item.action?.sources?.length||0});
      }
@@ -90,9 +102,9 @@ export async function runNativeAgent({model,effort,instructions,input,webSearch=
  const agent=new Agent({name:'Mirra image prompt planner',instructions,model:new OpenAIResponsesModel(client,model),modelSettings:{store:false,...modelPolicy(model),preserveRawUsage:true,parallelToolCalls:false,reasoning:{effort},retry:{maxRetries:0},providerData:{...(webSearch?{max_tool_calls:3}:{}),include:[...(documentedReasoning(model)?['reasoning.encrypted_content']:[]),...(webSearch?['web_search_call.action.sources','web_search_call.results']:[])]}},tools:[...(webSearch?[webSearchTool({searchContentTypes:['image','text'],imageSettings:{maxResults:8,caption:true}})]:[]),...localTools]});
  const runner=new Runner({tracingDisabled:true,traceIncludeSensitiveData:false});let result,history=input;const usage={inputTokens:0,outputTokens:0,totalTokens:0,cachedTokens:0};
  try{for(;;){if(turn>=maxTurns)throw Object.assign(new Error('Agent已达到处理轮数上限'),{code:'max_turns'});result=await runner.run(agent,history,{signal,maxTurns:maxTurns-turn});const part=result.state?.usage;if(part)for(const key of Object.keys(usage))usage[key]+=Number(part[key])||0;
-   let feedback='';if(canInspect&&images.size&&!attempted.size)feedback='官方图片搜索已返回候选，请先调用inspect_visual_references检视真实图片，再完成方案。';else if(inspected.size&&!selectionMade)feedback='请调用select_visual_references明确采用哪些已检视的图片，或传空数组说明不采用原因，然后完成最终提示词。';if(!feedback)break;history=[...result.history,{role:'user',content:feedback}];
-  }}catch(error){if(error instanceof MaxTurnsExceededError)error.code='max_turns';else if(error instanceof ModelRefusalError)error.code='model_refusal';else if(error instanceof UserError)error.code='invalid_request';else if(error instanceof ModelBehaviorError)error.code='invalid_agent_output';if(!error.status)error.status=lastResponseMeta.status;if(!error.request_id)error.request_id=lastResponseMeta.request_id;error.reasoningStats=stats();throw error;}
+   break;
+  }}catch(error){if(error instanceof MaxTurnsExceededError)error.code='max_turns';else if(error instanceof ModelRefusalError)error.code='model_refusal';else if(error instanceof UserError)error.code='invalid_request';else if(error instanceof ModelBehaviorError)error.code='invalid_agent_output';if(!error.status)error.status=lastResponseMeta.status;if(!error.request_id)error.request_id=lastResponseMeta.request_id;error.reasoningStats=stats();Object.assign(error,referenceMetadata(),workspace?.metadata?.()||{});throw error;}
  const prompt=String(result.finalOutput||'').trim();if(!prompt){const error=new Error('Agent 未返回可用的提示词');error.code='empty_agent_output';Object.assign(error,lastResponseMeta);throw error;}
- return{prompt,usage:{...usage,callCount:turn,hasTokenUsage:true},reasoningStats:stats(),webSearchUsed:webCalls.size>0,webSearchSources:[...sources.values()],webReferences:selected.map(({previewDataUrl,...item})=>item),lastResponseId:result.lastResponseId};
+ return{prompt,usage:{...usage,callCount:turn,hasTokenUsage:true},reasoningStats:stats(),webSearchUsed:webCalls.size>0,webSearchSources:[...sources.values()],webReferences:selected.map(({previewDataUrl,...item})=>item),...referenceMetadata(),...(workspace?.metadata?.()||{}),lastResponseId:result.lastResponseId};
 }
 window.MirraAgentsSDK={version:'0.22.0',runNativeAgent};

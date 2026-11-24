@@ -91,6 +91,10 @@ func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInpu
 	if settings != nil {
 		if hiddenContinuation {
 			model, effort = settings.Continuation.Model, settings.Continuation.Effort
+			if model == "" {
+				preset := m.g.minimumContinuationPreset()
+				model, effort = preset.Model, preset.Effort
+			}
 		} else if mode == "advanced" {
 			model = settings.Reasoning[slot].Model
 		} else {
@@ -147,11 +151,17 @@ func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInpu
 	completed := object{"type": "react_completed", "prompt": prompt, "model": model, "reasoningEffort": effort,
 		"reasoningDurationMs": time.Since(start).Milliseconds(), "reasoningUsage": usage, "webSearchEnabled": web, "webSearchUsed": searched}
 	if scope, ok := ctx.Value(agentVisualScopeKey{}).(*agentVisualScope); ok {
+		for name, value := range scope.referenceMetadata() {
+			completed[name] = value
+		}
 		completed["webSearchSources"], completed["webReferences"], completed["webReferenceCount"] = scope.sources, scope.references(), len(scope.references())
 		completed["reasoningStats"], completed["reasoningTurns"] = scope.stats, scope.turns
 		scope.planning = object{"reasoningModel": model, "reasoningEffort": effort, "reasoningStatus": "completed", "reasoningSummary": "", "reasoningDurationMs": time.Since(start).Milliseconds(), "webSearchEnabled": web, "webSearchUsed": searched}
 	}
 	m.publish(id, completed, false)
+	if hiddenContinuation {
+		return input.Prompt, usage, nil
+	}
 	return prompt, usage, nil
 }
 

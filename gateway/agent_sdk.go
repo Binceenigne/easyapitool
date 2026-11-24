@@ -81,6 +81,11 @@ func (g *gateway) rewriteAgent(ctx context.Context, selected route, model, effor
 	}
 	asObject(request["request"])["max_turns"] = planningTurns
 	if scope, ok := ctx.Value(agentVisualScopeKey{}).(*agentVisualScope); ok {
+		if scope.workspace != nil {
+			asObject(request["request"])["workspace_enabled"] = true
+			asObject(request["request"])["instructions"] = imagePromptInstructions(target) + "\n继续编辑也由当前Agent完成。可查询当前工作区的历史和素材、查看真实图片，并按需要调整edit/generate与参考图选择。"
+			asObject(request["request"])["max_turns"] = min(32, planningTurns+3)
+		}
 		scope.mode, scope.effort = objectString(target, "reasoningMode"), effort
 		input, previewErr := scope.initialInput(prompt)
 		if previewErr != nil {
@@ -95,7 +100,11 @@ func (g *gateway) rewriteAgent(ctx context.Context, selected route, model, effor
 			parameters := asObject(request["request"])
 			parameters["visual_reference_limit"], parameters["visual_reference_adopt_limit"] = inspect, adopt
 			if inspect > 0 {
-				parameters["max_turns"] = min(32, planningTurns+2)
+				ioTurns := 2
+				if scope.workspace != nil {
+					ioTurns += 3
+				}
+				parameters["max_turns"] = min(32, planningTurns+ioTurns)
 			}
 		}
 	}

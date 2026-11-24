@@ -126,6 +126,18 @@ func (g *gateway) agentProxy(w http.ResponseWriter, r *http.Request) {
 		if scope, ok := lease.ctx.Value(agentVisualScopeKey{}).(*agentVisualScope); ok && lease.web && objectString(tool, "type") == "function" && oneOf(objectString(tool, "name"), "inspect_visual_references", "select_visual_references") {
 			limit, _, policyErr := scope.limits(selected.key)
 			allowed = policyErr == nil && limit > 0
+			if policyErr == nil && !allowed {
+				if selected.key.ID == "" {
+					allowed = true
+				} else if profile, err := g.modelsForKey(selected.key); err == nil {
+					allowed = profile.Tier.WebSearch && profile.Tier.ImageEditing
+				}
+			}
+		}
+		if !allowed {
+			if scope, ok := lease.ctx.Value(agentVisualScopeKey{}).(*agentVisualScope); ok && scope.workspace != nil && objectString(tool, "type") == "function" && oneOf(objectString(tool, "name"), "list_image_workspace", "view_image_workspace_assets", "select_image_workspace_inputs") {
+				allowed = true
+			}
 		}
 		if !allowed {
 			openAIError(w, http.StatusForbidden, "agent_lease_scope", "Agent 请求超出授权工具范围")
