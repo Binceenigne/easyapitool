@@ -180,7 +180,8 @@ def run_prompt_agent(controller: Any, record: Any, secret: str, prompt: str,
                           if str(asset.get("assetId") or "") in workspace.viewed]}, ensure_ascii=False) if workspace else prompt
     emit("react_started", mode=reasoning_mode, model=model, reasoningEffort=effort, webSearchEnabled=web_search_enabled)
     request = AgentRequest(base_url=record["base_url"], api_key=secret, model=model, instructions=instructions,
-        input=controller._agent_input(initial, image_paths), effort=effort, mode=reasoning_mode,
+        input=controller._agent_input(initial, image_paths), effort=effort,
+        mode="continuation" if reasoning_mode == "instant" and workspace is not None else reasoning_mode,
         web_search_enabled=web_search_enabled, web_image_search_enabled=web_search_enabled and inspect_limit > 0,
         web_image_max_results=max(1, inspect_limit), max_turns=total_budget,
         max_attempts=max_attempts("agent"),

@@ -12,6 +12,7 @@ from PIL import Image
 
 import app
 from backend.agent_workspace import ImageWorkspaceSession
+from backend.prompt_targets import choose_reasoning_pair, validate_reasoning_config
 import backend.controller_mixins.image_files as image_files
 import backend.controller_mixins.image_reasoning as image_reasoning
 from mirra_agents import run_agent
@@ -98,7 +99,7 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
 
 
 class MainAgentContinuationTests(unittest.TestCase):
-    def exercise(self, *, replace_selection=False, sibling=False):
+    def exercise(self, *, replace_selection=False, sibling=False, profile=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = root / "parent.png"; uploaded = root / "upload.png"; final = root / "final.png"
@@ -117,12 +118,13 @@ class MainAgentContinuationTests(unittest.TestCase):
                 sibling_id = store.persist_result("world", "sibling", 0, sibling_file, {"format": "png"})["assetId"]
                 store.complete_round("world", "sibling")
             controller = app.AppController.__new__(app.AppController)
-            controller.store = SimpleNamespace(latest_payload=lambda key: None,
+            controller.store = SimpleNamespace(latest_payload=lambda key: {"appModels": profile} if profile is not None else None,
                 get_key_record=lambda key: {"id": key, "base_url": "https://provider.test/v1"}, get_secret=lambda key: "test-secret")
             controller._cache_undescribed_image_assets = Mock(side_effect=AssertionError("old description prepass ran"))
             controller._run_instant_image_continuation_planner = Mock(side_effect=AssertionError("old planner ran"))
-            bodies, image_requests = [], []
+            bodies, image_requests, events = [], [], []
             def handler(request):
+                self.assertEqual(request.headers["X-Mirra-Reasoning-Mode"], "continuation")
                 body = json.loads(request.content); bodies.append(body)
                 if len(bodies) == 1 and replace_selection:
                     return sse_response("", [{"type": "function_call", "id": "fc-select", "call_id": "call-select", "status": "completed",
@@ -141,8 +143,10 @@ class MainAgentContinuationTests(unittest.TestCase):
             controller.image_generator = SimpleNamespace(generate=generate)
             with patch.object(image_files, "generated_pictures_dir", return_value=root / "Pictures"), patch.object(image_reasoning, "app_data_dir", return_value=root / "data"):
                 result = controller.generate_image("key", "let her enter a rainy station", [str(uploaded)], {
-                    "requestId": "child", "sessionId": "world", "parentSetId": "parent", "continuation": True, "reasoningMode": "instant"})
+                    "requestId": "child", "sessionId": "world", "parentSetId": "parent", "continuation": True, "reasoningMode": "instant"}, events.append)
             self.assertTrue(result["ok"], result.get("error"))
+            self.assertEqual(result["reasoningMode"], "instant")
+            self.assertEqual(next(event for event in events if event["type"] == "react_started")["mode"], "instant")
             controller._cache_undescribed_image_assets.assert_not_called()
             controller._run_instant_image_continuation_planner.assert_not_called()
             self.assertEqual(result["prompt"], "let her enter a rainy station")
@@ -169,6 +173,50 @@ class MainAgentContinuationTests(unittest.TestCase):
         self.assertIn(sibling_id, json.dumps(bodies[1]["input"]))
         self.assertEqual(len(requests[0].image_paths), 2)
         self.assertNotIn(sibling_id, result["selectedAssetIds"])
+
+    def test_basic_editing_tier_uses_exact_gateway_utility_without_enabling_planning(self):
+        result, bodies, requests, _ = self.exercise(profile=ContinuationUtilityTests.profile())
+        self.assertEqual(bodies[0]["model"], "gpt-6-luna")
+        self.assertEqual(bodies[0]["reasoning"]["effort"], "low")
+        self.assertEqual(len(bodies), 1)
+        self.assertEqual(len(requests[0].image_paths), 2)
+
+
+class ContinuationUtilityTests(unittest.TestCase):
+    @staticmethod
+    def profile():
+        return {"tier": {"imageEditing": True, "maxReferences": 2, "reasoningModels": [], "reasoningEfforts": [],
+                         "advanced": False, "webSearch": False},
+                "reasoningModes": {"instant": {"model": "", "effort": ""}},
+                "continuation": {"model": "gpt-6-luna", "effort": "low"}}
+
+    def test_explicit_editing_pair_is_separate_from_selectable_reasoning_permissions(self):
+        self.assertEqual(choose_reasoning_pair(self.profile(), "gpt-6.2-sol", "high", purpose="continuation"),
+                         ("gpt-6-luna", "low"))
+
+    def test_disabled_editing_or_missing_utility_cannot_use_an_arbitrary_fallback(self):
+        profile = self.profile()
+        profile["tier"]["imageEditing"] = False
+        with self.assertRaises(ValueError):
+            choose_reasoning_pair(profile, "gpt-6.2-sol", "high", purpose="continuation")
+        profile = self.profile(); profile.pop("continuation")
+        with self.assertRaises(ValueError):
+            choose_reasoning_pair(profile, "gpt-6.2-sol", "high", purpose="continuation")
+
+    def test_normal_and_advanced_planning_still_obey_the_original_tier(self):
+        for mode in ("advanced", "flash", "max"):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                validate_reasoning_config(self.profile(), mode, {"model": "gpt-6.2-sol", "effort": "high"})
+        profile = self.profile(); profile["polish"] = {"model": "gpt-6-luna", "effort": "low"}
+        profile["tier"]["promptPolish"] = True
+        with self.assertRaises(ValueError):
+            choose_reasoning_pair(profile, "gpt-6-luna", "low", purpose="polish")
+
+    def test_invalid_advertised_pair_is_not_replaced_by_a_caller_preference(self):
+        for pair in ({"model": "../private", "effort": "low"}, {"model": "gpt-6-luna", "effort": "arbitrary"}):
+            profile = self.profile(); profile["continuation"] = pair
+            with self.subTest(pair=pair), self.assertRaises(ValueError):
+                choose_reasoning_pair(profile, "gpt-6.2-sol", "high", purpose="continuation")
 
 
 if __name__ == "__main__":

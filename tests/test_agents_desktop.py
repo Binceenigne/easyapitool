@@ -114,6 +114,7 @@ class DesktopAgentsTests(unittest.TestCase):
             older_asset={**app.image_asset_record(older),"description":"silver hall"}
             controller=self.controller();bodies=[]
             def handler(request):
+                self.assertEqual(request.headers["X-Mirra-Reasoning-Mode"], "medium")
                 body=json.loads(request.content);bodies.append(body)
                 if len(bodies)==1:
                     name,arguments="list_image_workspace",{"kind":"assets","offset":0,"limit":20}

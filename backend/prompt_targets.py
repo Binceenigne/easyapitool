@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -58,6 +59,20 @@ def choose_reasoning_pair(
     else:
         tier = None
     explicit = profile.get(purpose)
+    if purpose == "continuation" and isinstance(explicit, dict):
+        # The gateway publishes this exact utility pair for basic image
+        # editing. It is separate from the models/depths users may select for
+        # planning; never substitute a caller-preferred pair here.
+        model, effort = str(explicit.get("model") or ""), str(explicit.get("effort") or "")
+        capabilities = (profile.get("reasoningCapabilities") or {}).get(model) or {}
+        supported = capabilities.get("efforts")
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", model)
+                or effort not in ("", *EFFORT_ORDER)
+                or supported and effort and effort not in supported):
+            raise ValueError("网关未配置有效的图片续作模型和深度")
+        return model, effort
+    if purpose == "continuation" and tier is not None:
+        raise ValueError("网关尚未下发图片续作的模型配置")
     slots = profile.get("reasoning") or {}
     order = ("terra", "luna", "sol") if purpose == "polish" else ("luna", "terra", "sol")
     candidates: list[tuple[str, str]] = []
