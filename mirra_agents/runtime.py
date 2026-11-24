@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable
 from urllib.parse import urlsplit
 
+from .model_limits import compacted_history, compaction_updates, resolve_model_policy
 from .retry import AgentCancelled, AgentRunFailure, ProviderResponseError, check_cancelled, classify_error, failure_details, max_attempts, retry_delay, safe_text, wait_async
 
 
@@ -25,7 +26,7 @@ class AgentRequest:
     web_image_search_enabled: bool | None = None
     web_image_max_results: int = 6
     max_turns: int = 12
-    max_output_tokens: int = 8192
+    max_output_tokens: int | None = None
     max_attempts: int = 3
     timeout: float = 600
     headers: dict[str, str] | None = None
@@ -41,8 +42,37 @@ class AgentRequest:
 
 def _dump(value: Any) -> Any:
     if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json", exclude_none=True)
+        return value.model_dump(mode="json", exclude_none=True, warnings=False)
     return value
+
+
+def _public_response(response: dict[str, Any]) -> dict[str, Any]:
+    """Keep opaque reasoning/compaction state private to the SDK continuation."""
+    def public(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: public(item) for key, item in value.items() if key != "encrypted_content"}
+        if isinstance(value, list):
+            return [public(item) for item in value if not isinstance(item, dict)
+                    or item.get("type") not in {"compaction", "configuration_update"}]
+        return value
+    return public(response)
+
+
+def _sdk_event(event: Any) -> Any:
+    """Bridge configuration updates missing from the pinned SDK output union.
+
+    The raw accepted response retains updates for the next input filter. Passing
+    them into Runner 0.25 can misparse them as messages with no content, so only
+    the SDK-facing copy excludes them. Opaque compaction items remain untouched.
+    """
+    if getattr(getattr(event, "item", None), "type", None) == "configuration_update":
+        return None
+    response = getattr(event, "response", None)
+    if response is not None and any(getattr(item, "type", None) == "configuration_update"
+                                    for item in response.output or []):
+        filtered = [item for item in response.output if getattr(item, "type", None) != "configuration_update"]
+        return event.model_copy(update={"response": response.model_copy(update={"output": filtered})})
+    return event
 
 
 def _sources(response: dict[str, Any]) -> list[dict[str, str]]:
@@ -147,7 +177,8 @@ async def run_agent_stream(request: AgentRequest, *, cancel_event: Any = None, t
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     maximum = max_attempts("agent", request.max_attempts)
     state: dict[str, Any] = {"turn": 0, "attempt": 0, "attempts": 0, "responses": [], "web": False,
-                             "runner": None, "web_calls": {}, "local_calls": {}}
+                             "runner": None, "web_calls": {}, "local_calls": {},
+                             "compaction_updates": {}, "compaction_count": 0, "last_input_tokens": None}
 
     async def emit(event: dict[str, Any]) -> None:
         await queue.put(event)
@@ -217,6 +248,7 @@ async def run_agent_stream(request: AgentRequest, *, cancel_event: Any = None, t
         try:
             from agents import Agent, ModelSettings, OpenAIResponsesModel, RunConfig, Runner, WebSearchTool
             from agents.lifecycle import RunHooks
+            from agents.run_config import ModelInputData
             from openai import AsyncOpenAI
             from openai.types.shared import Reasoning
             import httpx2
@@ -224,6 +256,20 @@ async def run_agent_stream(request: AgentRequest, *, cancel_event: Any = None, t
             check_cancelled(cancel_event)
             if not request.base_url or not request.api_key or not request.model:
                 raise ValueError("Agent 缺少接口地址、密钥或模型配置")
+            policy = resolve_model_policy(request.model, request.max_output_tokens)
+
+            def context_metadata() -> dict[str, Any]:
+                return {**policy.metadata, "lastRequestInputTokens": state["last_input_tokens"],
+                        "compactionCount": state["compaction_count"]}
+
+            def filter_context(call: Any) -> Any:
+                # Runner owns tool execution and its transcript. Only a real
+                # provider compaction permits removal of the represented prefix.
+                data = call.model_data
+                return ModelInputData(input=compacted_history(data.input, state["compaction_updates"]),
+                                      instructions=data.instructions)
+
+            await emit({"type": "context_config", "modelContext": context_metadata()})
             host = (urlsplit(request.base_url).hostname or "").lower()
             managed = request.api_key.startswith("sk-mirra-") or host in {"39.105.74.222", "imggen.djyx.me", "imggen.djyx.pw", "127.0.0.1", "localhost", "::1"}
             http_client = request.http_client or httpx2.AsyncClient(trust_env=not managed if request.trust_env is None else request.trust_env, verify=request.ssl_context or ssl.create_default_context(), follow_redirects=False, timeout=request.timeout, **({"proxy": request.proxy_url} if request.proxy_url else {}))
@@ -279,11 +325,21 @@ async def run_agent_stream(request: AgentRequest, *, cancel_event: Any = None, t
                                 request.validate_output(response)
                             if request.response_observer is not None:
                                 request.response_observer(response)
+                            updates = compaction_updates(response.get("output") or [])
+                            state["compaction_updates"].update(updates)
+                            state["compaction_count"] += len(updates)
+                            state["last_input_tokens"] = (response.get("usage") or {}).get("input_tokens")
                             state["responses"].append(response)
+                            if updates:
+                                await emit({"type": "context_compacted", "turn": turn, "attempt": attempt,
+                                            "count": len(updates), "modelContext": context_metadata()})
                             await emit({"type": "turn_completed", "turn": turn, "attempt": attempt,
-                                        "usage": response.get("usage") or {}, "response": response, **statistics()})
+                                        "usage": response.get("usage") or {}, "response": _public_response(response),
+                                        "modelContext": context_metadata(), **statistics()})
                             for event in buffered:
-                                yield event
+                                sdk_event = _sdk_event(event)
+                                if sdk_event is not None:
+                                    yield sdk_event
                             return
                         except (AgentCancelled, asyncio.CancelledError):
                             details = failure_details(AgentCancelled("任务已取消"), "agent", attempt, maximum, (request.api_key,))
@@ -328,19 +384,26 @@ async def run_agent_stream(request: AgentRequest, *, cancel_event: Any = None, t
             if request.web_search_enabled:
                 model_tools.append(WebSearchTool(search_content_types=["image", "text"],
                     image_settings={"max_results": max(1, min(12, int(request.web_image_max_results))), "caption": True}) if image_search else WebSearchTool())
-            includes = ["web_search_call.action.sources"] if request.web_search_enabled else None
+            includes = ["reasoning.encrypted_content"] if policy.reasoning else []
+            if request.web_search_enabled:
+                includes.append("web_search_call.action.sources")
             if image_search:
                 includes.append("web_search_call.results")
-            settings = ModelSettings(store=False, max_tokens=request.max_output_tokens, preserve_raw_usage=True, parallel_tool_calls=True, reasoning=Reasoning(effort=request.effort) if request.effort else None, tool_choice=request.tool_choice, response_include=includes, extra_body={"max_tool_calls": 3} if request.web_search_enabled else None)
+            settings = ModelSettings(store=False, max_tokens=policy.max_output_tokens,
+                context_management=policy.context_management, preserve_raw_usage=True,
+                parallel_tool_calls=True, reasoning=Reasoning(effort=request.effort) if request.effort else None,
+                tool_choice=request.tool_choice, response_include=includes or None,
+                extra_body={"max_tool_calls": 3} if request.web_search_enabled else None)
             agent = Agent(name="Mirra visual planner", instructions=request.instructions, model=RetryingResponsesModel(request.model, client), model_settings=settings, tools=model_tools)
             turn_budget = max(1, min(32, request.max_turns))
-            next_input = request.input
+            next_input = compacted_history(request.input) if isinstance(request.input, list) else request.input
             while True:
                 check_cancelled(cancel_event)
                 remaining = turn_budget - state["turn"]
                 if remaining <= 0:
                     raise ProviderResponseError("max_turns", f"Agent 已达到 {turn_budget} 轮处理上限，工作流尚未完成")
-                result = Runner.run_streamed(agent, next_input, max_turns=remaining, hooks=Hooks(), run_config=RunConfig(tracing_disabled=True))
+                result = Runner.run_streamed(agent, next_input, max_turns=remaining, hooks=Hooks(),
+                                            run_config=RunConfig(tracing_disabled=True, call_model_input_filter=filter_context))
                 state["runner"] = result
                 async for _ in result.stream_events():
                     check_cancelled(cancel_event)
@@ -356,7 +419,8 @@ async def run_agent_stream(request: AgentRequest, *, cancel_event: Any = None, t
                 # Continue from the complete SDK transcript. Successful hosted
                 # and local tool calls remain in context; this is workflow
                 # feedback, not a retry from the original user prompt.
-                next_input = [*result.to_input_list(), {"role": "user", "content": feedback.strip()}]
+                next_input = [*compacted_history(result.to_input_list(), state["compaction_updates"]),
+                              {"role": "user", "content": feedback.strip()}]
                 agent.model_settings.tool_choice = None
                 await emit({"type": "workflow_feedback", "feedback": feedback.strip(), "maxTurns": turn_budget, **statistics()})
             raw_usage = [response.get("usage") or {} for response in state["responses"]]
@@ -372,7 +436,7 @@ async def run_agent_stream(request: AgentRequest, *, cancel_event: Any = None, t
                                 usage[key][detail_key] = usage[key].get(detail_key, 0) + detail_value
             usage["requests"] = len(raw_usage)
             combined = {"output": [item for response in state["responses"] for item in response.get("output") or []]}
-            await emit({"type": "result", "text": text, "usage": usage, "webSearchUsed": state["web"], "attempts": state["attempts"], "responseId": state["responses"][-1].get("id") if state["responses"] else None, "responses": state["responses"], "sources": _sources(combined), "webImages": _web_images(combined), **statistics()})
+            await emit({"type": "result", "text": text, "usage": usage, "webSearchUsed": state["web"], "attempts": state["attempts"], "responseId": state["responses"][-1].get("id") if state["responses"] else None, "responses": [_public_response(response) for response in state["responses"]], "sources": _sources(combined), "webImages": _web_images(combined), "modelContext": context_metadata(), **statistics()})
         except (AgentCancelled, asyncio.CancelledError) as error:
             details = failure_details(AgentCancelled("任务已取消"), "agent", max(1, state["attempt"]), maximum, (request.api_key,))
             await fail_running_tools(details)
