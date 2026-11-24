@@ -109,7 +109,7 @@ class VisualReferenceSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["candidates"], []); self.assertEqual(image_parts(failed), [])
         self.assertTrue(payload["errors"])
         self.assertNotIn("sk-private", json.dumps(payload)); self.assertNotIn("proxy-password", json.dumps(payload))
-        self.assertIn("select_visual_references", self.session.feedback("final"))
+        self.assertIsNone(self.session.feedback("final"))
         await self.session.select(None, {"candidate_ids": [], "rationale": "The retrieved image could not be verified"})
         self.assertIsNone(self.session.feedback("final")); self.assertEqual(self.session.adopted, [])
         self.assertEqual(self.events[-1]["webReferenceCount"], 0)
@@ -232,7 +232,7 @@ class FlashVisualWorkflowTests(unittest.TestCase):
             release.set(); timer.cancel(); trigger.join(timeout=1)
             self.assertTrue(finished.wait(timeout=2), "background inspection did not clean up")
 
-    def test_flash_budget_allows_early_final_then_inspect_select_and_revised_final(self):
+    def test_flash_budget_allows_agent_chosen_inspect_select_and_final(self):
         controller = app.AppController.__new__(app.AppController)
         controller.store = SimpleNamespace(latest_payload=lambda _key: None)
         controller.web_search = WebSearchService()
@@ -243,11 +243,8 @@ class FlashVisualWorkflowTests(unittest.TestCase):
         def handler(request):
             bodies.append(json.loads(request.content))
             if len(bodies) == 1:
-                text = "Premature summary.\n<<<FINAL_PROMPT>>>old preliminary prompt"
-                return sse_response(text, [image, *response_payload(text)["output"]])
+                return sse_response("", [image, {"type": "function_call", "id": "fc-inspect", "call_id": "call-inspect", "name": "inspect_visual_references", "arguments": json.dumps({"image_urls": [url]}), "status": "completed"}])
             if len(bodies) == 2:
-                return sse_response("", [{"type": "function_call", "id": "fc-inspect", "call_id": "call-inspect", "name": "inspect_visual_references", "arguments": json.dumps({"image_urls": [url]}), "status": "completed"}])
-            if len(bodies) == 3:
                 return sse_response("", [{"type": "function_call", "id": "fc-select", "call_id": "call-select", "name": "select_visual_references", "arguments": json.dumps({"candidate_ids": [identifier], "rationale": "Use the real product shape"}), "status": "completed"}])
             return sse_response("Checked the real image.\n<<<FINAL_PROMPT>>>revised prompt based on the real product")
         def sdk(request, **kwargs):
@@ -258,13 +255,35 @@ class FlashVisualWorkflowTests(unittest.TestCase):
         with patch.object(controller.web_search, "_public_image_bytes", return_value=fixture_png()):
             result = controller._run_image_prompt_agent({"id": "key", "base_url": "https://provider.test/v1"}, "test-key", "Product render", (), "flash", True,
                 lambda kind, **details: events.append({"type": kind, **details}))
-        self.assertEqual(len(bodies), 4)
-        self.assertEqual(requests[0].max_turns, 5)
+        self.assertEqual(len(bodies), 3)
+        self.assertEqual(requests[0].max_turns, 6)
         self.assertEqual(result["prompt"], "revised prompt based on the real product")
         self.assertEqual(result["summary"], "Checked the real image.")
         self.assertEqual([item["id"] for item in result["webCandidates"]], [identifier])
-        self.assertTrue(any(item.get("type") == "function_call_output" and any(part.get("type") == "input_image" for part in item.get("output", []) if isinstance(part, dict)) for item in bodies[2]["input"]))
-        self.assertEqual((result["turnCount"], result["requestCount"], result["webSearchCallCount"], result["localToolCallCount"]), (4, 4, 1, 2))
+        self.assertTrue(any(item.get("type") == "function_call_output" and any(part.get("type") == "input_image" for part in item.get("output", []) if isinstance(part, dict)) for item in bodies[1]["input"]))
+        self.assertEqual((result["turnCount"], result["requestCount"], result["webSearchCallCount"], result["localToolCallCount"]), (3, 3, 1, 2))
+
+    def test_search_candidates_do_not_force_extra_inspection_or_selection_turns(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.store = SimpleNamespace(latest_payload=lambda _key: None)
+        controller.web_search = WebSearchService()
+        bodies = []
+        def handler(request):
+            bodies.append(json.loads(request.content))
+            text = "Textual facts are enough for this scene.\n<<<FINAL_PROMPT>>>An independently composed landscape"
+            return sse_response(text, [official_results("https://images.example.com/optional.png")["output"][0], *response_payload(text)["output"]])
+        def sdk(request, **kwargs):
+            self.assertIsNone(request.final_output_feedback)
+            request.http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+            return run_agent(request, **kwargs)
+        controller._run_sdk_agent = sdk
+        with patch.object(controller.web_search, "_public_image_bytes", side_effect=AssertionError("The Agent did not ask to inspect")):
+            result = controller._run_image_prompt_agent({"id": "key", "base_url": "https://provider.test/v1"}, "test-key", "Landscape", (), "flash", True, lambda *args, **kwargs: None)
+        self.assertEqual(len(bodies), 1)
+        self.assertEqual(result["webCandidates"], [])
+        self.assertEqual(result["inspectedCandidates"], [])
+        self.assertEqual(result["webReferenceCount"], 0)
+        self.assertEqual(result["webImageCandidateCount"], 1)
 
 
 if __name__ == "__main__":

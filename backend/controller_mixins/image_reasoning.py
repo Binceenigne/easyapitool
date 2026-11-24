@@ -443,10 +443,21 @@ class ImageReasoningMixin:
                     raise ValueError("当前密钥档位未开放图片续作")
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
+        # Continue through the same Agent core, including Instant's short,
+        # non-expanding edit path. No separate router or pre-description pass.
+        if continuation_enabled and reasoning_config is None:
+            basic = resolve_image_reasoning_config("flash")
+            try:
+                main_model, main_effort = choose_reasoning_pair(profile, basic["model"], basic["effort"], purpose="continuation")
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            reasoning_config = {**basic, "mode": "instant", "model": main_model, "effort": main_effort,
+                "max_turns": 1, "max_references": 0, "visual_search_results": 0,
+                "depth": "即时继续编辑：只处理当前要求和必要素材，保持用户原始提示词，不扩写、不反思。"}
         use_reasoning = reasoning_config is not None
         requested_web_search = clean_options.get("webSearchEnabled")
         web_search_enabled = (
-            use_reasoning
+            use_reasoning and reasoning_mode != "instant"
             and (
                 reasoning_mode == "advanced"
                 or requested_web_search is not False
@@ -535,6 +546,7 @@ class ImageReasoningMixin:
         web_search_result_count = 0
         staged_web_references: list[dict[str, Any]] = []
         persisted_web_references: list[dict[str, Any]] = []
+        staged_inspected_references: list[dict[str, Any]] = []
         web_reference_paths: tuple[Path, ...] = ()
         web_reference_dir = app_data_dir() / "image-search-references" / request_id
         continuation_context: dict[str, Any] = {}
@@ -542,13 +554,12 @@ class ImageReasoningMixin:
         continuation_plan: dict[str, Any] | None = None
         selected_asset_ids: list[str] = []
         selected_asset_paths: list[str] = []
-        required_input_asset_ids: list[str] = []
-        required_input_paths: list[str] = []
         if continuation_enabled:
             try:
                 continuation_context = session_store.continuation_context(
                     session_id,
                     parent_set_id,
+                    include_workspace=True,
                 )
                 if not continuation_context:
                     release_session_activity()
@@ -565,12 +576,12 @@ class ImageReasoningMixin:
                     for asset in registered_inputs
                     if asset.get("assetId")
                 ]
-                required_input_asset_ids = list(dict.fromkeys(registered_input_asset_ids))
                 if registered_inputs:
                     continuation_context = session_store.continuation_context(
                         session_id,
                         parent_set_id,
                         registered_input_asset_ids,
+                        include_workspace=True,
                     )
                 if len(registered_input_asset_ids) > reference_limit:
                     raise ValueError(f"当前档位最多允许 {reference_limit} 张参考图")
@@ -584,17 +595,7 @@ class ImageReasoningMixin:
                 )
                 if len(visible_asset_ids) > reference_limit:
                     raise ValueError(f"父轮输出与本轮新参考图合计不能超过 {reference_limit} 张")
-                continuation_context = self._cache_undescribed_image_assets(
-                    record,
-                    secret,
-                    session_store,
-                    session_id,
-                    parent_set_id,
-                    continuation_context,
-                    visible_asset_ids,
-                    registered_input_asset_ids,
-                    task_context,
-                )
+                continuation_context["requiredInputAssetIds"] = registered_input_asset_ids
                 asset_by_id = {
                     str(asset.get("assetId") or ""): asset
                     for asset in continuation_context.get("assets") or []
@@ -605,15 +606,6 @@ class ImageReasoningMixin:
                     for asset_id in visible_asset_ids
                     if asset_id in asset_by_id
                 ]
-                if not use_reasoning:
-                    continuation_plan = self._run_instant_image_continuation_planner(
-                        record,
-                        secret,
-                        original_prompt,
-                        continuation_context,
-                        visible_assets,
-                        task_context,
-                    )
             except (OSError, RuntimeError, ValueError) as exc:
                 discard_pending_assets()
                 release_session_activity()
@@ -650,7 +642,10 @@ class ImageReasoningMixin:
                 web_search_used = bool(agent_result.get("webSearchUsed"))
                 web_search_failed = bool(agent_result.get("webSearchFailed"))
                 web_search_result_count = int(agent_result.get("webSearchResultCount") or 0)
-                agent_metadata = {name: agent_result[name] for name in IMAGE_AGENT_METADATA_FIELDS if name in agent_result}
+                # Inspection bytes/previews are staged separately, never copied
+                # into options or persisted as a base64-bearing public event.
+                agent_metadata = {name: agent_result[name] for name in IMAGE_AGENT_METADATA_FIELDS
+                                  if name in agent_result and name != "webInspectedReferences"}
                 if continuation_enabled:
                     continuation_plan = agent_result.get("continuationPlan")
             except (RuntimeError, OSError, ValueError) as exc:
@@ -683,13 +678,8 @@ class ImageReasoningMixin:
                 for asset_id in selected_asset_ids
                 if asset_id in asset_by_id and Path(str(asset_by_id[asset_id].get("path") or "")).is_file()
             ]
-            required_input_paths = [
-                str(asset_by_id[asset_id]["path"])
-                for asset_id in required_input_asset_ids
-                if asset_id in asset_by_id and Path(str(asset_by_id[asset_id].get("path") or "")).is_file()
-            ]
             final_reference_asset_ids = list(
-                dict.fromkeys([*required_input_asset_ids, *selected_asset_ids])
+                dict.fromkeys(selected_asset_ids)
             )[:reference_limit]
             selected_asset_paths = [
                 str(asset_by_id[asset_id]["path"])
@@ -725,6 +715,11 @@ class ImageReasoningMixin:
             try:
                 available_slots = 0 if request.output_format == "svg" else max(0, reference_limit - len(request.image_paths))
                 web_candidates = list(agent_result.get("webCandidates") or [])
+                inspected_candidates = list(agent_result.get("inspectedCandidates") or [])
+                if inspected_candidates:
+                    staged_inspected_references = self._call_with_task_context(
+                        self.web_search.stage_reference_records, inspected_candidates,
+                        web_reference_dir / "inspected", min(12, len(inspected_candidates)), task_context=task_context)
                 if web_candidates and available_slots:
                     staged_web_references = self._call_with_task_context(
                         self.web_search.stage_reference_records,
@@ -748,6 +743,7 @@ class ImageReasoningMixin:
                 shutil.rmtree(web_reference_dir, ignore_errors=True)
                 emit("react_failed", mode=reasoning_mode, error=str(exc))
                 return {"ok": False, "error": f"思维处理失败：{exc}"}
+        clean_options.pop("webInspectedReferences", None)
         clean_options.update(
             {
                 "reasoningMode": reasoning_mode,
@@ -841,6 +837,20 @@ class ImageReasoningMixin:
                 except (OSError, RuntimeError):
                     pass
                 return {"ok": False, "error": f"无法保存网络参考图：{exc}"}
+
+        if staged_inspected_references:
+            try:
+                agent_metadata["webInspectedReferences"] = session_store.persist_web_references(
+                    session_id, request_id, staged_inspected_references, inspected_only=True)
+            except (OSError, RuntimeError, ValueError) as exc:
+                active_sets.discard(request_id)
+                release_session_activity()
+                shutil.rmtree(web_reference_dir, ignore_errors=True)
+                try:
+                    session_store.delete_set(session_id, request_id)
+                except (OSError, RuntimeError):
+                    pass
+                return {"ok": False, "error": f"无法保存已检视的参考图：{exc}"}
 
         emit(
             "set_started",

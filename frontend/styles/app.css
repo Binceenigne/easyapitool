@@ -3878,6 +3878,35 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
   white-space: nowrap;
 }
 
+.image-reasoning-web-reference[data-adopted=true] span {
+  color: var(--reasoning-accent);
+}
+
+.image-reasoning-reference-note {
+  margin: 7px 0 0;
+  color: var(--text-soft);
+  font-size: 9px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.image-reasoning-reference-failures {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.6;
+}
+
+.image-reasoning-reference-failures summary {
+  cursor: pointer;
+}
+
+.image-reasoning-reference-failures p {
+  margin: 4px 0 0;
+  padding-left: 9px;
+  overflow-wrap: anywhere;
+}
+
 .image-reasoning-final-prompt p {
   max-height: 180px;
   margin: 0;

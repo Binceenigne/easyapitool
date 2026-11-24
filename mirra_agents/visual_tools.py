@@ -60,7 +60,7 @@ def make_visual_reference_tools(inspect_callback: Callable[..., Any], select_cal
     return [
         FunctionTool(
             name=INSPECT_TOOL_NAME,
-            description="读取本轮 OpenAI 官方图片搜索的候选，下载并检视真实图片。image_urls 为空时读取当前候选；只能读取实际搜索结果中的URL。工具返回可见图片与候选ID，不能把网页链接当作图片。",
+            description="查看本轮图片搜索的真实候选，返回图片、ID及读取结果。image_urls 使用搜索返回的原图URL；留空时查看尚未检视的候选。",
             params_json_schema=INSPECT_SCHEMA,
             on_invoke_tool=invocation(inspect_callback, {"image_urls"}, "image_urls", 12),
             strict_json_schema=True,
@@ -68,7 +68,7 @@ def make_visual_reference_tools(inspect_callback: Callable[..., Any], select_cal
         ),
         FunctionTool(
             name=SELECT_TOOL_NAME,
-            description="根据已检视的真实图片，选择本次生图要实际采用的参考图ID，并说明用途。只能选择检视成功的ID，数量受当前档位与剩余参考槽位限制；不需要采用时传空数组并说明原因。",
+            description="按任务需要选择已检视的图片ID作为生图参考，并简述用途；不需要时可传空数组。数量受当前档位和可用参考图槽位限制。",
             params_json_schema=SELECT_SCHEMA,
             on_invoke_tool=invocation(select_callback, {"candidate_ids", "rationale"}, "candidate_ids", 8),
             strict_json_schema=True,

@@ -990,6 +990,27 @@
                 set.webReferenceCount = set.webReferences.length;
                 if (firstReferences && !set.supplementChoice) set.webReferencesExpanded = true;
             }
+            const inspected = metadata.type === 'react_visual_results' && Array.isArray(metadata.candidates) ? metadata.candidates
+                : Array.isArray(metadata.webInspectedReferences) ? metadata.webInspectedReferences : null;
+            if (inspected) {
+                const previous = new Map((set.webInspectedReferences || []).map(item => [item.id || item.imageUrl || item.path, item]));
+                const firstInspection = !set.webInspectedReferences?.length && inspected.length > 0;
+                set.webInspectedReferences = inspected.map(item => {
+                    const old = previous.get(item.id || item.imageUrl || item.path) || {};
+                    return { ...old, ...item, previewUri: item.previewUri || old.previewUri || '' };
+                });
+                if (firstInspection && !set.supplementChoice) set.webReferencesExpanded = true;
+            }
+            const failures = Array.isArray(metadata.webReferenceFailures) ? metadata.webReferenceFailures
+                : metadata.type === 'react_visual_results' && Array.isArray(metadata.errors) ? metadata.errors : null;
+            if (failures) set.webReferenceFailures = failures.map(item => ({ ...item }));
+            if (Array.isArray(metadata.webInspectionRecords)) set.webInspectionRecords = metadata.webInspectionRecords.map(item => ({ ...item }));
+            if (metadata.webSelectionRationale !== undefined) set.webSelectionRationale = String(metadata.webSelectionRationale || '');
+            else if (metadata.type === 'react_visual_selected' && metadata.rationale !== undefined) set.webSelectionRationale = String(metadata.rationale || '');
+            if (metadata.webSelectionStatus !== undefined) set.webSelectionStatus = String(metadata.webSelectionStatus || '');
+            if (metadata.webImageCandidateCount !== undefined) set.webImageCandidateCount = Number(metadata.webImageCandidateCount) || 0;
+            if (Array.isArray(metadata.selectedCandidateIds)) set.webSelectedCandidateIds = [...metadata.selectedCandidateIds];
+            if (Array.isArray(metadata.webReferences)) set.webSelectedCandidateIds = metadata.webReferences.map(item => item.id).filter(Boolean);
             const stats = { ...(set.reasoningStats || {}), ...(metadata.reasoningStats || {}) };
             for (const key of ['turnCount', 'requestCount', 'toolCallCount', 'webSearchCallCount', 'localToolCallCount']) {
                 if (metadata[key] !== undefined && Number.isFinite(Number(metadata[key]))) {
@@ -1107,7 +1128,12 @@
                 webSearchSourcesExpanded: false,
                 webReferenceCount: Number(metadata.webReferenceCount) || 0,
                 webReferences: Array.isArray(metadata.webReferences) ? metadata.webReferences.map(reference => ({ ...reference })) : [],
-                webReferencesExpanded: Array.isArray(metadata.webReferences) && metadata.webReferences.length > 0,
+                webInspectedReferences: Array.isArray(metadata.webInspectedReferences) ? metadata.webInspectedReferences.map(reference => ({ ...reference })) : [],
+                webReferenceFailures: Array.isArray(metadata.webReferenceFailures) ? metadata.webReferenceFailures.map(item => ({ ...item })) : [],
+                webInspectionRecords: Array.isArray(metadata.webInspectionRecords) ? metadata.webInspectionRecords.map(item => ({ ...item })) : [],
+                webSelectionRationale: String(metadata.webSelectionRationale || ''),
+                webSelectionStatus: String(metadata.webSelectionStatus || ''),
+                webReferencesExpanded: Boolean(metadata.webReferences?.length || metadata.webInspectedReferences?.length),
                 finalPromptExpanded: false,
                 webReferencesLoading: false,
                 items: Array.from({ length: requestedCount }, (_, itemIndex) => ({
@@ -1498,9 +1524,26 @@
                 .find(candidate => candidate && !candidate.toLowerCase().startsWith('file:')) || '';
         }
 
+        function imageReferenceGallery(set) {
+            const seen = new Set();
+            return [...(set.webInspectedReferences || []), ...(set.webReferences || [])].filter((reference, index) => {
+                const id = reference.id || reference.assetId || reference.imageUrl || reference.path || reference.uri || reference.previewUri || `legacy-${index}`;
+                if (seen.has(id)) return false;
+                seen.add(id);
+                return true;
+            });
+        }
+
+        function imageReferenceIsAdopted(set, reference) {
+            return (set.webReferences || []).some(item => item === reference || item.id && item.id === reference.id
+                || item.assetId && item.assetId === reference.assetId
+                || item.path && item.path === reference.path || item.uri && item.uri === reference.uri)
+                || (set.webSelectedCandidateIds || []).includes(reference.id);
+        }
+
         async function toggleWebReferences(setId) {
             const set = imageGenerationSetById(setId);
-            if (!set?.webReferences?.length) return;
+            if (!set || !(imageReferenceGallery(set).length || set.webImageCandidateCount || set.webReferenceFailures?.length || set.webSelectionRationale)) return;
             set.webReferencesExpanded = !set.webReferencesExpanded;
             set.supplementChoice = 'references';
             if (set.webReferencesExpanded) set.webSearchSourcesExpanded = false;
@@ -1509,7 +1552,7 @@
                 renderImageGenerationSets();
                 return;
             }
-            const missing = set.webReferences.filter(reference => !reference.previewUri && (reference.previewPath || reference.path));
+            const missing = imageReferenceGallery(set).filter(reference => !reference.previewUri && (reference.previewPath || reference.path));
             if (!missing.length || !window.pywebview?.api?.load_generated_image) {
                 renderImageGenerationSets();
                 return;

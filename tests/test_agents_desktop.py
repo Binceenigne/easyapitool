@@ -45,15 +45,11 @@ class DesktopAgentsTests(unittest.TestCase):
                     tool = next(tool for tool in body["tools"] if tool["type"] == "web_search")
                     self.assertEqual(tool["search_content_types"], ["image", "text"])
                     self.assertIn("web_search_call.results", body["include"])
-                    text = "尚未看图的初步方案。\n<<<FINAL_PROMPT>>>OUTDATED FIRST PROMPT"
                     web = {"id": "web-search-real", "type": "web_search_call", "status": "completed",
                            "action": {"type": "search", "query": "subject reference", "sources": [{"type": "url", "url": source_url}]},
                            "results": [{"type": "image_result", "image_url": image_url, "source_website_url": source_url, "caption": "Orange subject"}]}
-                    return sse_response(text, [web, *response_payload(text)["output"]])
+                    return sse_response("", [web, function_call("inspect_visual_references", {"image_urls": []}, "inspect")])
                 if len(bodies) == 2:
-                    self.assertTrue(any("inspect_visual_references" in str(item.get("content")) for item in body["input"]))
-                    return sse_response("", [function_call("inspect_visual_references", {"image_urls": []}, "inspect")])
-                if len(bodies) == 3:
                     output = next(item["output"] for item in body["input"] if item.get("type") == "function_call_output")
                     images = [part for part in output if part["type"] == "input_image"]
                     self.assertEqual(len(images), 1)
@@ -82,14 +78,16 @@ class DesktopAgentsTests(unittest.TestCase):
             self.assertTrue(result["ok"], result.get("error"))
             self.assertEqual(len(image_requests), 1)
             self.assertEqual(download.call_count, 1, "The adopted image must reuse the bytes the Agent actually inspected")
-            self.assertEqual((result["requestCount"], result["toolCallCount"], result["webReferenceCount"]), (4, 3, 1))
+            self.assertEqual((result["requestCount"], result["toolCallCount"], result["webReferenceCount"]), (3, 3, 1))
             self.assertEqual(result["webReferences"][0]["sourceUrl"], source_url)
             saved = app.ImageSessionStore(root / "Pictures").list_sets()[0]
             self.assertEqual(saved["webReferenceCount"], 1)
             self.assertTrue(Path(saved["webReferences"][0]["path"]).is_file())
             self.assertTrue(Path(saved["webReferences"][0]["previewPath"]).is_file())
+            self.assertEqual(len(saved["webInspectedReferences"]), 1)
+            self.assertTrue(Path(saved["webInspectedReferences"][0]["path"]).is_file())
             self.assertEqual(saved["webSearchSources"][0]["url"], source_url)
-            self.assertEqual((saved["requestCount"], len(saved["reasoningTurns"])), (4, 4))
+            self.assertEqual((saved["requestCount"], len(saved["reasoningTurns"])), (3, 3))
             tools = [tool for turn in saved["reasoningTurns"] for tool in turn["tools"]]
             self.assertEqual(len(tools), 3)
             self.assertTrue(all(tool["status"] == "completed" for tool in tools))
@@ -107,7 +105,7 @@ class DesktopAgentsTests(unittest.TestCase):
             return run_agent(request,**kwargs)
         controller._run_sdk_agent=run
 
-    def test_real_sdk_continuation_loads_only_selected_older_asset(self):
+    def test_real_sdk_continuation_can_browse_view_and_select_workspace_assets(self):
         with tempfile.TemporaryDirectory() as temp:
             parent=Path(temp)/"parent.png";older=Path(temp)/"older.png"
             Image.new("RGB",(8,8),"purple").save(parent)
@@ -118,19 +116,26 @@ class DesktopAgentsTests(unittest.TestCase):
             def handler(request):
                 body=json.loads(request.content);bodies.append(body)
                 if len(bodies)==1:
-                    arguments={"operation":"generate","selected_asset_ids":[older_asset["assetId"],parent_asset["assetId"]],
-                        "descriptions":[{"asset_id":parent_asset["assetId"],"description":"purple character"}],"rationale":"preserve character and hall"}
-                    return sse_response("",[{"id":"fc-plan","type":"function_call","status":"completed","call_id":"call-plan","name":"plan_image_continuation","arguments":json.dumps(arguments)}])
-                return sse_response("保留角色和大厅。\n<<<FINAL_PROMPT>>>角色走入银色大厅")
+                    name,arguments="list_image_workspace",{"kind":"assets","offset":0,"limit":20}
+                elif len(bodies)==2:
+                    name,arguments="view_image_workspace_assets",{"asset_ids":[older_asset["assetId"]]}
+                elif len(bodies)==3:
+                    name,arguments="select_image_workspace_inputs",{"operation":"generate","asset_ids":[older_asset["assetId"],parent_asset["assetId"]],"rationale":"preserve character and hall"}
+                else:
+                    return sse_response("保留角色和大厅。\n<<<FINAL_PROMPT>>>角色走入银色大厅")
+                return sse_response("",[{"id":"fc-"+str(len(bodies)),"type":"function_call","status":"completed","call_id":"call-"+str(len(bodies)),"name":name,"arguments":json.dumps(arguments)}])
             self.sdk_transport(controller,handler)
             result=controller._run_image_prompt_agent({"base_url":"https://provider.test/v1"},"test-only-secret",
                 "continue in hall",(parent,),"medium",False,lambda *args,**kwargs:None,
-                {"assets":[older_asset,parent_asset]},[parent_asset])
-            self.assertEqual(len(bodies),2)
-            self.assertEqual(bodies[0]["tool_choice"],{"type":"function","name":"plan_image_continuation"})
+                {"assets":[older_asset,parent_asset],"workspaceRoot":temp,"parentOutputAssetIds":[parent_asset["assetId"]]},[parent_asset])
+            self.assertEqual(len(bodies),4)
+            self.assertNotEqual(bodies[0].get("tool_choice"),{"type":"function","name":"plan_image_continuation"})
+            self.assertNotIn("plan_image_continuation",[tool.get("name") for tool in bodies[0]["tools"]])
             self.assertEqual(sum(part["type"]=="input_image" for part in bodies[0]["input"][0]["content"]),1)
-            output=next(item["output"] for item in bodies[1]["input"] if item.get("type")=="function_call_output")
-            self.assertEqual(sum(part["type"]=="input_image" for part in output),1)
+            results=[item["output"] for item in bodies[2]["input"] if item.get("type")=="function_call_output"]
+            self.assertEqual(sum(part["type"]=="input_image" for output in results if isinstance(output,list) for part in output),1)
+            listing=json.loads(next(item["output"] for item in bodies[1]["input"] if item.get("type")=="function_call_output"))
+            self.assertIn(str(older),[item["path"] for item in listing["items"]])
             self.assertEqual(result["continuationPlan"]["selectedAssetIds"],[older_asset["assetId"],parent_asset["assetId"]])
             self.assertEqual(result["prompt"],"角色走入银色大厅")
 
