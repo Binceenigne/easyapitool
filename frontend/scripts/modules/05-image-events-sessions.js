@@ -1,3 +1,14 @@
+        function applyImageOptionSnapshot(set, metadata) {
+            if (metadata.size || metadata.requestedSize) set.size = metadata.size || metadata.requestedSize;
+            if (metadata.resolution || metadata.size || metadata.requestedSize) {
+                set.resolution = imageResolutionForSize(set.size, metadata.resolution || set.resolution);
+            }
+            if (metadata.quality) set.quality = metadata.quality;
+            if (metadata.complexity !== undefined) set.complexity = metadata.complexity || 'auto';
+            if (metadata.outputFormat || metadata.output_format) set.outputFormat = metadata.outputFormat || metadata.output_format;
+            if (metadata.frameCount || metadata.frame_count) set.frameCount = Number(metadata.frameCount || metadata.frame_count);
+        }
+
         function imageRequestErrorDetails(value) {
             if (!value || typeof value !== 'object') return null;
             const text = input => String(input || '').replace(/\bsk-[A-Za-z0-9_-]{8,}/gi, '[API Key]')
@@ -99,6 +110,7 @@
                     renderImageGenerationSets();
                 }, Math.min(2147483647, retry.delayMs));
             } else if (event.type === 'set_started') {
+                applyImageOptionSnapshot(set, event);
                 set.requestedCount = Number(event.requestedCount) || set.requestedCount;
                 set.imageModel = event.imageModel || set.imageModel;
                 set.aspectRatio = event.aspectRatio || set.aspectRatio;
@@ -402,6 +414,7 @@
             set.parentSetId = result.parentSetId || set.parentSetId;
             set.roundNumber = Number(result.roundNumber) || set.roundNumber;
             set.imageModel = result.imageModel || set.imageModel;
+            applyImageOptionSnapshot(set, result);
             set.aspectRatio = result.aspectRatio || set.aspectRatio;
             if (['auto', 'opaque', 'transparent'].includes(result.transparency)) set.transparency = result.transparency;
             set.originalPrompt = result.originalPrompt || set.originalPrompt || result.prompt || '';
@@ -524,6 +537,12 @@
             setImageTransparency(set.transparency || 'auto', false);
             setImageModel(set.imageModel || 'gpt-image-2', false);
             setImageAspectRatio(set.aspectRatio || 'auto', false);
+            setImageQuality(set.quality || 'medium', false);
+            if (set.complexity) setImageComplexity(set.complexity, false);
+            if (set.outputFormat) setImageOutputFormat(set.outputFormat, false);
+            setImageFrameCount(set.frameCount ?? 9, false);
+            const savedResolution = imageResolutionForSize(set.size, set.resolution);
+            if (savedResolution) setImageResolution(savedResolution, false);
             setImageWebSearchEnabled(set.webSearchEnabled === true, false);
             setImageEditSessionUi(true);
             window.imageEditState.files = [];
@@ -995,6 +1014,7 @@
             const requestOptions = {
                 imageModel: window.imageEditState.imageModel,
                 size: document.getElementById('imageEditSize').value,
+                resolution: window.imageEditState.resolution,
                 aspectRatio,
                 background: transparency,
                 quality,
@@ -1025,6 +1045,12 @@
             }, 510);
             createImageGenerationSet(requestId, imageCount, finalPrompt, {
                 imageModel: requestOptions.imageModel,
+                size: requestOptions.size,
+                resolution: requestOptions.resolution,
+                quality,
+                complexity: complexity || 'auto',
+                outputFormat,
+                frameCount,
                 aspectRatio,
                 transparency,
                 sessionId: session?.sessionId || requestId,

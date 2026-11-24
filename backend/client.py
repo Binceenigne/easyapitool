@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .common import *
 from .network_log import log_network_error, new_network_request_id
-from .transport import open_request, is_mirra_request, connection_was_refused, UnsentConnectionError
+from .transport import open_request, is_mirra_request, connection_was_refused, UnsentConnectionError, transport_details
 
 
 class EasyClinClient:
@@ -101,6 +101,7 @@ class EasyClinClient:
         on_completed: Any = None,
         allow_empty_text: bool = False,
         reasoning_mode: str | None = None,
+        task_context: Any = None,
     ) -> str:
         url = f"{base_url.rstrip('/')}/responses"
         payload = {
@@ -150,12 +151,20 @@ class EasyClinClient:
         request.add_unredirected_header("Authorization", f"Bearer {secret}")
         if reasoning_mode:
             request.add_header("X-Mirra-Reasoning-Mode", str(reasoning_mode))
+        request_details.update(transport_details(request))
         for attempt in range(2):
+            if task_context is not None:
+                task_context.check_cancelled()
             try:
-                response_context = open_request(request, timeout=timeout)
+                response_context = open_request(request, timeout=timeout,
+                                                **({"task_context": task_context} if task_context is not None else {}))
                 break
             except urllib.error.HTTPError as exc:
-                response_body = exc.read().decode("utf-8", "replace")
+                try:
+                    response_body = exc.read().decode("utf-8", "replace")
+                finally:
+                    if task_context is not None:
+                        task_context.check_cancelled()
                 log_network_error(
                     "responses_http_error",
                     request_id=request_id,
@@ -290,6 +299,8 @@ class EasyClinClient:
                     raise RuntimeError("Responses 接口未返回文本")
                 return text
         except Exception as exc:
+            if task_context is not None:
+                task_context.check_cancelled()
             log_network_error(
                 "responses_stream_error",
                 request_id=request_id,
@@ -309,3 +320,6 @@ class EasyClinClient:
             raise RuntimeError(
                 f"Responses 网络请求失败: {reason}（诊断 ID: {request_id}）"
             ) from None
+        finally:
+            if task_context is not None:
+                task_context.remove_response(response_context)

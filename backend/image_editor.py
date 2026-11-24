@@ -27,7 +27,7 @@ from typing import Any, Callable
 from PIL import Image
 
 from .network_log import log_network_error, new_network_request_id
-from .transport import open_request
+from .transport import open_request, transport_details
 from mirra_agents.retry import ProviderResponseError, safe_text
 
 
@@ -56,6 +56,15 @@ IMAGE_SIZES_BY_RATIO = {
     "4:3": "1024x768", "3:2": "1152x768", "16:9": "1280x720", "21:9": "1344x576",
 }
 IMAGE_EXTENSIONS = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp", "GIF": ".gif"}
+
+
+def image_resolution_for_size(size: Any, selected: Any = "") -> str:
+    """Describe a concrete request size without changing the request itself."""
+    match = re.fullmatch(r"([1-9]\d{0,3})x([1-9]\d{0,3})", str(size or "").lower())
+    if match:
+        longest = max(int(value) for value in match.groups())
+        return "uhd" if longest > 2560 else "hd" if longest > 1536 else "sd"
+    return selected if isinstance(selected, str) and selected in {"sd", "hd", "uhd"} else ""
 
 
 def svg_size(image_bytes: bytes) -> tuple[int, int] | None:
@@ -592,7 +601,7 @@ class ImageSessionStore:
                     "quality": str(options.get("quality") or "medium"),
                     "output_format": str(options.get("output_format") or ""),
                     "complexity": str(options.get("complexity") or ""),
-                    "resolution": str(options.get("resolution") or "sd"),
+                    "resolution": image_resolution_for_size(options.get("size"), options.get("resolution")),
                     "frame_count": int(options.get("frame_count") or 9),
                     "outputPreset": str(options.get("outputPreset") or "lossless"),
                     "operation": str(options.get("operation") or "generate"),
@@ -1295,12 +1304,13 @@ class ImageSessionStore:
                             "prompt": strip_image_prompt_constraints(round_data.get("prompt") or ""),
                             "originalPrompt": strip_image_prompt_constraints(options.get("originalPrompt") or round_data.get("prompt") or ""),
                             "imageModel": str(options.get("imageModel") or "gpt-image-2"),
+                            "size": str(options.get("size") or ""),
                             "aspectRatio": str(options.get("aspectRatio") or "auto"),
                             "transparency": str(options.get("transparency") or "auto"),
                             "quality": str(options.get("quality") or "medium"),
                             "outputFormat": str(options.get("output_format") or next((item.get("format") for item in round_data.get("items") or [] if item.get("format")), "png")),
                             "complexity": str(options.get("complexity") or "auto"),
-                            "resolution": str(options.get("resolution") or "sd"),
+                            "resolution": image_resolution_for_size(options.get("size"), options.get("resolution")),
                             "frameCount": int(options.get("frame_count") or 9),
                             "operation": str(options.get("operation") or ("edit" if round_data.get("referenceCount") else "generate")),
                             "continuation": bool(options.get("continuation")),
@@ -1902,9 +1912,15 @@ class ImageGenerationClient:
             method="POST",
         )
         try:
-            response_context = open_request(request, timeout=timeout, opener=cls._opener().open)
+            request_details.update(transport_details(request))
+            response_context = open_request(request, timeout=timeout, opener=cls._opener().open,
+                                            **({"task_context": task_context} if task_context is not None else {}))
         except urllib.error.HTTPError as exc:
-            response_body = exc.read().decode("utf-8", "replace")
+            try:
+                response_body = exc.read().decode("utf-8", "replace")
+            finally:
+                if task_context is not None:
+                    task_context.check_cancelled()
             log_network_error(
                 "image_generation_http_error",
                 request_id=request_id,
@@ -2047,9 +2063,15 @@ class ImageGenerationClient:
             method="POST",
         )
         try:
-            response_context = open_request(request, timeout=timeout, opener=ImageGenerationClient._opener().open)
+            request_details.update(transport_details(request))
+            response_context = open_request(request, timeout=timeout, opener=ImageGenerationClient._opener().open,
+                                            **({"task_context": task_context} if task_context is not None else {}))
         except urllib.error.HTTPError as exc:
-            response_body = exc.read().decode("utf-8", "replace")
+            try:
+                response_body = exc.read().decode("utf-8", "replace")
+            finally:
+                if task_context is not None:
+                    task_context.check_cancelled()
             log_network_error(
                 "image_edit_http_error",
                 request_id=request_id,
