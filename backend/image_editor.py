@@ -5,18 +5,20 @@ from .agent_metadata import IMAGE_AGENT_METADATA_FIELDS
 import base64
 import binascii
 import hashlib
+import http.client
 import io
+import inspect
 import json
 import math
 import os
 import re
-import xml.etree.ElementTree as ET
 import shutil
 import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -25,12 +27,12 @@ from typing import Any, Callable
 from PIL import Image
 
 from .network_log import log_network_error, new_network_request_id
-from .transport import open_request
+from .transport import open_request, transport_details
+from mirra_agents.retry import ProviderResponseError, safe_text
 
 
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 OUTPUT_IMAGE_SUFFIXES = SUPPORTED_IMAGE_SUFFIXES | {".svg", ".gif"}
-IMAGE_EXTENSIONS = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp", "GIF": ".gif"}
 CONTENT_TYPES = {
     ".jpeg": "image/jpeg",
     ".jpg": "image/jpeg",
@@ -40,11 +42,29 @@ CONTENT_TYPES = {
     ".svg": "image/svg+xml",
 }
 OUTPUT_PRESETS = {
-    "lossless": ("png", None),
-    "large": ("jpeg", 90),
-    "medium": ("jpeg", 75),
-    "small": ("jpeg", 55),
+    "lossless": "png",
+    "large": "jpeg",
+    "medium": "jpeg",
+    "small": "jpeg",
 }
+IMAGE_MODEL_IDS = {
+    "gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
+    "gpt-image-2.6-flare", "gpt-image-2.6-sunburst",
+}
+IMAGE_SIZES_BY_RATIO = {
+    "9:16": "720x1280", "2:3": "768x1152", "3:4": "768x1024", "1:1": "1024x1024",
+    "4:3": "1024x768", "3:2": "1152x768", "16:9": "1280x720", "21:9": "1344x576",
+}
+IMAGE_EXTENSIONS = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp", "GIF": ".gif"}
+
+
+def image_resolution_for_size(size: Any, selected: Any = "") -> str:
+    """Describe a concrete request size without changing the request itself."""
+    match = re.fullmatch(r"([1-9]\d{0,3})x([1-9]\d{0,3})", str(size or "").lower())
+    if match:
+        longest = max(int(value) for value in match.groups())
+        return "uhd" if longest > 2560 else "hd" if longest > 1536 else "sd"
+    return selected if isinstance(selected, str) and selected in {"sd", "hd", "uhd"} else ""
 
 
 def svg_size(image_bytes: bytes) -> tuple[int, int] | None:
@@ -581,7 +601,7 @@ class ImageSessionStore:
                     "quality": str(options.get("quality") or "medium"),
                     "output_format": str(options.get("output_format") or ""),
                     "complexity": str(options.get("complexity") or ""),
-                    "resolution": str(options.get("resolution") or "sd"),
+                    "resolution": image_resolution_for_size(options.get("size"), options.get("resolution")),
                     "frame_count": int(options.get("frame_count") or 9),
                     "outputPreset": str(options.get("outputPreset") or "lossless"),
                     "operation": str(options.get("operation") or "generate"),
@@ -1284,12 +1304,13 @@ class ImageSessionStore:
                             "prompt": strip_image_prompt_constraints(round_data.get("prompt") or ""),
                             "originalPrompt": strip_image_prompt_constraints(options.get("originalPrompt") or round_data.get("prompt") or ""),
                             "imageModel": str(options.get("imageModel") or "gpt-image-2"),
+                            "size": str(options.get("size") or ""),
                             "aspectRatio": str(options.get("aspectRatio") or "auto"),
                             "transparency": str(options.get("transparency") or "auto"),
                             "quality": str(options.get("quality") or "medium"),
                             "outputFormat": str(options.get("output_format") or next((item.get("format") for item in round_data.get("items") or [] if item.get("format")), "png")),
                             "complexity": str(options.get("complexity") or "auto"),
-                            "resolution": str(options.get("resolution") or "sd"),
+                            "resolution": image_resolution_for_size(options.get("size"), options.get("resolution")),
                             "frameCount": int(options.get("frame_count") or 9),
                             "operation": str(options.get("operation") or ("edit" if round_data.get("referenceCount") else "generate")),
                             "continuation": bool(options.get("continuation")),
@@ -1515,8 +1536,9 @@ def _number(value: Any, default: float) -> float:
 
 def strip_image_prompt_constraints(prompt: str) -> str:
     clean_prompt = str(prompt or "").strip()
-    legacy_suffix = __import__("re").compile(
-        r"(?:\s*以以下比例要求为准：强制生成比例为\d+:\d+的图片|"
+    legacy_suffix = re.compile(
+        r"(?:\s*\[内部输出约束\][\s\S]*?\[/内部输出约束\]|"
+        r"\s*以以下比例要求为准：强制生成比例为\d+:\d+的图片|"
         r"\s*以以下透明度要求为准：强制生成(?:不透明|透明)背景的图片)$"
     )
     while legacy_suffix.search(clean_prompt):
@@ -1524,35 +1546,12 @@ def strip_image_prompt_constraints(prompt: str) -> str:
     return clean_prompt
 
 
-def image_prompt_with_constraints(prompt: str, options: dict[str, Any]) -> str:
-    requirements = []
-    aspect_ratio = str(options.get("aspectRatio") or "auto")
-    if aspect_ratio != "auto":
-        if aspect_ratio not in {"9:16", "2:3", "3:4", "1:1", "4:3", "3:2", "16:9", "21:9"}:
-            raise ValueError("无效的图片比例")
-        requirements.append(
-            f"最终输出画布的宽高比必须为 {aspect_ratio}（宽:高）。请按此比例重新构图并铺满画布，"
-            "不得使用白边、黑边、边框或在其他比例画布中嵌入目标比例图片来替代。"
-        )
-    transparency = options.get("transparency", "auto")
-    if transparency == "transparent":
-        requirements.append(
-            "最终文件必须为带真实 alpha 通道的透明背景 PNG，主体外背景像素的 alpha 必须为 0，"
-            "主体边缘保留自然抗锯齿与半透明细节。不得以白色、纯色、棋盘格或绘制的网格模拟透明，"
-            "不得添加背景场景、底板或边框。"
-        )
-    elif transparency == "opaque":
-        requirements.append("最终画面必须完全不透明，所有像素 alpha 为 255；背景完整铺满画布，不留透明区域。")
-    clean_prompt = strip_image_prompt_constraints(prompt)
-    if not requirements:
-        return clean_prompt
-    return clean_prompt + "\n\n[内部输出约束]\n以下要求优先于描述或参考图中的冲突设置，必须全部满足；不要将这些指令绘制为画面文字。\n" + "\n".join(requirements) + "\n生成前核对画布比例和背景透明度，仅输出符合要求的图片。\n[/内部输出约束]"
-
-
 def prepare_image_generation(
     prompt: str,
     image_paths: list[str],
     options: dict[str, Any] | None = None,
+    *,
+    app_models: dict[str, Any] | None = None,
 ) -> ImageGenerationRequest:
     clean_prompt = strip_image_prompt_constraints(prompt)
     if not clean_prompt:
@@ -1589,20 +1588,61 @@ def prepare_image_generation(
         raise ValueError("图片编辑至少需要一张参考图")
     output_preset = str(clean_options.get("outputPreset") or "lossless").lower()
     quality = str(clean_options.get("quality") or "medium").lower()
-    requested_size = str(clean_options.get("size") or "auto").lower()
-    transparency = str(clean_options.get("transparency") or "auto").lower()
+    size = str(clean_options.get("size") or "auto").lower()
+    ratio = str(clean_options.get("aspectRatio") or "auto")
+    if ratio != "auto" and ratio not in IMAGE_SIZES_BY_RATIO:
+        raise ValueError("无效的图片比例")
+    if size == "auto":
+        size = IMAGE_SIZES_BY_RATIO.get(ratio, "auto")
+    transparency = str(clean_options.get("background") or clean_options.get("transparency") or "auto").lower()
+    complexity = str(clean_options.get("complexity") or "").lower()
     moderation = str(clean_options.get("moderation") or "low").lower()
     stream = bool(clean_options.get("stream"))
-    partial_images = int(_number(clean_options.get("partialImages"), 0))
+    partial_images = int(_number(clean_options.get("partial_images", clean_options.get("partialImages")), 0))
     if output_preset not in OUTPUT_PRESETS:
         raise ValueError("无效的输出大小")
-    output_format, _jpeg_quality = OUTPUT_PRESETS[output_preset]
-    if quality not in {"low", "medium", "high", "auto"}:
+    fallback_format = OUTPUT_PRESETS[output_preset]
+    if transparency == "transparent" and fallback_format == "jpeg":
+        fallback_format = "png"
+    output_format = str(clean_options.get("output_format") or fallback_format).lower()
+    formats = {"png", "jpeg", "webp", "gif"}
+    svg = (app_models or {}).get("svg") or {}
+    if svg.get("enabled") is True:
+        formats.add("svg")
+    if output_format not in formats:
+        raise ValueError("所选输出格式未开放")
+    if output_format == "svg":
+        if operation != "generate" or valid_paths or clean_options.get("continuation") or _number(clean_options.get("imageCount"), 1) != 1:
+            raise ValueError("SVG 仅支持单张无参考图生成")
+    if output_format in {"svg", "gif"}:
+        stream = False
+        partial_images = 0
+    if transparency == "transparent" and output_format not in {"png", "webp"}:
+        raise ValueError("透明背景需要 PNG 或 WebP")
+    compression = clean_options.get("output_compression")
+    if compression is not None and (type(compression) is not int or not 0 <= compression <= 100 or output_format not in {"jpeg", "webp"}):
+        raise ValueError("压缩质量仅适用于 JPEG 和 WebP，范围为 0 至 100")
+    frames = {}
+    for name, minimum, maximum, message in (
+        ("frame_count", 2, 16, "GIF 帧数须为 2 至 16"),
+        ("frame_duration_ms", 20, 2000, "GIF 每帧时长须为 20 至 2000 毫秒"),
+    ):
+        value = clean_options.get(name)
+        if value is None:
+            continue
+        if output_format != "gif":
+            raise ValueError("帧数和每帧时长仅适用于 GIF")
+        if type(value) is not int or not minimum <= value <= maximum:
+            raise ValueError(message)
+        frames[name] = value
+    if quality not in {"low", "medium", "high", "xhigh", "max", "auto"}:
         raise ValueError("无效的图片质量")
+    if complexity not in {"", "low", "medium", "high"}:
+        raise ValueError("无效的图片复杂度")
     if transparency not in {"auto", "opaque", "transparent"}:
         raise ValueError("无效的透明度模式")
-    if requested_size != "auto":
-        size_match = __import__("re").fullmatch(r"(\d+)x(\d+)", requested_size)
+    if size != "auto":
+        size_match = re.fullmatch(r"([1-9]\d{0,3})x([1-9]\d{0,3})", size)
         if not size_match:
             raise ValueError("图片尺寸必须是 auto 或 WIDTHxHEIGHT")
         width, height = (int(value) for value in size_match.groups())
@@ -1620,17 +1660,35 @@ def prepare_image_generation(
     if not 0 <= partial_images <= 3:
         raise ValueError("流式预览图数量必须在 0 到 3 之间")
 
-    image_model = str(clean_options.get("imageModel") or "gpt-image-2").strip()
-    if image_model not in {"gpt-image-2", "gpt-image-2.5"}:
-        raise ValueError("无效的图片模型")
+    profile = app_models or {}
+    default_model = str(profile.get("defaultImage") or "gpt-image-2")
+    allowed_models = profile.get("imageModels") or IMAGE_MODEL_IDS
+    image_model = str(clean_options.get("imageModel") or default_model).strip()
+    if image_model not in allowed_models:
+        raise ValueError("所选图片模型未开放，请刷新配置后重新选择")
     fields = {
         "model": image_model,
-        "prompt": image_prompt_with_constraints(clean_prompt, clean_options),
+        "prompt": clean_prompt,
+        "size": size,
         "quality": quality,
-        "output_format": "png",
+        "output_format": output_format,
+        "background": transparency,
         "moderation": moderation,
         "stream": stream,
+        **frames,
     }
+    if output_format == "svg":
+        author = {}
+        if svg.get("model"):
+            author["model"] = svg["model"]
+        if svg.get("effort"):
+            author["reasoning"] = {"effort": svg["effort"]}
+        if author:
+            fields["svg"] = author
+    if complexity:
+        fields["complexity"] = complexity
+    if output_format in {"jpeg", "webp"}:
+        fields["output_compression"] = 75
     if stream:
         fields["partial_images"] = partial_images
     return ImageGenerationRequest(
@@ -1640,12 +1698,17 @@ def prepare_image_generation(
         fields=fields,
         output_preset=output_preset,
         output_format=output_format,
-        requested_size=requested_size,
+        requested_size=size,
         transparency=transparency,
         requested_quality=quality,
         stream=stream,
         partial_images=partial_images,
     )
+
+
+class ImageResponseError(ProviderResponseError):
+    def __init__(self, message: str) -> None:
+        super().__init__("incomplete_stream", message)
 
 
 class ImageGenerationClient:
@@ -1667,13 +1730,16 @@ class ImageGenerationClient:
             body_text = exc.read().decode("utf-8", "replace")
         try:
             parsed = json.loads(body_text)
-            message = (parsed.get("error") or {}).get("message") or parsed.get("message")
-        except json.JSONDecodeError:
+            problem = parsed.get("error") or {}
+            message = problem.get("message") or parsed.get("message")
+            code = str(problem.get("code") or problem.get("type") or "upstream_error")
+        except (ValueError, AttributeError, TypeError):
             message = body_text[:200]
-        safe_message = str(message or exc.reason)
-        if secret:
-            safe_message = safe_message.replace(secret, "[REDACTED]")
-        return RuntimeError(f"HTTP {exc.code}: {safe_message}")
+            code = "upstream_error"
+        headers = exc.headers or {}
+        return ProviderResponseError(code, f"HTTP {exc.code}: {safe_text(message or exc.reason, (secret,))}",
+            status=exc.code, headers=headers,
+            request_id=headers.get("x-request-id") or headers.get("x-mirra-diagnostic-id"))
 
     @staticmethod
     def _read_response(
@@ -1681,14 +1747,23 @@ class ImageGenerationClient:
         stream: bool,
         on_partial: Callable[[str, int], None] | None = None,
     ) -> dict[str, Any]:
-        if not stream:
-            return json.loads(response.read().decode("utf-8"))
+        headers = getattr(response, "headers", None) or {}
+        content_type = headers.get("Content-Type", "").partition(";")[0].strip().lower()
+        if content_type == "application/json" or (not stream and content_type != "text/event-stream"):
+            try:
+                result = json.load(response)
+            except (ValueError, http.client.IncompleteRead, OSError) as exc:
+                raise ImageResponseError("上游响应中断或缺损，未收到完整图片") from exc
+            if not isinstance(result, dict):
+                raise ImageResponseError("上游图片响应格式无效")
+            return result
 
         def image_data(payload: Any) -> str:
             if isinstance(payload, dict):
-                direct = payload.get("b64_json")
-                if isinstance(direct, str) and direct:
-                    return direct
+                for key in ("b64_json", "partial_image_b64"):
+                    direct = payload.get(key)
+                    if isinstance(direct, str) and direct:
+                        return direct
                 for key in ("data", "result", "image", "output", "response"):
                     nested = image_data(payload.get(key))
                     if nested:
@@ -1705,27 +1780,34 @@ class ImageGenerationClient:
         last_partial_image = ""
         partial_count = 0
 
-        def process_event(payload: str, sse_event_type: str = "") -> None:
+        def process_event(event: Any, sse_event_type: str) -> None:
             nonlocal completed, completed_image, last_partial_image, partial_count
             event_name = sse_event_type.strip().lower()
             named_completion = event_name in {"completed", "complete", "done"} or event_name.endswith(
                 (".completed", ".complete", ".done")
             )
-            if not payload:
-                return
-            if payload == "[DONE]":
+            if event == "[DONE]":
                 if named_completion:
                     completed = {"type": event_name}
                 return
-            event = json.loads(payload)
+            if not isinstance(event, dict):
+                return
             event_type = str(event.get("type") or event_name).strip().lower()
+            if event_type == "error" or event_type.endswith((".error", ".failed")) or event.get("error"):
+                problem = event.get("error") or (event.get("response") or {}).get("error") or event
+                if not isinstance(problem, dict):
+                    problem = {"message": str(problem)}
+                raise ProviderResponseError(str(problem.get("code") or "upstream_error"),
+                    str(problem.get("message") or "上游生图服务报告了生成失败"),
+                    status=problem.get("status"), headers=headers,
+                    request_id=event.get("request_id") or headers.get("x-request-id") or headers.get("x-mirra-diagnostic-id"))
             encoded_image = image_data(event)
             if event_type.endswith(".partial_image"):
-                partial_count += 1
-                if encoded_image:
+                if encoded_image and completed is None:
+                    partial_count += 1
                     last_partial_image = encoded_image
-                if encoded_image and on_partial is not None:
-                    on_partial(encoded_image, partial_count)
+                    if on_partial is not None:
+                        on_partial(encoded_image, partial_count)
                 return
             is_completed = event_type in {"completed", "complete", "done"} or event_type.endswith(
                 (".completed", ".complete", ".done")
@@ -1739,40 +1821,50 @@ class ImageGenerationClient:
                 completed_image = encoded_image
 
         pending_event_type = ""
-        pending_data: list[str] = []
+        pending_data: list[bytes] = []
+        malformed_event = False
+        transport_error = None
 
-        def flush_pending() -> None:
-            nonlocal pending_event_type, pending_data
-            if pending_data:
-                process_event("\n".join(pending_data), pending_event_type)
+        def flush_pending(*, boundary: bool) -> None:
+            nonlocal pending_event_type, malformed_event
+            if not pending_data:
+                if boundary:
+                    pending_event_type = ""
+                return
+            payload = b"\n".join(pending_data)
+            try:
+                event = "[DONE]" if payload.strip() == b"[DONE]" else json.loads(payload)
+            except ValueError:
+                if not boundary:
+                    return
+                malformed_event = True
+            else:
+                process_event(event, pending_event_type)
+            pending_data.clear()
             pending_event_type = ""
-            pending_data = []
 
-        for raw_line in response:
-            line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
-            if not line:
-                flush_pending()
-                continue
-            if line.startswith(":"):
-                continue
-            if line.startswith("event:"):
-                pending_event_type = line[6:].strip()
-                continue
-            if line.startswith("data:"):
-                pending_data.append(line[5:].lstrip())
-                try:
-                    flush_pending()
-                except json.JSONDecodeError:
-                    continue
-                continue
-            flush_pending()
-            if line.lstrip().startswith("{"):
-                process_event(line.strip())
-        flush_pending()
-        if completed is not None and not completed_image and last_partial_image:
-            completed_image = last_partial_image
+        try:
+            for raw_line in response:
+                line = raw_line.rstrip(b"\r\n")
+                if not line:
+                    flush_pending(boundary=True)
+                elif line.startswith(b"event:"):
+                    flush_pending(boundary=True)
+                    pending_event_type = line[6:].strip().decode("utf-8", "replace")
+                elif line.startswith(b"data:"):
+                    pending_data.append(line[5:].lstrip())
+                    flush_pending(boundary=False)
+                elif line.lstrip().startswith(b"{"):
+                    flush_pending(boundary=True)
+                    pending_data.append(line.strip())
+                    flush_pending(boundary=True)
+        except (http.client.IncompleteRead, OSError) as exc:
+            transport_error = exc
+        flush_pending(boundary=True)
         if completed is None or not completed_image:
-            raise RuntimeError("流式生图接口未返回最终图片")
+            if transport_error is not None or malformed_event:
+                raise ImageResponseError("上游图片流中断或缺损，未收到完整成图") from transport_error
+            raise ImageResponseError("流式生图接口未返回最终图片")
         return {
             "data": [{"b64_json": completed_image}],
             "output_format": completed.get("output_format"),
@@ -1790,6 +1882,7 @@ class ImageGenerationClient:
         fields: dict[str, Any],
         timeout: int = 600,
         on_partial: Callable[[str, int], None] | None = None,
+        task_context: Any = None,
     ) -> dict[str, Any]:
         url = f"{base_url.rstrip('/')}/images/generations"
         request_id = new_network_request_id()
@@ -1798,6 +1891,7 @@ class ImageGenerationClient:
         request_details = {
             "operation": "generation",
             "model": str(fields.get("model") or ""),
+            "size": str(fields.get("size") or ""),
             "quality": str(fields.get("quality") or ""),
             "outputFormat": str(fields.get("output_format") or ""),
             "moderation": str(fields.get("moderation") or ""),
@@ -1818,9 +1912,15 @@ class ImageGenerationClient:
             method="POST",
         )
         try:
-            response_context = open_request(request, timeout=timeout, opener=cls._opener().open)
+            request_details.update(transport_details(request))
+            response_context = open_request(request, timeout=timeout, opener=cls._opener().open,
+                                            **({"task_context": task_context} if task_context is not None else {}))
         except urllib.error.HTTPError as exc:
-            response_body = exc.read().decode("utf-8", "replace")
+            try:
+                response_body = exc.read().decode("utf-8", "replace")
+            finally:
+                if task_context is not None:
+                    task_context.check_cancelled()
             log_network_error(
                 "image_generation_http_error",
                 request_id=request_id,
@@ -1836,7 +1936,8 @@ class ImageGenerationClient:
                 secrets=(secret,),
             )
             error = cls._error(exc, secret, response_body)
-            raise RuntimeError(f"{error}（诊断 ID: {request_id}）") from None
+            error.request_id = error.request_id or request_id
+            raise error from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             log_network_error(
                 "image_generation_connect_error",
@@ -1857,12 +1958,19 @@ class ImageGenerationClient:
         response_status = getattr(response_context, "status", None)
         try:
             with response_context as response:
-                return cls._read_response(
-                    response,
-                    bool(fields.get("stream")),
-                    on_partial,
-                )
+                if task_context is not None:
+                    task_context.add_response(response)
+                try:
+                    result = cls._read_response(response, bool(fields.get("stream")), on_partial)
+                    if task_context is not None:
+                        task_context.check_cancelled()
+                    return result
+                finally:
+                    if task_context is not None:
+                        task_context.remove_response(response)
         except Exception as exc:
+            if task_context is not None:
+                task_context.check_cancelled()
             log_network_error(
                 "image_generation_stream_error",
                 request_id=request_id,
@@ -1876,6 +1984,11 @@ class ImageGenerationClient:
                 details=request_details,
                 secrets=(secret,),
             )
+            if isinstance(exc, ProviderResponseError):
+                exc.request_id = exc.request_id or request_id
+                exc.headers = exc.headers or response_headers or {}
+                exc.status_code = exc.status_code or response_status
+                raise
             if not isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
                 raise
             raise RuntimeError(
@@ -1891,6 +2004,7 @@ class ImageGenerationClient:
         fields: dict[str, Any],
         timeout: int = 600,
         on_partial: Callable[[str, int], None] | None = None,
+        task_context: Any = None,
     ) -> dict[str, Any]:
         url = f"{base_url.rstrip('/')}/images/edits"
         request_id = new_network_request_id()
@@ -1925,8 +2039,11 @@ class ImageGenerationClient:
         request_details = {
             "operation": "edit",
             "model": str(fields.get("model") or ""),
+            "size": str(fields.get("size") or ""),
+            "size": str(fields.get("size") or ""),
             "quality": str(fields.get("quality") or ""),
             "outputFormat": str(fields.get("output_format") or ""),
+            "background": str(fields.get("background") or ""),
             "moderation": str(fields.get("moderation") or ""),
             "stream": bool(fields.get("stream")),
             "partialImages": int(fields.get("partial_images") or 0),
@@ -1946,9 +2063,15 @@ class ImageGenerationClient:
             method="POST",
         )
         try:
-            response_context = open_request(request, timeout=timeout, opener=ImageGenerationClient._opener().open)
+            request_details.update(transport_details(request))
+            response_context = open_request(request, timeout=timeout, opener=ImageGenerationClient._opener().open,
+                                            **({"task_context": task_context} if task_context is not None else {}))
         except urllib.error.HTTPError as exc:
-            response_body = exc.read().decode("utf-8", "replace")
+            try:
+                response_body = exc.read().decode("utf-8", "replace")
+            finally:
+                if task_context is not None:
+                    task_context.check_cancelled()
             log_network_error(
                 "image_edit_http_error",
                 request_id=request_id,
@@ -1964,7 +2087,8 @@ class ImageGenerationClient:
                 secrets=(secret,),
             )
             error = ImageGenerationClient._error(exc, secret, response_body)
-            raise RuntimeError(f"{error}（诊断 ID: {request_id}）") from None
+            error.request_id = error.request_id or request_id
+            raise error from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             log_network_error(
                 "image_edit_connect_error",
@@ -1985,12 +2109,19 @@ class ImageGenerationClient:
         response_status = getattr(response_context, "status", None)
         try:
             with response_context as response:
-                return ImageGenerationClient._read_response(
-                    response,
-                    bool(fields.get("stream")),
-                    on_partial,
-                )
+                if task_context is not None:
+                    task_context.add_response(response)
+                try:
+                    result = ImageGenerationClient._read_response(response, bool(fields.get("stream")), on_partial)
+                    if task_context is not None:
+                        task_context.check_cancelled()
+                    return result
+                finally:
+                    if task_context is not None:
+                        task_context.remove_response(response)
         except Exception as exc:
+            if task_context is not None:
+                task_context.check_cancelled()
             log_network_error(
                 "image_edit_stream_error",
                 request_id=request_id,
@@ -2004,6 +2135,11 @@ class ImageGenerationClient:
                 details=request_details,
                 secrets=(secret,),
             )
+            if isinstance(exc, ProviderResponseError):
+                exc.request_id = exc.request_id or request_id
+                exc.headers = exc.headers or response_headers or {}
+                exc.status_code = exc.status_code or response_status
+                raise
             if not isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
                 raise
             raise RuntimeError(
@@ -2023,19 +2159,26 @@ class ImageGenerationService:
         request: ImageGenerationRequest,
         output_dir: Path,
         on_partial: Callable[[dict[str, Any]], None] | None = None,
+        task_context: Any = None,
     ) -> dict[str, Any]:
         output_dir.mkdir(parents=True, exist_ok=True)
         generation_id = uuid.uuid4().hex[:12]
+        fields = request.fields
+        if base_url.rstrip("/") == "https://api.openai.com/v1" and fields["model"] == "gpt-image-2.5":
+            fields = {**fields, "model": "gpt-image-2.5-flare"}
 
         def persist_partial(image_data: str, partial_index: int) -> None:
             try:
                 partial_bytes = base64.b64decode(image_data, validate=True)
                 with Image.open(io.BytesIO(partial_bytes)) as partial_image:
                     width, height = partial_image.size
+                    suffix = IMAGE_EXTENSIONS.get(partial_image.format)
                     partial_image.verify()
+                if suffix is None:
+                    return
                 partial_dir = output_dir / "partials"
                 partial_dir.mkdir(parents=True, exist_ok=True)
-                partial_path = partial_dir / f"{generation_id}-{partial_index}.png"
+                partial_path = partial_dir / f"{generation_id}-{partial_index}{suffix}"
                 partial_path.write_bytes(partial_bytes)
                 if on_partial is not None:
                     on_partial(
@@ -2056,20 +2199,27 @@ class ImageGenerationService:
             except (binascii.Error, OSError, ValueError):
                 return
 
+        call_options: dict[str, Any] = {"on_partial": persist_partial}
+        client_method = self.client.edit_images if request.image_paths else self.client.generate_image
+        parameters = inspect.signature(client_method).parameters
+        if task_context is not None and ("task_context" in parameters or any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())):
+            call_options["task_context"] = task_context
+        if task_context is not None:
+            task_context.check_cancelled()
         if request.image_paths:
             response = self.client.edit_images(
                 base_url,
                 secret,
                 request.image_paths,
-                request.fields,
-                on_partial=persist_partial,
+                fields,
+                **call_options,
             )
         else:
             response = self.client.generate_image(
                 base_url,
                 secret,
-                request.fields,
-                on_partial=persist_partial,
+                fields,
+                **call_options,
             )
         image_data = ((response.get("data") or [{}])[0] or {}).get("b64_json")
         if not image_data:
@@ -2079,44 +2229,36 @@ class ImageGenerationService:
         except binascii.Error as exc:
             raise RuntimeError("生图接口返回了无效图片数据") from exc
 
-        with Image.open(io.BytesIO(result_bytes)) as source_image:
-            source_image.load()
-            result_image = source_image.copy()
-            width, height = result_image.size
-
-        save_as_png = request.output_format == "png" or request.transparency == "transparent"
-        suffix = ".png" if save_as_png else ".jpg"
+        if request.output_format == "svg":
+            dimensions = svg_size(result_bytes)
+            if dimensions is None:
+                raise RuntimeError("生图接口未返回 SVG 内容")
+            width, height = dimensions
+            suffix, image_format = ".svg", "svg"
+        else:
+            with Image.open(io.BytesIO(result_bytes)) as source_image:
+                if request.output_format == "gif" and (source_image.format != "GIF" or source_image.n_frames < 2):
+                    raise RuntimeError("生图接口未返回 GIF 动图")
+                width, height = source_image.size
+                suffix = IMAGE_EXTENSIONS.get(source_image.format)
+                image_format = str(source_image.format).lower()
+                source_image.verify()
+        if suffix is None:
+            raise RuntimeError("生图接口返回了不支持的图片格式")
         output_path = output_dir / (
             f"image-generation-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}{suffix}"
         )
-        output_buffer = io.BytesIO()
-        if save_as_png:
-            result_image.save(output_buffer, format="PNG")
-        else:
-            if result_image.mode in {"RGBA", "LA"} or "transparency" in result_image.info:
-                rgba_image = result_image.convert("RGBA")
-                flattened = Image.new("RGB", rgba_image.size, "white")
-                flattened.paste(rgba_image, mask=rgba_image.getchannel("A"))
-                result_image = flattened
-            else:
-                result_image = result_image.convert("RGB")
-            result_image.save(
-                output_buffer,
-                format="JPEG",
-                quality=OUTPUT_PRESETS[request.output_preset][1],
-                optimize=True,
-            )
-        output_bytes = output_buffer.getvalue()
-        output_path.write_bytes(output_bytes)
+        preview_uri = image_preview_data_url(result_bytes)
+        output_path.write_bytes(result_bytes)
         return {
             "ok": True,
             "path": str(output_path),
             "uri": output_path.as_uri(),
-            "previewUri": image_preview_data_url(output_bytes),
+            "previewUri": preview_uri,
             "width": width,
             "height": height,
-            "sizeBytes": len(output_bytes),
-            "format": "png" if save_as_png else request.output_format,
+            "sizeBytes": len(result_bytes),
+            "format": image_format,
             "outputPreset": request.output_preset,
             "quality": response.get("quality") or request.fields["quality"],
             "requestedQuality": request.requested_quality,
@@ -2126,6 +2268,7 @@ class ImageGenerationService:
             "partialImagesRequested": request.partial_images if request.stream else 0,
             "partialImagesReceived": int(response.get("partial_images_received") or 0),
             "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
+            "svgUsage": response.get("svg_usage") if isinstance(response.get("svg_usage"), dict) else {},
             "referenceCount": len(request.image_paths),
             "operation": request.operation,
             "transportOperation": "edit" if request.image_paths else "generate",

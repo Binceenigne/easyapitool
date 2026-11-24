@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .common import *
 from .network_log import log_network_error, new_network_request_id
-from .transport import open_request, is_mirra_request, connection_was_refused, UnsentConnectionError
+from .transport import open_request, is_mirra_request, connection_was_refused, UnsentConnectionError, transport_details
 
 
 class EasyClinClient:
@@ -22,18 +22,32 @@ class EasyClinClient:
             body = exc.read().decode("utf-8", "replace")
             try:
                 parsed = json.loads(body)
-                message = (parsed.get("error") or {}).get("message") or parsed.get("message")
+                error = parsed.get("error") if isinstance(parsed, dict) else None
+                message = (error.get("message") if isinstance(error, dict) else error) or (
+                    parsed.get("detail") or parsed.get("message") if isinstance(parsed, dict) else None
+                )
             except json.JSONDecodeError:
                 message = body[:200]
+            if message and secret:
+                message = str(message).replace(secret, "[API Key]")
             raise RuntimeError(f"HTTP {exc.code}: {message or exc.reason}") from None
         except (urllib.error.URLError, TimeoutError) as exc:
             raise RuntimeError(f"网络请求失败: {exc.reason if hasattr(exc, 'reason') else exc}") from None
 
     def fetch(self, base_url: str, secret: str) -> tuple[dict[str, Any], list[str] | None]:
-        usage = self.get_json(base_url, secret, "/usage?days=30")
+        official = base_url.rstrip("/") == OPENAI_API_URL
+        usage = None
+        if not official:
+            try:
+                usage = self.get_json(base_url, secret, "/usage?days=30")
+            except RuntimeError as exc:
+                if is_mirra_api_url(base_url) or not str(exc).startswith(("HTTP 404:", "HTTP 405:", "HTTP 501:")):
+                    raise
         try:
             models = self.get_json(base_url, secret, "/models")
         except RuntimeError:
+            if usage is None:
+                raise
             return usage, None
         model_ids: list[str] = []
         seen: set[str] = set()
@@ -43,7 +57,7 @@ class EasyClinClient:
             if model_id and model_id not in seen:
                 seen.add(model_id)
                 model_ids.append(model_id)
-        return usage, model_ids
+        return (usage or {"isValid": True, "status": "active", "mode": "official"}), model_ids
 
     @staticmethod
     def _response_output_text(payload: Any) -> str:
@@ -87,6 +101,7 @@ class EasyClinClient:
         on_completed: Any = None,
         allow_empty_text: bool = False,
         reasoning_mode: str | None = None,
+        task_context: Any = None,
     ) -> str:
         url = f"{base_url.rstrip('/')}/responses"
         payload = {
@@ -136,12 +151,20 @@ class EasyClinClient:
         request.add_unredirected_header("Authorization", f"Bearer {secret}")
         if reasoning_mode:
             request.add_header("X-Mirra-Reasoning-Mode", str(reasoning_mode))
+        request_details.update(transport_details(request))
         for attempt in range(2):
+            if task_context is not None:
+                task_context.check_cancelled()
             try:
-                response_context = open_request(request, timeout=timeout)
+                response_context = open_request(request, timeout=timeout,
+                                                **({"task_context": task_context} if task_context is not None else {}))
                 break
             except urllib.error.HTTPError as exc:
-                response_body = exc.read().decode("utf-8", "replace")
+                try:
+                    response_body = exc.read().decode("utf-8", "replace")
+                finally:
+                    if task_context is not None:
+                        task_context.check_cancelled()
                 log_network_error(
                     "responses_http_error",
                     request_id=request_id,
@@ -276,6 +299,8 @@ class EasyClinClient:
                     raise RuntimeError("Responses 接口未返回文本")
                 return text
         except Exception as exc:
+            if task_context is not None:
+                task_context.check_cancelled()
             log_network_error(
                 "responses_stream_error",
                 request_id=request_id,
@@ -295,3 +320,6 @@ class EasyClinClient:
             raise RuntimeError(
                 f"Responses 网络请求失败: {reason}（诊断 ID: {request_id}）"
             ) from None
+        finally:
+            if task_context is not None:
+                task_context.remove_response(response_context)

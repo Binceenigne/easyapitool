@@ -1,3 +1,14 @@
+        function applyImageOptionSnapshot(set, metadata) {
+            if (metadata.size || metadata.requestedSize) set.size = metadata.size || metadata.requestedSize;
+            if (metadata.resolution || metadata.size || metadata.requestedSize) {
+                set.resolution = imageResolutionForSize(set.size, metadata.resolution || set.resolution);
+            }
+            if (metadata.quality) set.quality = metadata.quality;
+            if (metadata.complexity !== undefined) set.complexity = metadata.complexity || 'auto';
+            if (metadata.outputFormat || metadata.output_format) set.outputFormat = metadata.outputFormat || metadata.output_format;
+            if (metadata.frameCount || metadata.frame_count) set.frameCount = Number(metadata.frameCount || metadata.frame_count);
+        }
+
         function imageRequestErrorDetails(value) {
             if (!value || typeof value !== 'object') return null;
             const text = input => String(input || '').replace(/\bsk-[A-Za-z0-9_-]{8,}/gi, '[API Key]')
@@ -99,6 +110,7 @@
                     renderImageGenerationSets();
                 }, Math.min(2147483647, retry.delayMs));
             } else if (event.type === 'set_started') {
+                applyImageOptionSnapshot(set, event);
                 set.requestedCount = Number(event.requestedCount) || set.requestedCount;
                 set.imageModel = event.imageModel || set.imageModel;
                 set.aspectRatio = event.aspectRatio || set.aspectRatio;
@@ -402,6 +414,7 @@
             set.parentSetId = result.parentSetId || set.parentSetId;
             set.roundNumber = Number(result.roundNumber) || set.roundNumber;
             set.imageModel = result.imageModel || set.imageModel;
+            applyImageOptionSnapshot(set, result);
             set.aspectRatio = result.aspectRatio || set.aspectRatio;
             if (['auto', 'opaque', 'transparent'].includes(result.transparency)) set.transparency = result.transparency;
             set.originalPrompt = result.originalPrompt || set.originalPrompt || result.prompt || '';
@@ -524,6 +537,12 @@
             setImageTransparency(set.transparency || 'auto', false);
             setImageModel(set.imageModel || 'gpt-image-2', false);
             setImageAspectRatio(set.aspectRatio || 'auto', false);
+            setImageQuality(set.quality || 'medium', false);
+            if (set.complexity) setImageComplexity(set.complexity, false);
+            if (set.outputFormat) setImageOutputFormat(set.outputFormat, false);
+            setImageFrameCount(set.frameCount ?? 9, false);
+            const savedResolution = imageResolutionForSize(set.size, set.resolution);
+            if (savedResolution) setImageResolution(savedResolution, false);
             setImageWebSearchEnabled(set.webSearchEnabled === true, false);
             setImageEditSessionUi(true);
             window.imageEditState.files = [];
@@ -870,7 +889,7 @@
                 );
             }, { passive: false });
             canvas.addEventListener('pointerdown', event => {
-                if (event.pointerType !== 'touch' && event.button !== 0) return;
+                if (event.button !== 0) return;
                 const viewer = window.imageEditState.viewer;
                 if (event.pointerType === 'touch') {
                     viewer.touchPointers = viewer.touchPointers || new Map();
@@ -879,13 +898,8 @@
                         const points = [...viewer.touchPointers.values()];
                         viewer.pinchDistance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
                         viewer.dragging = false;
-                    } else {
-                        viewer.dragging = true;
-                        viewer.pointerX = event.clientX;
-                        viewer.pointerY = event.clientY;
                     }
                     canvas.setPointerCapture(event.pointerId);
-                    canvas.classList.add('is-dragging');
                     return;
                 }
                 viewer.dragging = true;
@@ -897,7 +911,6 @@
             canvas.addEventListener('pointermove', event => {
                 const viewer = window.imageEditState.viewer;
                 if (event.pointerType === 'touch' && viewer.touchPointers?.has(event.pointerId)) {
-                    const previous = viewer.touchPointers.get(event.pointerId);
                     viewer.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
                     if (viewer.touchPointers.size >= 2) {
                         const points = [...viewer.touchPointers.values()];
@@ -910,13 +923,6 @@
                             );
                         }
                         viewer.pinchDistance = distance;
-                    } else if (previous) {
-                        viewer.dragging = true;
-                        viewer.x += event.clientX - previous.x;
-                        viewer.y += event.clientY - previous.y;
-                        viewer.pointerX = event.clientX;
-                        viewer.pointerY = event.clientY;
-                        applyImageViewerTransform();
                     }
                     return;
                 }
@@ -933,15 +939,6 @@
                     viewer.touchPointers.delete(event.pointerId);
                     viewer.pinchDistance = 0;
                     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-                    const remaining = [...viewer.touchPointers.values()][0];
-                    if (remaining) {
-                        viewer.dragging = true;
-                        viewer.pointerX = remaining.x;
-                        viewer.pointerY = remaining.y;
-                    } else {
-                        viewer.dragging = false;
-                        canvas.classList.remove('is-dragging');
-                    }
                     return;
                 }
                 viewer.dragging = false;
@@ -1017,6 +1014,7 @@
             const requestOptions = {
                 imageModel: window.imageEditState.imageModel,
                 size: document.getElementById('imageEditSize').value,
+                resolution: window.imageEditState.resolution,
                 aspectRatio,
                 background: transparency,
                 quality,
@@ -1028,8 +1026,9 @@
                 requestId,
                 sessionId: session?.sessionId || requestId,
                 parentSetId: session?.setId || '',
-                roundNumber: session ? session.roundNumber + 1 : 1,
                 continuation: Boolean(session),
+                aspectRatio,
+                transparency,
                 ...reasoningOptions,
                 reasoningDepth: window.imageEditState.reasoningAdvanced
                     ? window.imageEditState.reasoningAdvancedEffort
@@ -1046,6 +1045,12 @@
             }, 510);
             createImageGenerationSet(requestId, imageCount, finalPrompt, {
                 imageModel: requestOptions.imageModel,
+                size: requestOptions.size,
+                resolution: requestOptions.resolution,
+                quality,
+                complexity: complexity || 'auto',
+                outputFormat,
+                frameCount,
                 aspectRatio,
                 transparency,
                 sessionId: session?.sessionId || requestId,
@@ -1090,9 +1095,6 @@
                 promptInput.value = '';
                 document.getElementById('imagePromptModalTextarea').value = '';
                 resizeImagePrompt();
-            }
-            if (isAndroidPlatform() && window.matchMedia('(max-width: 600px)').matches) {
-                setWorkspaceMode('image-edit', true);
             }
             let finalStatus = '';
             try {

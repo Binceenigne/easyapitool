@@ -880,6 +880,8 @@
                     : set.status === 'failed'
                         ? `第 ${set.roundNumber || 1} 轮 · 生成失败 · 保留 ${completedCount} 张`
                         : `第 ${set.roundNumber || 1} 轮 · ${completedCount}/${set.requestedCount} 张 · 已保存`;
+                meta.textContent += ' · ' + String(set.outputFormat || 'png').toUpperCase();
+                if (/^\d+x\d+$/.test(String(set.size || ''))) meta.textContent += ' · ' + set.size.replace('x', '×');
                 meta.textContent += ' · ' + (IMAGE_MODEL_LABELS[set.imageModel] || set.imageModel || 'GPT Image 2.0');
                 heading.append(titleRow, meta);
                 const actions = document.createElement('div');

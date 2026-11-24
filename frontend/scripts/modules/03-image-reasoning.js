@@ -1055,6 +1055,15 @@
             return tool;
         }
 
+        function imageResolutionForSize(size, selected = '') {
+            const match = /^([1-9]\d{0,3})x([1-9]\d{0,3})$/i.exec(String(size || ''));
+            if (match) {
+                const longest = Math.max(Number(match[1]), Number(match[2]));
+                return longest > 2560 ? 'uhd' : longest > 1536 ? 'hd' : 'sd';
+            }
+            return ['sd', 'hd', 'uhd'].includes(selected) ? selected : '';
+        }
+
         function createImageGenerationSet(requestId, requestedCount, prompt, metadata = {}) {
             let set = window.imageEditState.resultSets.find(item => item.setId === requestId);
             if (set) return set;
@@ -1084,6 +1093,12 @@
                 prompt: visibleImagePrompt(prompt),
                 originalPrompt: visibleImagePrompt(metadata.originalPrompt || prompt),
                 imageModel: metadata.imageModel || 'gpt-image-2',
+                size: String(metadata.size || metadata.requestedSize || ''),
+                resolution: imageResolutionForSize(metadata.size || metadata.requestedSize, metadata.resolution),
+                quality: metadata.quality || metadata.requestedQuality || 'medium',
+                complexity: metadata.complexity || 'auto',
+                outputFormat: metadata.outputFormat || metadata.output_format || 'png',
+                frameCount: Number(metadata.frameCount || metadata.frame_count) || 9,
                 aspectRatio: metadata.aspectRatio || 'auto',
                 transparency: ['auto', 'opaque', 'transparent'].includes(metadata.transparency)
                     ? metadata.transparency

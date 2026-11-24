@@ -6,7 +6,8 @@ from ..usage import *
 from ..web_search import WebSearchService
 from ..store import Store
 from ..client import EasyClinClient
-from ..transport import UnsentConnectionError
+from ..image_editor import image_resolution_for_size
+from ..transport import UnsentConnectionError, abort_response
 from mirra_agents import AgentRequest, AgentRunFailure, run_agent
 from mirra_agents.retry import AgentCancelled, failure_details, max_attempts, retry_sync
 from ..prompt_targets import (format_prompt_instructions, choose_reasoning_pair, stored_model_profile, apply_reasoning_profile)
@@ -27,12 +28,12 @@ class ImageTaskContext:
 
     def add_response(self, response: Any) -> None:
         with self._response_lock:
-            if self.cancel_event.is_set():
-                try:
-                    response.close()
-                finally:
-                    raise ImageGenerationCancelled("生成已停止")
-            self._responses[id(response)] = response
+            cancelled = self.cancel_event.is_set()
+            if not cancelled:
+                self._responses[id(response)] = response
+        if cancelled:
+            abort_response(response)
+            raise ImageGenerationCancelled("生成已停止")
 
     def remove_response(self, response: Any) -> None:
         with self._response_lock:
@@ -42,11 +43,13 @@ class ImageTaskContext:
         self.cancel_event.set()
         with self._response_lock:
             responses = tuple(self._responses.values())
-        for response in responses:
-            try:
-                response.close()
-            except Exception:
-                pass
+            self._responses.clear()
+        closers = [abort_response(response) for response in responses]
+        # Give already-unblocked cleanup one small shared opportunity to finish.
+        # A slow/foreign close must never hold up the stop RPC.
+        deadline = time.monotonic() + .01
+        for closer in closers:
+            closer.join(max(0, deadline - time.monotonic()))
 
 
 class ImageReasoningMixin:
@@ -747,6 +750,8 @@ class ImageReasoningMixin:
         clean_options.update(
             {
                 "reasoningMode": reasoning_mode,
+                "size": request.requested_size,
+                "resolution": image_resolution_for_size(request.requested_size, clean_options.get("resolution")),
                 "reasoningModel": reasoning_model,
                 "reasoningEffort": reasoning_effort,
                 "reasoningDepth": (
@@ -864,6 +869,12 @@ class ImageReasoningMixin:
             roundNumber=int(round_data["roundNumber"]),
             originalPrompt=original_prompt,
             imageModel=request.fields["model"],
+            size=request.requested_size,
+            resolution=clean_options["resolution"],
+            quality=request.requested_quality,
+            complexity=str(clean_options.get("complexity") or "auto"),
+            outputFormat=request.output_format,
+            frameCount=int(clean_options.get("frame_count") or 9),
             aspectRatio=str(clean_options.get("aspectRatio") or "auto"),
             transparency=str(clean_options.get("transparency") or "auto"),
             reasoningMode=reasoning_mode,
@@ -973,6 +984,12 @@ class ImageReasoningMixin:
             "prompt": request.prompt,
             "originalPrompt": original_prompt,
             "imageModel": request.fields["model"],
+            "size": request.requested_size,
+            "resolution": clean_options["resolution"],
+            "quality": request.requested_quality,
+            "complexity": str(clean_options.get("complexity") or "auto"),
+            "outputFormat": request.output_format,
+            "frameCount": int(clean_options.get("frame_count") or 9),
                 "aspectRatio": str(clean_options.get("aspectRatio") or "auto"),
                 "transparency": str(clean_options.get("transparency") or "auto"),
             "reasoningMode": reasoning_mode,
