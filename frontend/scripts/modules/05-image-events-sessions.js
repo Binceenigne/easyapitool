@@ -72,6 +72,7 @@
                     event
                 );
             if (eventRequestId) set.requestId = eventRequestId;
+            syncReasoningSupplements(set, event);
             confirmImageSubmission(eventRequestId || set.requestId);
             if (event.type === 'request_retry') {
                 const retry = { stage: event.stage || 'image', attempt: Math.max(1, Number(event.attempt) || 1),
@@ -88,7 +89,10 @@
                         Object.assign(item, { uri: '', previewUri: '', fullUri: '', path: '', result: null,
                             revealFrames: [], partialIndex: 0, originalLoadAttempted: false });
                     }
-                } else if (!item) set.reasoningStatus = 'running';
+                } else if (!item) {
+                    closeReasoningTools(set, 'retrying', { turn: event.turn, reason: '本次请求中断，正在重试' });
+                    set.reasoningStatus = 'running';
+                }
                 if (retry.waiting) setTimeout(() => {
                     if (target.retry !== retry) return;
                     retry.waiting = false;
@@ -143,6 +147,7 @@
             } else if (event.type === 'react_turn_started') {
                 const turn = reasoningTurnByNumber(set, event.turn);
                 if (event.reset) {
+                    closeReasoningTools(set, 'retrying', { turn: event.turn, reason: '本次请求中断，正在重试' });
                     turn.text = '';
                     set.reasoningSummary = event.summary || '';
                 }
@@ -150,6 +155,7 @@
                 turn.status = 'running';
                 turn.startedAt ||= Date.now();
                 turn.completedAt = 0;
+                turn.attempt = Math.max(1, Number(event.attempt) || turn.attempt || 1);
                 set.reasoningStatus = 'running';
             } else if (event.type === 'react_turn_delta') {
                 set.retry = null;
@@ -165,29 +171,28 @@
                 turn.text = event.text || turn.text;
                 turn.status = 'completed';
                 turn.completedAt ||= Date.now();
+                closeReasoningTools(set, 'interrupted', { turn: turn.turn });
                 set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage);
             } else if (event.type === 'react_tool_started') {
                 const turn = reasoningTurnByNumber(set, event.turn);
-                turn.tools.push({
-                    callId: event.callId || `${event.tool}-${Date.now()}`,
-                    name: event.tool || '',
-                    arguments: event.arguments || {},
-                    status: 'running',
-                    resultCount: 0
-                });
-                if (['search_web', 'search_visual_references'].includes(event.tool)) {
+                const tool = upsertReasoningTool(turn, event);
+                if (!tool.status || tool.status === 'running') {
+                    tool.status = set.reasoningStatus === 'running' ? 'running' : 'interrupted';
+                    tool.startedAt ||= Date.now();
+                }
+                if (['web_search', 'search_web', 'search_visual_references'].includes(event.tool)) {
                     set.webSearchStatus = 'running';
                 }
-            } else if (event.type === 'react_tool_completed' || event.type === 'react_tool_failed') {
+            } else if (['react_tool_completed', 'react_tool_failed', 'react_tool_cancelled'].includes(event.type)) {
                 const turn = reasoningTurnByNumber(set, event.turn);
-                const tool = turn.tools.find(item => item.callId === event.callId)
-                    || [...turn.tools].reverse().find(item => item.name === event.tool && item.status === 'running');
-                if (tool) {
-                    tool.status = event.type === 'react_tool_failed' ? 'failed' : 'completed';
-                    tool.resultCount = Number(event.resultCount) || 0;
-                    tool.error = event.error || '';
-                }
-                if (['search_web', 'search_visual_references'].includes(event.tool)) {
+                const tool = upsertReasoningTool(turn, event);
+                tool.status = event.type === 'react_tool_cancelled' || event.cancelled ? 'cancelled'
+                    : event.retrying ? 'interrupted' : event.type === 'react_tool_failed' ? 'failed' : 'completed';
+                tool.resultCount = Number(event.resultCount) || Number(event.sources?.length) || 0;
+                tool.error = typeof event.error === 'object' ? event.error.message || event.error.cause || '' : event.error || '';
+                tool.completedAt ||= Date.now();
+                if (event.retrying) tool.interruptedReason = '本次请求中断，正在重试';
+                if (['web_search', 'search_web', 'search_visual_references'].includes(event.tool)) {
                     set.webSearchStatus = event.type === 'react_tool_failed' ? 'failed' : 'completed';
                 }
             } else if (event.type === 'react_visual_results') {
@@ -212,6 +217,7 @@
                 set.reasoningDurationMs = Math.max(0, Number(event.reasoningDurationMs) || set.reasoningDurationMs);
                 set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage);
                 set.reasoningCompletedAt ||= Date.now();
+                closeReasoningTools(set);
                 reasoningTurnsForSet(set).forEach(turn => {
                     if (turn.status === 'running') {
                         turn.status = 'completed';
@@ -245,6 +251,7 @@
                 set.errorDetails = imageRequestErrorDetails(event.errorDetails);
                 set.reasoningSummary = event.error || '思维处理失败';
                 set.reasoningCompletedAt ||= Date.now();
+                closeReasoningTools(set, 'failed', { reason: set.reasoningSummary });
                 const turn = activeReasoningTurn(set) || reasoningTurnByNumber(set, 1);
                 turn.status = 'failed';
                 turn.text = set.reasoningSummary;
@@ -308,6 +315,7 @@
                 set.errorDetails = imageRequestErrorDetails(event.errorDetails) || set.errorDetails;
                 set.items.forEach(item => { item.retry = null; });
                 if (set.reasoningStatus === 'running') set.reasoningStatus = event.errorDetails?.stage === 'agent' ? 'failed' : 'completed';
+                closeReasoningTools(set, set.reasoningStatus);
                 set.reasoningUsage = normalizeReasoningUsage(event.reasoningUsage || set.reasoningUsage);
                 if (Array.isArray(event.webReferences)) {
                     set.webReferences = event.webReferences.map(reference => ({ ...reference }));
@@ -349,6 +357,7 @@
                 set.retry = null;
                 set.reasoningStatus = set.reasoningStatus === 'running' ? 'cancelled' : set.reasoningStatus;
                 set.reasoningCompletedAt ||= Date.now();
+                closeReasoningTools(set, 'cancelled', { reason: event.error || '任务已停止' });
                 set.items.forEach(item => {
                     if (item.status === 'completed') return;
                     item.status = 'cancelled';
@@ -379,6 +388,7 @@
                 || imageGenerationSetById(resultSetId)
                 || createImageGenerationSet(resultSetId, result.requestedCount || 1, result.prompt || '', result);
             const wasRunning = set.status === 'running';
+            syncReasoningSupplements(set, result);
             set.requestId ||= String(result?.requestId || requestId || resultSetId);
             set.retry = null;
             set.errorDetails = imageRequestErrorDetails(result.errorDetails) || set.errorDetails;
@@ -387,6 +397,7 @@
                 set.reasoningStatus = result.cancelled ? 'cancelled' : result.errorDetails?.stage === 'agent' ? 'failed' : 'completed';
                 if (set.reasoningStatus === 'failed') set.reasoningSummary = result.error || result.errorDetails?.cause || '思维处理失败';
             }
+            closeReasoningTools(set, set.reasoningStatus);
             set.sessionId = result.sessionId || set.sessionId;
             set.parentSetId = result.parentSetId || set.parentSetId;
             set.roundNumber = Number(result.roundNumber) || set.roundNumber;
@@ -696,6 +707,9 @@
                             reasoningTurns: Array.isArray(set.reasoningTurns) ? set.reasoningTurns : [],
                             reasoningExpanded: set.reasoningExpanded === true,
                             reasoningContentExpanded: set.reasoningContentExpanded === true,
+                            reasoningStats: { ...(set.reasoningStats || {}) },
+                            webSearchSources: normalizeWebSearchSources(set.webSearchSources),
+                            webSearchSourcesExpanded: false,
                             webReferences: Array.isArray(set.webReferences) ? set.webReferences : [],
                             webReferencesExpanded: false,
                             finalPromptExpanded: false,
@@ -707,9 +721,8 @@
                             originalsLoaded: false,
                             loadingOriginals: false
                         });
-                    } else if (Array.isArray(set.webReferences) && set.webReferences.length) {
-                        current.webReferences = set.webReferences.map(reference => ({ ...reference }));
-                        current.webReferenceCount = current.webReferences.length;
+                    } else {
+                        syncReasoningSupplements(current, set);
                     }
                 });
                 window.imageEditState.resultSets = [...existing.values()].sort((left, right) =>
@@ -719,6 +732,8 @@
                     set.prompt = visibleImagePrompt(set.prompt);
                     set.originalPrompt = visibleImagePrompt(set.originalPrompt || set.prompt);
                     set.effectivePrompt = visibleImagePrompt(set.effectivePrompt);
+                    syncReasoningSupplements(set, set);
+                    if (set.reasoningStatus !== 'running') closeReasoningTools(set, set.reasoningStatus);
                     set.history = setIndex !== 0;
                     set.originalsLoaded = set.history || set.originalsLoaded === true;
                     if (set.history) set.loadingOriginals = false;
@@ -777,14 +792,16 @@
                 result.transparency === 'transparent'
             );
             const image = document.getElementById('imageResultModalImage');
-            image.src = browserImageSource(result.previewUri, result.uri);
+            image.src = result.status === 'reference'
+                ? browserImageSource(result.fullUri, result.uri, result.previewUri)
+                : browserImageSource(result.previewUri, result.uri);
             document.getElementById('imageResultModalMeta').textContent = result.status === 'partial'
                 ? '过程预览 · 生成仍在继续'
                 : result.status === 'reference'
                     ? `${result.provider || '网络参考'} · 已纳入本轮生成`
                     : `${result.actualSize || `${result.width || 0}x${result.height || 0}`} · ${String(result.format || '').toUpperCase()} · 已自动保存`;
             document.getElementById('saveEditedImageButton').disabled = ['partial', 'reference'].includes(result.status) || !result.path;
-            if (preferFullImage && !['partial', 'reference'].includes(result.status) && result.path && window.pywebview?.api?.load_generated_image) {
+            if (preferFullImage && result.status !== 'partial' && result.path && window.pywebview?.api?.load_generated_image) {
                 try {
                     const loaded = await window.pywebview.api.load_generated_image(result.path);
                     if (loaded.ok && window.imageEditState.viewerResult?.path === result.path) image.src = loaded.dataUrl;
@@ -795,7 +812,7 @@
         }
 
         function openImageResultModal(result, setId = '', itemIndex = -1) {
-            if (!result?.previewUri && !result?.path) return;
+            if (!result?.previewUri && !result?.uri && !result?.fullUri && !result?.path) return;
             Object.assign(window.imageEditState.viewer, { setId, itemIndex, scale: 1, x: 0, y: 0, dragging: false });
             void setImageViewerSource(result, result.status !== 'partial');
             resetImageViewer();

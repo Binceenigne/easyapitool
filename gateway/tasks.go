@@ -282,20 +282,29 @@ func (m *mobile) streamEvents(w http.ResponseWriter, r *http.Request, owner stri
 func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, id credentialID, key keyInput, ip netip.Addr, req generationInput, opts imageOptions, refs []asset, settings *modelSettings) {
 	defer m.workers.Done()
 	defer cancel()
+	heldReferences := append([]asset(nil), refs...)
 	defer func() {
 		m.mu.Lock()
-		for _, ref := range refs {
+		for _, ref := range heldReferences {
 			a := m.assets[ref.id]
 			a.holds--
 			m.assets[ref.id] = a
 		}
 		m.mu.Unlock()
 	}()
+	visual := newAgentVisualScope(m, id, opts, len(refs))
+	visual.initial = append([]asset(nil), refs...)
+	defer visual.release()
+	ctx = context.WithValue(ctx, agentVisualScopeKey{}, visual)
 	result := object{"ok": false, "requestId": id.id, "setId": id.id, "sessionId": id.id,
 		"prompt": req.Prompt, "originalPrompt": req.Prompt, "imageModel": opts.model,
 		"requestedCount": opts.n, "aspectRatio": opts.ratio, "transparency": opts.background,
 		"createdAt": time.Now().UTC(), "items": []object{}, "reasoningMode": objectString(req.Options, "reasoningMode")}
 	defer func() {
+		result["reasoningStats"], result["reasoningTurns"], result["webSearchSources"] = visual.stats, visual.turns, visual.sources
+		for name, value := range visual.planning {
+			result[name] = value
+		}
 		if ctx.Err() != nil {
 			result["cancelled"] = true
 			result["error"] = "生成已取消"
@@ -329,6 +338,7 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 		var err error
 		prompt, usage, err = m.preparePrompt(ctx, id, key, ip, req, settings)
 		if err != nil {
+			result["reasoningStatus"] = "failed"
 			err = operationError("agent", err, 0, attemptLimit(m.g.cfg.agentAttempts))
 			result["error"] = err.Error()
 			attachRPMFailure(result, err)
@@ -341,6 +351,9 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 			return
 		}
 		result["prompt"], result["reasoningUsage"] = prompt, usage
+		refs = append(refs, visual.adopted()...)
+		result["webReferences"], result["webReferenceCount"] = visual.references(), len(visual.references())
+		result["webSearchSources"], result["reasoningStats"], result["reasoningTurns"] = visual.sources, visual.stats, visual.turns
 	}
 	items := make([]object, 0, opts.n)
 	for i := 0; i < opts.n && ctx.Err() == nil; i++ {

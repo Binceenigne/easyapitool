@@ -63,7 +63,16 @@ func TestInstantContinuationPlansOnceAndSendsExistingReferenceToImageEdit(t *tes
 		}
 		_ = json.NewDecoder(r.Body).Decode(&envelope)
 		request := envelope.Request
-		if objectString(request, "mode") != "continuation" || !strings.Contains(objectString(request, "instructions"), "original red jacket") || objectString(request, "input") != "change jacket to blue" {
+		messages := arrayObjects(request["input"])
+		currentText := ""
+		if len(messages) > 0 {
+			for _, part := range arrayObjects(messages[0]["content"]) {
+				if part["type"] == "input_text" {
+					currentText = objectString(part, "text")
+				}
+			}
+		}
+		if objectString(request, "mode") != "continuation" || !strings.Contains(objectString(request, "instructions"), "original red jacket") || currentText != "change jacket to blue" || inputImageCount(request["input"]) != 1 {
 			t.Error("hidden continuation planner lost the parent or current edit context", request)
 		}
 		call, _ := http.NewRequest("POST", objectString(request, "base_url")+"/responses", strings.NewReader(agentTestBody(objectString(request, "model"), objectString(request, "effort"))))

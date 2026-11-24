@@ -4,7 +4,7 @@ OpenAI Agents SDK (`Agent`, `Runner`, `WebSearchTool`). It must never be publish
 through Nginx or listen outside loopback.
 
 Deploy the repository-root `mirra_agents/` package beside `agent_runtime/` in
-`/opt/imggen-agent-runtime/releases/sdk-1.2.5`, publish it through the
+`/opt/imggen-agent-runtime/releases/sdk-1.2.6`, publish it through the
 `/opt/imggen-agent-runtime/current` symlink, create the separate
 `/opt/imggen-agent-runtime/venv-sdk-0.25.0` virtualenv and install the shared
 package's pinned dependencies with `venv-sdk-0.25.0/bin/python -m pip install -r current/agent_runtime/requirements.txt`
@@ -49,3 +49,23 @@ Run `go test ./...` and `python -m unittest discover -s agent_runtime -p test_wo
 For the real SDK integration, set `MIRRA_TEST_SDK_PYTHON` to the dedicated Python
 executable and run `go test -run TestRealSDKWorkerThroughMeteredGoLease .`.
 That test uses a local TLS fixture and makes no paid external model requests.
+
+Visual research uses OpenAI's `search_content_types: [image, text]` and raw
+`web_search_call.results`. Only image_result URLs seen on Go's actual completed
+provider responses may be downloaded. SDK `inspect_visual_references` and
+`select_visual_references` function tools call the lease-authenticated loopback
+`/internal/agent/v1/reference-images` route. Go validates public HTTPS addresses,
+image bytes and pixel limits, retains device ownership, and appends only verified
+selected assets to image edits. No API credential is attached to image hosts.
+Original references and inspected pictures reach the Agent as bounded JPEG
+previews; their combined count obeys the tier. Sources, selected images, actual
+turns and request/tool counts are returned separately and saved with task results.
+SVG permits allowed visual research but cannot adopt raster references.
+
+Planning budgets follow the selected depth with at most two extra visual I/O
+turns and one continuation turn, capped at 32. Worker input is limited to 4 MiB
+and the private Responses bridge to 16 MiB. Each preview is at most 96 KiB.
+Reference callbacks use cancellable async HTTP, without a blocking executor.
+Run `go test -run TestRealSDKVisualToolLoopAdoptsVerifiedImageThroughGo .` with
+the SDK Python variable for a real SDK inspect/select/image-multipart test that
+uses only local TLS fixtures. Worker tests include `test_visual.py` as well.

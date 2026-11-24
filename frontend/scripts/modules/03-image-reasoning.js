@@ -958,6 +958,76 @@
             }
         }
 
+        function normalizeWebSearchSources(value) {
+            const unique = new Map();
+            for (const source of Array.isArray(value) ? value : []) {
+                if (!source || typeof source !== 'object') continue;
+                try {
+                    const url = new URL(String(source.url || source.sourceUrl || ''));
+                    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) continue;
+                    unique.set(url.href, { url: url.href, title: String(source.title || url.hostname).slice(0, 240) });
+                } catch { /* Ignore invalid upstream citations. */ }
+                if (unique.size >= 200) break;
+            }
+            return [...unique.values()];
+        }
+
+        function syncReasoningSupplements(set, metadata = {}) {
+            if (Array.isArray(metadata.webSearchSources) || Array.isArray(metadata.sources)) {
+                set.webSearchSources = normalizeWebSearchSources([
+                    ...(set.webSearchSources || []), ...(metadata.webSearchSources || metadata.sources || [])
+                ]);
+            }
+            if (Array.isArray(metadata.webReferences)) {
+                const firstReferences = !set.webReferences?.length && metadata.webReferences.length > 0;
+                set.webReferences = metadata.webReferences.map(reference => ({ ...reference }));
+                set.webReferenceCount = set.webReferences.length;
+                if (firstReferences && !set.supplementChoice) set.webReferencesExpanded = true;
+            }
+            const stats = { ...(set.reasoningStats || {}), ...(metadata.reasoningStats || {}) };
+            for (const key of ['turnCount', 'requestCount', 'toolCallCount', 'webSearchCallCount', 'localToolCallCount']) {
+                if (metadata[key] !== undefined && Number.isFinite(Number(metadata[key]))) {
+                    stats[key] = Math.max(Number(stats[key]) || 0, Number(metadata[key]) || 0);
+                }
+            }
+            set.reasoningStats = stats;
+        }
+
+        function closeReasoningTools(set, status = 'interrupted', options = {}) {
+            for (const turn of reasoningTurnsForSet(set)) {
+                if (options.turn && Number(options.turn) !== Number(turn.turn)) continue;
+                for (const tool of turn.tools || []) {
+                    if (tool.status !== 'running') continue;
+                    tool.status = status === 'failed' || status === 'cancelled' ? status : 'interrupted';
+                    tool.completedAt ||= Date.now();
+                    tool.interruptedReason = options.reason || (status === 'retrying' ? '本次请求中断，正在重试' : '已结束，未收到工具结果');
+                }
+            }
+        }
+
+        function upsertReasoningTool(turn, event) {
+            if (!Array.isArray(turn.tools)) turn.tools = [];
+            const callId = String(event.callId || '');
+            let tool = callId ? turn.tools.find(item => item.callId === callId)
+                : [...turn.tools].reverse().find(item => item.name === event.tool && item.status === 'running');
+            if (!tool) {
+                tool = { callId: callId || `legacy-${turn.turn}-${turn.tools.length + 1}`,
+                    name: event.tool || '', arguments: {}, status: '', resultCount: 0 };
+                turn.tools.push(tool);
+            }
+            let argumentsValue = event.arguments;
+            if (typeof argumentsValue === 'string') {
+                try { argumentsValue = JSON.parse(argumentsValue); } catch { argumentsValue = {}; }
+            }
+            tool.arguments = { ...(tool.arguments || {}), ...(argumentsValue && typeof argumentsValue === 'object' ? argumentsValue : {}) };
+            for (const key of ['action', 'query', 'queries', 'url']) {
+                if (event[key] !== undefined) tool.arguments[key] = event[key];
+            }
+            if (event.tool) tool.name = event.tool;
+            if (event.attempt) tool.attempt = Number(event.attempt);
+            return tool;
+        }
+
         function createImageGenerationSet(requestId, requestedCount, prompt, metadata = {}) {
             let set = window.imageEditState.resultSets.find(item => item.setId === requestId);
             if (set) return set;
@@ -1016,6 +1086,7 @@
                 reasoningCompletedAt: Number(metadata.reasoningCompletedAt) || 0,
                 reasoningDurationMs: Math.max(0, Number(metadata.reasoningDurationMs) || 0),
                 reasoningUsage: normalizeReasoningUsage(metadata.reasoningUsage),
+                reasoningStats: { ...(metadata.reasoningStats || {}) },
                 effectivePrompt: visibleImagePrompt(metadata.effectivePrompt),
                 webSearchEnabled: metadata.webSearchEnabled === true,
                 webSearchStatus: metadata.webSearchFailed
@@ -1026,9 +1097,11 @@
                             ? 'skipped'
                             : 'idle',
                 webSearchResultCount: Number(metadata.webSearchResultCount) || 0,
+                webSearchSources: normalizeWebSearchSources(metadata.webSearchSources),
+                webSearchSourcesExpanded: false,
                 webReferenceCount: Number(metadata.webReferenceCount) || 0,
                 webReferences: Array.isArray(metadata.webReferences) ? metadata.webReferences.map(reference => ({ ...reference })) : [],
-                webReferencesExpanded: false,
+                webReferencesExpanded: Array.isArray(metadata.webReferences) && metadata.webReferences.length > 0,
                 finalPromptExpanded: false,
                 webReferencesLoading: false,
                 items: Array.from({ length: requestedCount }, (_, itemIndex) => ({
@@ -1046,6 +1119,7 @@
                     partialTotal: 3
                 }))
             };
+            syncReasoningSupplements(set, metadata);
             window.imageEditState.resultSets.unshift(set);
             renderImageGenerationSets();
             if (followNewSet) scrollHost.scrollTop = 0;
@@ -1125,11 +1199,20 @@
         function formatReasoningUsage(set) {
             const usage = normalizeReasoningUsage(set.reasoningUsage);
             const tokens = usage.hasTokenUsage ? Math.round(usage.totalTokens).toLocaleString() : '--';
-            const calls = usage.callCount ? Math.round(usage.callCount) : '--';
+            const calls = Number(set.reasoningStats?.requestCount) || usage.callCount || 0;
+            const toolCount = reasoningToolCount(set);
             const cost = usage.hasCost
                 ? `${usage.costSource === 'response' ? '' : '≈'}$${usage.costUsd.toFixed(6)}`
                 : '$--';
-            return `${tokens} token · ${calls} 次调用 · ${cost}`;
+            return `${tokens} token · ${calls || '--'} 次请求${toolCount ? ` · ${toolCount} 次工具` : ''} · ${cost}`;
+        }
+
+        function reasoningToolCount(set) {
+            const calls = new Set();
+            reasoningTurnsForSet(set).forEach(turn => (turn.tools || []).forEach((tool, index) => {
+                calls.add(tool.callId || `${turn.turn}:${tool.name}:${index}`);
+            }));
+            return Math.max(Number(set.reasoningStats?.toolCallCount) || 0, calls.size);
         }
 
         function reasoningUsageTitle(set) {
@@ -1141,7 +1224,7 @@
                     ? `$${usage.costUsd.toFixed(6)}（接口返回的逐请求费用）`
                     : `≈$${usage.costUsd.toFixed(6)}（OpenAI 官方价目估算，${usage.estimatedCallCount} 次调用采用估算）`
                 : '$--（缺少可计价用量，未使用账户总额差值）';
-            return `输入 ${input} token · 输出 ${output} token · API 调用 ${usage.callCount || '--'} 次 · 本轮费用 ${cost}`;
+            return `输入 ${input} token · 输出 ${output} token · API 请求 ${Number(set.reasoningStats?.requestCount) || usage.callCount || '--'} 次 · 工具执行 ${reasoningToolCount(set)} 次 · 本轮费用 ${cost}`;
         }
 
         function reasoningElapsed(set, turn = activeReasoningTurn(set)) {
@@ -1189,7 +1272,21 @@
             const set = imageGenerationSetById(setId);
             if (!set?.effectivePrompt) return;
             set.finalPromptExpanded = !set.finalPromptExpanded;
+            set.supplementChoice = 'prompt';
             if (set.finalPromptExpanded) set.webReferencesExpanded = false;
+            if (set.finalPromptExpanded) set.webSearchSourcesExpanded = false;
+            renderImageGenerationSets();
+        }
+
+        function toggleWebSearchSources(setId) {
+            const set = imageGenerationSetById(setId);
+            if (!set?.webSearchSources?.length) return;
+            set.webSearchSourcesExpanded = !set.webSearchSourcesExpanded;
+            set.supplementChoice = 'sources';
+            if (set.webSearchSourcesExpanded) {
+                set.webReferencesExpanded = false;
+                set.finalPromptExpanded = false;
+            }
             renderImageGenerationSets();
         }
 
@@ -1399,12 +1496,14 @@
             const set = imageGenerationSetById(setId);
             if (!set?.webReferences?.length) return;
             set.webReferencesExpanded = !set.webReferencesExpanded;
+            set.supplementChoice = 'references';
+            if (set.webReferencesExpanded) set.webSearchSourcesExpanded = false;
             if (set.webReferencesExpanded) set.finalPromptExpanded = false;
             if (!set.webReferencesExpanded) {
                 renderImageGenerationSets();
                 return;
             }
-            const missing = set.webReferences.filter(reference => !reference.previewUri && reference.previewPath);
+            const missing = set.webReferences.filter(reference => !reference.previewUri && (reference.previewPath || reference.path));
             if (!missing.length || !window.pywebview?.api?.load_generated_image) {
                 renderImageGenerationSets();
                 return;
@@ -1413,7 +1512,7 @@
             renderImageGenerationSets();
             await Promise.all(missing.map(async reference => {
                 try {
-                    const loaded = await window.pywebview.api.load_generated_image(reference.previewPath);
+                    const loaded = await window.pywebview.api.load_generated_image(reference.previewPath || reference.path);
                     if (loaded.ok && loaded.dataUrl) reference.previewUri = loaded.dataUrl;
                 } catch (error) {
                     console.warn('网络参考图预览加载失败:', error);

@@ -61,6 +61,7 @@ func (g *gateway) upstreamRequest(ctx context.Context, u upstream, method, path,
 
 func (g *gateway) registerProxy(mux *http.ServeMux) {
 	mux.HandleFunc("POST /internal/agent/v1/responses", g.agentProxy)
+	mux.HandleFunc("POST /internal/agent/v1/reference-images", g.agentVisual)
 	for _, path := range []string{"/images/generations", "/images/edits", "/images/variations", "/responses"} {
 		mux.HandleFunc("POST /v1"+path, g.proxy(path))
 	}
@@ -262,11 +263,18 @@ func (g *gateway) proxy(path string) http.HandlerFunc {
 		w.WriteHeader(status)
 		observer.sse = stream
 		var reader io.Reader = response.Body
+		visualObserver := visualObserverForRequest(r, stream)
+		if visualObserver != nil && status >= 200 && status < 300 && response.Header.Get("Content-Encoding") == "" {
+			reader = io.TeeReader(reader, visualObserver)
+		}
 		if reservation != 0 && status >= 200 && status < 300 && (stream || strings.HasPrefix(kind, "application/json")) && response.Header.Get("Content-Encoding") == "" {
 			// Observe only metadata; the upstream body is forwarded immediately.
 			reader = io.TeeReader(reader, &observer)
 		}
 		delivered, readErr := transfer(w, reader, stream)
+		if visualObserver != nil {
+			visualObserver.finish()
+		}
 		count = observer.meter()
 		if readErr != nil && r.Context().Err() == nil {
 			log.Printf("upstream response interrupted upstream=%s path=%s bytes=%d reason=%s", u.ID, path, delivered, upstreamFailureReason(readErr))

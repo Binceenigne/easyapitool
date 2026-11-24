@@ -180,7 +180,7 @@ func TestSDKBridgeStreamsEventsUsesLeaseAndNeverRetriesWholeAgent(t *testing.T) 
 	if err != nil || text != "finished prompt" || usage["input_tokens"] != float64(8) || web || workerCalls.Load() != 1 || modelCalls.Load() != 2 {
 		t.Fatalf("SDK bridge result/accounting mismatch: %s %v %v", text, usage, err)
 	}
-	if len(events) != 2 || events[0]["type"] != "react_delta" || events[1]["type"] != "request_retry" {
+	if len(events) != 3 || events[0]["type"] != "react_turn_delta" || events[1]["type"] != "react_summary_delta" || events[2]["type"] != "request_retry" {
 		t.Fatal("SDK events were not mapped for the clients")
 	}
 	var admitted int

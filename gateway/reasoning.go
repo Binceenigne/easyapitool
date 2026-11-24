@@ -144,8 +144,14 @@ func (m *mobile) preparePrompt(ctx context.Context, id credentialID, key keyInpu
 		m.publish(id, failed, false)
 		return "", nil, err
 	}
-	m.publish(id, object{"type": "react_completed", "prompt": prompt, "model": model, "reasoningEffort": effort,
-		"reasoningDurationMs": time.Since(start).Milliseconds(), "reasoningUsage": usage, "webSearchEnabled": web, "webSearchUsed": searched}, false)
+	completed := object{"type": "react_completed", "prompt": prompt, "model": model, "reasoningEffort": effort,
+		"reasoningDurationMs": time.Since(start).Milliseconds(), "reasoningUsage": usage, "webSearchEnabled": web, "webSearchUsed": searched}
+	if scope, ok := ctx.Value(agentVisualScopeKey{}).(*agentVisualScope); ok {
+		completed["webSearchSources"], completed["webReferences"], completed["webReferenceCount"] = scope.sources, scope.references(), len(scope.references())
+		completed["reasoningStats"], completed["reasoningTurns"] = scope.stats, scope.turns
+		scope.planning = object{"reasoningModel": model, "reasoningEffort": effort, "reasoningStatus": "completed", "reasoningSummary": "", "reasoningDurationMs": time.Since(start).Milliseconds(), "webSearchEnabled": web, "webSearchUsed": searched}
+	}
+	m.publish(id, completed, false)
 	return prompt, usage, nil
 }
 

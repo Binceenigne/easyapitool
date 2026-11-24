@@ -3739,6 +3739,12 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
   color: var(--critical);
 }
 
+.image-reasoning-tool.is-cancelled,
+.image-reasoning-tool.is-interrupted {
+  color: var(--text-soft);
+  opacity: 0.85;
+}
+
 .image-reasoning-content-toggle {
   position: absolute;
   right: 14px;
@@ -3770,9 +3776,10 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
 
 .image-reasoning-supplement-tabs {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   min-width: 0;
-  gap: 12px;
+  gap: 0 12px;
   border-top: 1px solid var(--border-soft);
 }
 
@@ -3804,9 +3811,62 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
   height: 10px;
 }
 
+.image-reasoning-web-sources {
+  display: grid;
+  max-height: 180px;
+  overflow: auto;
+  gap: 3px;
+  padding-top: 4px;
+  animation: reasoningSupplementOpen 220ms ease-out both;
+}
+
+.image-reasoning-web-sources a {
+  display: grid;
+  grid-template-columns: 11px minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  color: var(--text-soft);
+  font-size: 8px;
+  text-decoration: none;
+}
+
+.image-reasoning-web-sources a:hover {
+  background: color-mix(in srgb, var(--reasoning-accent) 8%, transparent);
+  color: var(--reasoning-accent);
+}
+
+.image-reasoning-web-sources a:focus-visible {
+  outline: 1px solid var(--reasoning-accent);
+  outline-offset: -1px;
+}
+
+.image-reasoning-web-sources a > svg {
+  width: 11px;
+  height: 11px;
+  color: var(--reasoning-accent);
+}
+
+.image-reasoning-web-sources a > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-reasoning-web-sources a > small {
+  max-width: 115px;
+  overflow: hidden;
+  color: var(--muted);
+  font: 7px/1.4 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .image-reasoning-web-references {
   display: grid !important;
-  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(84px, 120px));
   align-items: stretch !important;
   padding: 7px 0 0;
   gap: 6px !important;

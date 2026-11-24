@@ -8,6 +8,8 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -42,6 +44,7 @@ import java.security.KeyStore;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -67,6 +70,8 @@ public class AndroidStoragePlugin extends Plugin {
     private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService apiExecutor = Executors.newFixedThreadPool(2);
     private final ConcurrentHashMap<String, HttpURLConnection> directRequests = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ConcurrentHashMap<String, JSObject>> directVisualResults = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> cancelledDirectRequests = new ConcurrentHashMap<>();
     private StorageDatabase database;
 
     @Override
@@ -439,6 +444,7 @@ public class AndroidStoragePlugin extends Plugin {
                 if (sdkTransport) {
                     status = connection.getResponseCode();
                     String payload = readDirectPayload(connection, status);
+                    if (status >= 200 && status < 300) rememberVisualResults(keyId, requestId, payload);
                     call.resolve(new JSObject().put("status", status).put("body", DirectImageApi.redact(payload, secret))
                         .put("headers", directResponseHeaders(connection)));
                     return;
@@ -484,6 +490,106 @@ public class AndroidStoragePlugin extends Plugin {
         });
     }
 
+    private void rememberVisualResults(String keyId, String requestId, String payload) {
+        if (requestId.isEmpty()) return;
+        try {
+            JSObject response = new JSObject(payload);
+            if (!"completed".equals(response.optString("status", "completed"))) return;
+            String scope = keyId + ":" + requestId;
+            ConcurrentHashMap<String, JSObject> known = directVisualResults.computeIfAbsent(scope, ignored -> new ConcurrentHashMap<>());
+            org.json.JSONArray output = response.optJSONArray("output");
+            if (output == null) return;
+            for (int i = 0; i < output.length(); i++) {
+                org.json.JSONObject item = output.optJSONObject(i);
+                if (item == null || !"web_search_call".equals(item.optString("type"))) continue;
+                org.json.JSONArray results = item.optJSONArray("results");
+                if (results == null) continue;
+                for (int j = 0; j < results.length() && known.size() < 48; j++) {
+                    org.json.JSONObject image = results.optJSONObject(j);
+                    if (image == null || !"image_result".equals(image.optString("type"))) continue;
+                    String url = image.optString("image_url");
+                    if (!url.startsWith("https://") || url.length() > 4096) continue;
+                    known.putIfAbsent(url, new JSObject().put("imageUrl", url).put("sourceUrl", image.optString("source_website_url"))
+                        .put("thumbnailUrl", image.optString("thumbnail_url")).put("caption", image.optString("caption")).put("title", image.optString("title")));
+                }
+            }
+            if (directVisualResults.size() > 64) {
+                for (String old : directVisualResults.keySet()) { if (!old.equals(scope)) { directVisualResults.remove(old); break; } }
+            }
+        } catch (Exception ignored) { /* Invalid responses never authorize reference downloads. */ }
+    }
+
+    @PluginMethod
+    public void clearVisualReferences(PluginCall call) {
+        directVisualResults.remove(safeId(call.getString("keyId")) + ":" + safeId(call.getString("requestId")));
+        call.resolve(new JSObject().put("ok", true));
+    }
+
+    @PluginMethod
+    public void fetchVisualReference(PluginCall call) {
+        String keyId = safeId(call.getString("keyId")), requestId = safeId(call.getString("requestId"));
+        String imageUrl = call.getString("imageUrl", "");
+        apiExecutor.execute(() -> {
+            HttpURLConnection connection = null;
+            try {
+                if (cancelledDirectRequests.containsKey(requestId)) throw new IOException("生成已停止");
+                Map<String, JSObject> known = directVisualResults.get(keyId + ":" + requestId);
+                if (database.key(keyId) == null || known == null || !known.containsKey(imageUrl)) throw new IOException("只能读取本轮 OpenAI 图片搜索的真实图片结果");
+                String downloadedUrl = Boolean.TRUE.equals(call.getBoolean("useThumbnail", false)) ? known.get(imageUrl).optString("thumbnailUrl") : imageUrl;
+                if (downloadedUrl.isEmpty()) throw new IOException("当前官方搜索结果没有可用的缩略图");
+                URL target = DirectImageApi.publicReferenceURL(downloadedUrl);
+                for (int redirect = 0; ; redirect++) {
+                    if (cancelledDirectRequests.containsKey(requestId)) throw new IOException("生成已停止");
+                    connection = openConnection(target.toString(), "", "GET");
+                    connection.setInstanceFollowRedirects(false); connection.setConnectTimeout(10_000); connection.setReadTimeout(15_000);
+                    connection.setRequestProperty("Accept", "image/png,image/jpeg,image/webp,image/gif");
+                    if (directRequests.putIfAbsent(requestId, connection) != null) throw new IOException("同一任务正在请求图片");
+                    int code = connection.getResponseCode();
+                    if (code >= 300 && code < 400 && redirect < 3) {
+                        String location = connection.getHeaderField("Location");
+                        URL next = new URL(target, location == null ? "" : location);
+                        directRequests.remove(requestId, connection); connection.disconnect();
+                        target = DirectImageApi.publicReferenceURL(next.toString()); continue;
+                    }
+                    if (code != 200) throw new IOException("参考图下载返回 HTTP " + code);
+                    break;
+                }
+                java.io.ByteArrayOutputStream source = new java.io.ByteArrayOutputStream();
+                try (InputStream input = connection.getInputStream()) { copy(input, source, 12L * 1024 * 1024); }
+                directRequests.remove(requestId, connection); connection.disconnect(); connection = null;
+                byte[] bytes = source.toByteArray();
+                BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+                if (bounds.outWidth < 32 || bounds.outHeight < 32 || (long)bounds.outWidth * bounds.outHeight > 9_000_000
+                    || !java.util.Arrays.asList("image/png", "image/jpeg", "image/webp", "image/gif").contains(bounds.outMimeType)) throw new IOException("参考图片的类型或像素尺寸无效");
+                BitmapFactory.Options decode = new BitmapFactory.Options();
+                decode.inSampleSize = Math.max(1, Math.max(bounds.outWidth, bounds.outHeight) / 1536);
+                Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, decode);
+                if (bitmap == null) throw new IOException("参考图片解码失败");
+                Bitmap thumbnail = null;
+                try {
+                    java.io.ByteArrayOutputStream full = new java.io.ByteArrayOutputStream(); bitmap.compress(Bitmap.CompressFormat.PNG, 100, full);
+                    JSObject result = saveDirectImage(new DirectImageApi.Image(full.toByteArray(), "image/png", bitmap.getWidth(), bitmap.getHeight()), safeId(call.getString("sessionId")), safeId(call.getString("setId")));
+                    int longSide = Math.max(bitmap.getWidth(), bitmap.getHeight());
+                    thumbnail = Bitmap.createScaledBitmap(bitmap, Math.max(1, bitmap.getWidth() * Math.min(384, longSide) / longSide), Math.max(1, bitmap.getHeight() * Math.min(384, longSide) / longSide), true);
+                    java.io.ByteArrayOutputStream preview = new java.io.ByteArrayOutputStream(); thumbnail.compress(Bitmap.CompressFormat.JPEG, 65, preview);
+                    if (preview.size() > 96 * 1024) throw new IOException("参考图片预览过大");
+                    byte[] hash = MessageDigest.getInstance("SHA-256").digest(imageUrl.getBytes(StandardCharsets.UTF_8));
+                    StringBuilder id = new StringBuilder("webref-");for (int i = 0; i < 6; i++) id.append(String.format(java.util.Locale.ROOT, "%02x", hash[i] & 255));
+                    JSObject candidate = known.get(imageUrl);
+                    result.put("id", id.toString()).put("imageUrl", imageUrl).put("actualDownloadedUrl", downloadedUrl).put("sourceUrl", candidate.optString("sourceUrl")).put("thumbnailUrl", candidate.optString("thumbnailUrl"))
+                        .put("caption", candidate.optString("caption")).put("title", candidate.optString("title")).put("provider", "OpenAI")
+                        .put("previewDataUrl", "data:image/jpeg;base64," + Base64.encodeToString(preview.toByteArray(), Base64.NO_WRAP));
+                    call.resolve(result);
+                } finally { if (thumbnail != null && thumbnail != bitmap) thumbnail.recycle(); bitmap.recycle(); }
+            } catch (Exception error) {
+                if (connection != null) { directRequests.remove(requestId, connection); connection.disconnect(); connection = null; }
+                call.resolve(new JSObject().put("ok", false).put("error", DirectImageApi.redact(error.getMessage(), "")));
+            }
+            finally { if (connection != null) { directRequests.remove(requestId, connection); connection.disconnect(); } }
+        });
+    }
+
     // One HTTP exchange only. The JS runner owns the shared, cancellable three-attempt budget.
     private JSObject directResponseHeaders(HttpURLConnection connection) {
         JSObject headers = new JSObject();
@@ -518,7 +624,10 @@ public class AndroidStoragePlugin extends Plugin {
 
     @PluginMethod
     public void cancelDirectApi(PluginCall call) {
-        HttpURLConnection connection = directRequests.get(safeId(call.getString("requestId")));
+        String requestId = safeId(call.getString("requestId"));
+        cancelledDirectRequests.put(requestId, SystemClock.elapsedRealtime());
+        if (cancelledDirectRequests.size() > 128) cancelledDirectRequests.entrySet().removeIf(entry -> SystemClock.elapsedRealtime() - entry.getValue() > 60_000);
+        HttpURLConnection connection = directRequests.get(requestId);
         if (connection != null) connection.disconnect();
         call.resolve(new JSObject().put("ok", true));
     }

@@ -459,6 +459,13 @@
             reasoningSummary: result.reasoningSummary || '',
             reasoningStatus: result.reasoningStatus || 'idle',
             reasoningUsage: result.reasoningUsage || null,
+            reasoningStats: result.reasoningStats || null,
+            reasoningTurns: Array.isArray(result.reasoningTurns) ? result.reasoningTurns : [],
+            webSearchEnabled: result.webSearchEnabled === true,
+            webSearchUsed: result.webSearchUsed === true,
+            webSearchSources: Array.isArray(result.webSearchSources) ? result.webSearchSources : [],
+            webReferenceCount: Array.isArray(result.webReferences) ? result.webReferences.length : 0,
+            webReferences: (result.webReferences || []).map(({ previewDataUrl, ...reference }) => reference),
             requestedCount: Number(result.requestedCount || pending?.requestedCount || 1),
             items: (result.items || []).map((item, itemIndex) => ({
                 itemIndex: Number(item.itemIndex ?? itemIndex),
@@ -475,7 +482,8 @@
         };
         const records = localPreferences.get(IMAGE_SETS_KEY, []).filter(item => item?.setId !== setId);
         records.unshift(record);
-        localPreferences.set(IMAGE_SETS_KEY, records.slice(0, 100));
+        const retained = records.slice(0, 100);
+        while (!localPreferences.set(IMAGE_SETS_KEY, retained) && retained.length > 1) retained.pop();
     }
 
     async function listLocalImageSets() {
@@ -485,6 +493,12 @@
         return records.map(record => ({
             ...record,
             history: true,
+            webReferences: (record.webReferences || []).map(reference => {
+                const asset = assetsById.get(String(reference.resourceId));
+                const path = asset?.path || reference.path || '';
+                const previewPath = asset?.previewPath || reference.previewPath || path;
+                return { ...reference, path, previewPath, uri: localImageUrl(path), previewUri: localImageUrl(previewPath) };
+            }),
             items: (record.items || []).map(item => {
                 const asset = assetsById.get(String(item.resourceId));
                 const path = asset?.path || '';
@@ -524,7 +538,7 @@
                     setId: context.setId || result.setId || '',
                     mimeType: result.mimeType || result.contentType || 'image/png',
                     preview: false
-                });
+                }).catch(error => { downloadCache.delete(cacheKey); throw error; });
                 downloadCache.set(cacheKey, downloaded);
             }
             const local = await downloaded;
@@ -543,7 +557,7 @@
                     setId: context.setId || result.setId || '',
                     mimeType: result.previewMimeType || 'image/jpeg',
                     preview: true
-                });
+                }).catch(error => { downloadCache.delete(cacheKey); throw error; });
                 downloadCache.set(cacheKey, downloaded);
             }
             const local = await downloaded;
@@ -552,7 +566,9 @@
         }
         for (const [key, item] of Object.entries(result)) {
             if (!['path', 'uri', 'previewPath', 'previewUri', 'downloadUrl', 'previewUrl'].includes(key)) {
-                result[key] = await hydrateAsset(item, context);
+                result[key] = key === 'webReferences' && Array.isArray(item)
+                    ? await Promise.all(item.map(reference => hydrateAsset(reference, context).catch(() => ({ ...reference, unavailable: true }))))
+                    : await hydrateAsset(item, context);
             }
         }
         return result;
@@ -1025,7 +1041,7 @@
         }
     }
 
-    async function requestNativeDirect(payload, signal) {
+    async function requestNativeDirect(payload, signal, method = 'requestDirectApi') {
         if (signal.aborted) throw directAbort();
         return new Promise((resolve, reject) => {
             const abort = () => {
@@ -1033,7 +1049,7 @@
                 reject(directAbort());
             };
             signal.addEventListener('abort', abort, { once: true });
-            pluginCall('requestDirectApi', payload).then(result => {
+            pluginCall(method, payload).then(result => {
                 if (signal.aborted) { reject(directAbort()); return; }
                 if (result?.ok === false) {
                     reject(Object.assign(new Error(result.error || 'API 直连失败'), {
@@ -1051,6 +1067,40 @@
         const progress = sharedProgress || { cancelled: false, controller: new AbortController() };
         const requestId = options.requestId || newRequestId('agent');
         const { model, effort } = directReasoning(options);
+        const originalPaths = options.agentReferencePaths || [];
+        const tier = window.appState?.keys?.find(key => String(key.id) === String(keyId))?.appModels?.tier;
+        const totalReferences = tier ? tier.imageEditing ? Math.max(0, Math.min(16, Number(tier.maxReferences) || 0)) : 0 : 16;
+        const depthMode = options.reasoningMode === 'advanced' ? ({ low: 'flash', medium: 'medium', high: 'high', xhigh: 'extra', max: 'max' }[effort] || 'medium') : options.reasoningMode;
+        const [turnBudget, referenceBudget] = ({ instant: [1, 0], flash: [3, 3], medium: [5, 4], high: [7, 6], extra: [10, 6], max: [12, 8] }[depthMode] || [5, 4]);
+        const maxInspectReferences = options.purpose === 'polish' ? 0 : Math.min(12, Math.max(0, totalReferences - originalPaths.length));
+        const maxAdoptReferences = options.output_format === 'svg' ? 0 : Math.min(referenceBudget, maxInspectReferences);
+        const maxTurns = Math.min(32, turnBudget + (options.webSearchEnabled && maxInspectReferences ? 2 : 0) + (options.parentSetId || options.continuation ? 1 : 0));
+        const initialInput = originalPaths.length ? [{ role: 'user', content: [{ type: 'input_text', text: prompt }, ...await Promise.all(originalPaths.map(async path => {
+            const image = new Image(); image.src = await readAsDataUrl(path); await image.decode();
+            const longest = Math.max(image.naturalWidth, image.naturalHeight);
+            const canvas = document.createElement('canvas'); canvas.width = Math.max(1, image.naturalWidth * Math.min(512, longest) / longest); canvas.height = Math.max(1, image.naturalHeight * Math.min(512, longest) / longest);
+            try { canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height); let data = canvas.toDataURL('image/jpeg', .75);
+                if (data.length > 131100) data = canvas.toDataURL('image/jpeg', .5);
+                if (data.length > 131100) throw new Error('参考图预览超过大小限制'); return { type: 'input_image', image_url: data };
+            } finally { image.src = ''; canvas.width = canvas.height = 0; }
+        }))] }] : prompt;
+        const reasoningTurns = []; let httpAttempts = 0, latestStats = {};
+        progress.agentRequestAttempts = 0;
+        const publish = event => window.applyImageGenerationEvent?.({ ...event, requestId, setId: options.purpose === 'polish' ? '' : requestId, sessionId: options.sessionId || requestId });
+        const recordEvent = event => {
+            latestStats = Object.fromEntries(['turnCount', 'requestCount', 'toolCallCount', 'webSearchCallCount', 'localToolCallCount'].map(name => [name, Number(event[name]) || 0])); latestStats.requestCount = Math.max(httpAttempts, latestStats.requestCount);
+            const index = Math.max(1, Number(event.turn) || 1); let turn = reasoningTurns.find(turn => turn.turn === index);
+            if (!turn) { turn = { turn: index, status: 'running', text: '', tools: [] }; reasoningTurns.push(turn); }
+            if (event.type === 'text_delta') turn.text += event.delta || '';
+            if (event.type === 'turn_completed') turn.status = 'completed';
+            if (/^(?:tool|web_search)_(?:started|completed|failed)$/.test(event.type)) {
+                let tool = turn.tools.find(tool => tool.callId === event.callId); if (!tool) { tool = { callId: event.callId }; turn.tools.push(tool); }
+                Object.assign(tool, event, { status: event.type.endsWith('started') ? 'running' : event.type.endsWith('failed') ? 'failed' : 'completed' });
+            }
+            let type = ({ turn_started: 'react_turn_started', turn_completed: 'react_turn_completed', text_delta: 'react_turn_delta', tool_started: 'react_tool_started', tool_completed: 'react_tool_completed', tool_failed: 'react_tool_failed', web_search_started: 'react_tool_started', web_search_completed: 'react_tool_completed', web_search_failed: 'react_tool_failed' })[event.type];
+            if (type) publish({ ...event, type, reasoningStats: latestStats });
+            if (event.type === 'text_delta') publish({ type: 'react_summary_delta', delta: event.delta, reasoningStats: latestStats });
+        };
         let instructions = '将用户的图像需求整理为可直接生成或编辑图片的提示词。保留明确要求，仅返回改写后的提示词。'
             + (options.output_format === 'svg' ? '输出目标是静态SVG矢量图，组织为【主体与轮廓】【路径与分层】【色彩与留白】【矢量约束】文本块，不输出代码或动画要求。'
             : options.output_format === 'gif' ? `输出目标是GIF循环动图，共${options.frame_count || 9}帧。组织为【画面设定】【运动脚本】【分帧控制】【循环衔接】【稳定约束】，明确动作方向、幅度和关键阶段，保持跨帧主体与背景一致，让末帧自然接回首帧。帧数与时长由接口字段控制。` : '');
@@ -1062,10 +1112,33 @@
         if (!sharedProgress) directTasks.set(requestId, progress);
         try {
             const result = await window.MirraAgentsSDK.runNativeAgent({
-                model, effort, instructions, input: prompt, webSearch: options.webSearchEnabled === true,
+                model, effort, instructions, input: initialInput, webSearch: options.webSearchEnabled === true,
                 signal: progress.controller.signal,
+                getRequestCount: () => progress.agentRequestAttempts,
+                maxTurns, maxInspectReferences, maxAdoptReferences, onEvent: recordEvent,
+                inspectReferences: async (urls, signal) => {
+                    const candidates = [], failures = [];
+                    for (const imageUrl of urls) {
+                        try {
+                            const payload = { keyId, requestId, imageUrl, sessionId: options.sessionId || requestId, setId: requestId };
+                            let candidate;
+                            try { candidate = await requestNativeDirect(payload, signal, 'fetchVisualReference'); }
+                            catch (primaryError) {
+                                if (signal.aborted) throw primaryError;
+                                try { candidate = await requestNativeDirect({ ...payload, useThumbnail: true }, signal, 'fetchVisualReference'); }
+                                catch (thumbnailError) { if (signal.aborted) throw thumbnailError; throw new Error(`${primaryError.message}；${thumbnailError.message}`); }
+                            }
+                            candidates.push({ ...candidate, uri: localImageUrl(candidate.path), previewUri: localImageUrl(candidate.path) });
+                        } catch (error) { if (signal.aborted) throw error; failures.push({ imageUrl, error: directSafeMessage(error.message) }); }
+                    }
+                    return { candidates, failures };
+                },
+                selectReferences: async (references, rationale) => publish({ type: 'react_visual_selected', webReferences: references.map(({ previewDataUrl, ...reference }) => reference), webReferenceCount: references.length, rationale }),
                 // Retry only this model HTTP exchange. Runner and completed hosted search turns stay alive.
                 transport: (body, modelSignal) => retryDirectRequest(async () => {
+                    httpAttempts++;
+                    progress.agentRequestAttempts++;
+                    publish({ type: 'react_stats', reasoningStats: { ...latestStats, requestCount: progress.agentRequestAttempts } });
                     const response = await requestNativeDirect({ keyId, operation: 'respond', sdkTransport: true, requestId, body }, modelSignal);
                     let data;
                     try { data = typeof response.body === 'string' ? JSON.parse(response.body) : response.body; }
@@ -1089,11 +1162,11 @@
                     return response;
                 }, { stage: 'agent', progress: { controller: { signal: modelSignal } }, options: { ...options, requestId } })
             });
-            return { ...result, model, effort };
+            return { ...result, model, effort, reasoningTurns, reasoningStats: { ...result.reasoningStats, requestCount: httpAttempts } };
         } catch (failure) {
             if (progress.controller.signal.aborted) throw directAbort();
-            throw directError(failure, 'agent', 1);
-        } finally { if (!sharedProgress) directTasks.delete(requestId); }
+            const error = directError(failure, 'agent', 1); error.reasoningStats = { ...latestStats, requestCount: httpAttempts }; error.reasoningTurns = reasoningTurns; throw error;
+        } finally { if (!sharedProgress) directTasks.delete(requestId); void pluginCall('clearVisualReferences', { keyId, requestId }).catch(() => {}); }
     }
 
     async function generateDirectImage(key, prompt, paths, options) {
@@ -1114,10 +1187,11 @@
                 const reasoning = directReasoning(options);
                 emit({ type: 'react_started', mode: options.reasoningMode, model: reasoning.model,
                     reasoningEffort: reasoning.effort, webSearchEnabled: options.webSearchEnabled === true });
-                const planned = await prepareDirectPrompt(key.id, prompt, options, progress);
+                const planned = await prepareDirectPrompt(key.id, prompt, { ...options, agentReferencePaths: paths }, progress);
                 Object.assign(result, { prompt: planned.prompt, reasoningModel: planned.model, reasoningEffort: planned.effort,
                     reasoningDurationMs: Date.now() - started, reasoningSummary: planned.prompt, reasoningStatus: 'completed',
-                    reasoningUsage: planned.usage, webSearchUsed: planned.webSearchUsed });
+                    reasoningUsage: planned.usage, webSearchUsed: planned.webSearchUsed, webSearchEnabled: options.webSearchEnabled === true,
+                    webReferences: planned.webReferences || [], webReferenceCount: planned.webReferences?.length || 0, webSearchSources: planned.webSearchSources || [], reasoningTurns: planned.reasoningTurns || [], reasoningStats: planned.reasoningStats });
                 emit({ type: 'react_completed', ...result, model: planned.model, summary: planned.prompt });
             }
             const body = { model: options.imageModel, prompt: result.prompt, size: options.size || 'auto',
@@ -1129,7 +1203,7 @@
                 try {
                     emit({ type: 'item_started', itemIndex });
                     const asset = await retryDirectRequest(() => requestNativeDirect({
-                        keyId: key.id, operation: 'generate', requestId, body, paths: paths || [],
+                        keyId: key.id, operation: 'generate', requestId, body, paths: [...(paths || []), ...(result.webReferences || []).map(reference => reference.path)],
                         setId: requestId, sessionId: result.sessionId
                     }, progress.controller.signal), { stage: 'image', progress, options, itemIndex });
                     const uri = localImageUrl(asset.path);
@@ -1152,6 +1226,7 @@
             if (!progress.cancelled) {
                 result.errorDetails = error.errorDetails || directError(error, 'agent', 1).errorDetails;
                 result.reasoningStatus = 'failed';
+                result.reasoningStats = error.reasoningStats; result.reasoningTurns = error.reasoningTurns;
                 result.reasoningSummary = result.error;
                 emit({ type: 'react_failed', error: result.error, errorDetails: result.errorDetails });
             }

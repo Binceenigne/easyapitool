@@ -15,6 +15,8 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.InetAddress;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
@@ -30,6 +32,22 @@ final class DirectImageApi {
     );
 
     private DirectImageApi() {}
+
+    static URL publicReferenceURL(String value) throws Exception {
+        URI uri = new URI(value);
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || uri.getUserInfo() != null
+            || uri.getFragment() != null || value.length() > 4096 || uri.getHost().contains("%")
+            || (uri.getPort() != -1 && uri.getPort() != 443)) throw new IOException("参考图仅允许公共 HTTPS 地址");
+        for (InetAddress address : InetAddress.getAllByName(uri.getHost())) {
+            byte[] bytes = address.getAddress();
+            boolean reserved = bytes.length == 4 && (((bytes[0] & 255) == 100 && (bytes[1] & 255) >= 64 && (bytes[1] & 255) <= 127)
+                || (bytes[0] & 255) >= 224 || (bytes[0] & 255) == 0 || (bytes[0] & 255) == 198 && ((bytes[1] & 255) == 18 || (bytes[1] & 255) == 19));
+            reserved |= bytes.length == 16 && ((bytes[0] & 254) == 252);
+            if (reserved || address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isLinkLocalAddress()
+                || address.isSiteLocalAddress() || address.isMulticastAddress()) throw new IOException("参考图地址不能指向内网或本机");
+        }
+        return uri.toURL();
+    }
 
     static String certificateFailureCause(Throwable failure) {
         // Inspect a bounded cause chain; an ordinary TLS disconnect is still a transient network failure.

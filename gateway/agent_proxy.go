@@ -26,6 +26,34 @@ type agentProxyLease struct {
 
 type agentRouteContextKey struct{}
 
+func (g *gateway) authorizeAgentLease(w http.ResponseWriter, r *http.Request) (*agentProxyLease, route, bool) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	peer, parseErr := netip.ParseAddr(host)
+	if err != nil || parseErr != nil || !peer.IsLoopback() {
+		openAIError(w, http.StatusForbidden, "internal_only", "内部接口仅允许本机访问")
+		return nil, route{}, false
+	}
+	g.agentMu.Lock()
+	lease := g.agentLeases[bearer(r)]
+	g.agentMu.Unlock()
+	if lease == nil || lease.ctx.Err() != nil || time.Now().After(lease.expiresAt) {
+		openAIError(w, http.StatusUnauthorized, "invalid_agent_lease", "Agent 调用授权已过期")
+		return nil, route{}, false
+	}
+	selected := lease.selected
+	if selected.key.ID != "" {
+		key, anchor, err := g.store.agentKey(r.Context(), selected.key.ID)
+		if err == nil {
+			selected, err = g.routeForKey(r.Context(), key, anchor, selected.clientIP, true)
+		}
+		if err != nil {
+			g.proxyError(w, err)
+			return nil, route{}, false
+		}
+	}
+	return lease, selected, true
+}
+
 func (g *gateway) proxyRoute(r *http.Request) (route, error) {
 	if selected, ok := r.Context().Value(agentRouteContextKey{}).(route); ok {
 		return selected, nil
@@ -81,7 +109,7 @@ func (g *gateway) agentProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
 	if err != nil {
 		openAIError(w, http.StatusRequestEntityTooLarge, "agent_body_too_large", "Agent 请求内容超过上限")
 		return
@@ -94,7 +122,12 @@ func (g *gateway) agentProxy(w http.ResponseWriter, r *http.Request) {
 	tools, _ := fields["tools"].([]any)
 	for _, raw := range tools {
 		tool := asObject(raw)
-		if !lease.web || !strings.HasPrefix(objectString(tool, "type"), "web_search") {
+		allowed := lease.web && strings.HasPrefix(objectString(tool, "type"), "web_search")
+		if scope, ok := lease.ctx.Value(agentVisualScopeKey{}).(*agentVisualScope); ok && lease.web && objectString(tool, "type") == "function" && oneOf(objectString(tool, "name"), "inspect_visual_references", "select_visual_references") {
+			limit, _, policyErr := scope.limits(selected.key)
+			allowed = policyErr == nil && limit > 0
+		}
+		if !allowed {
 			openAIError(w, http.StatusForbidden, "agent_lease_scope", "Agent 请求超出授权工具范围")
 			return
 		}
@@ -111,6 +144,7 @@ func (g *gateway) agentProxy(w http.ResponseWriter, r *http.Request) {
 	stop := context.AfterFunc(lease.ctx, cancel)
 	defer stop()
 	defer cancel()
+	ctx = context.WithValue(ctx, agentLeaseContextKey{}, lease)
 	r = r.Clone(context.WithValue(ctx, agentRouteContextKey{}, selected))
 	r.Body = io.NopCloser(bytes.NewReader(data))
 	r.ContentLength = int64(len(data))
