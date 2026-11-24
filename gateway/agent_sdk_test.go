@@ -150,6 +150,9 @@ func TestSDKBridgeStreamsEventsUsesLeaseAndNeverRetriesWholeAgent(t *testing.T) 
 			Request object `json:"request"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&data)
+		if _, exists := data.Request["max_output_tokens"]; exists {
+			t.Error("Go overrode the shared SDK model output budget")
+		}
 		key := objectString(data.Request, "api_key")
 		if !strings.HasPrefix(key, "lease-") || key == secret || key == u.Secret {
 			t.Error("worker received a persistent credential")

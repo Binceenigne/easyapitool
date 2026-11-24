@@ -205,7 +205,7 @@ func (o *visualResponseObserver) Write(p []byte) (int, error) {
 			part, rest, found := bytes.Cut(p, []byte{'\n'})
 			p = rest
 			if !o.overflow {
-				if len(o.buffer)+len(part) > 2<<20 {
+				if len(o.buffer)+len(part) > 16<<20 {
 					o.overflow = true
 					o.buffer = nil
 				} else {
@@ -228,7 +228,7 @@ func (o *visualResponseObserver) Write(p []byte) (int, error) {
 			o.overflow = false
 		}
 	} else if !o.overflow {
-		if len(o.buffer)+len(p) > 2<<20 {
+		if len(o.buffer)+len(p) > 16<<20 {
 			o.overflow = true
 			o.buffer = nil
 		} else {

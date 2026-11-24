@@ -7,6 +7,7 @@ datas = [
     (str(project_root / 'frontend'), 'frontend'),
     (str(project_root / 'resources'), 'resources'),
     (str(project_root / 'CHANGELOG.md'), '.'),
+    (str(project_root / 'mirra_agents' / 'model_limits.json'), 'mirra_agents'),
 ]
 binaries = []
 hiddenimports = ['pystray._win32', 'winotify', 'resvg_py']

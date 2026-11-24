@@ -174,8 +174,9 @@ func (g *gateway) rewrite(ctx context.Context, selected route, model, effort, pr
 	if g.cfg.agentWorkerURL != "" {
 		return g.rewriteAgent(ctx, selected, model, effort, prompt, web, target)
 	}
-	fields := object{"model": model, "input": prompt, "store": false, "max_output_tokens": 8192,
+	fields := object{"model": model, "input": prompt, "store": false,
 		"instructions": imagePromptInstructions(target)}
+	applyAgentModelPolicy(fields, model)
 	if effort != "" {
 		fields["reasoning"] = object{"effort": effort}
 	}
@@ -223,8 +224,8 @@ func (g *gateway) rewrite(ctx context.Context, selected route, model, effort, pr
 		}
 	}
 	var payload object
-	data, err = io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if err != nil || json.Unmarshal(data, &output) != nil || json.Unmarshal(data, &payload) != nil {
+	data, err = io.ReadAll(io.LimitReader(resp.Body, 16<<20+1))
+	if err != nil || len(data) > 16<<20 || json.Unmarshal(data, &output) != nil || json.Unmarshal(data, &payload) != nil {
 		return "", nil, false, errors.New("思维模型响应无效或过大")
 	}
 	if output.Model != "" {

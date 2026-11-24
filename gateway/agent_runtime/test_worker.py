@@ -78,6 +78,23 @@ class WorkerTests(unittest.TestCase):
         response.read()
         connection.close()
 
+    def test_output_budget_uses_model_registry_without_an_8192_ceiling(self):
+        for value in (128000, 64000):
+            request = self.request()
+            request["request"]["max_output_tokens"] = value
+            self.assertEqual(self.call("/run", request)[0], 200)
+        for value in (128001, True, 0, -1, "128000"):
+            request = self.request()
+            request["request"]["max_output_tokens"] = value
+            self.assertEqual(self.call("/run", request)[0], 400, value)
+        request = self.request()
+        del request["request"]["max_output_tokens"]
+        self.assertEqual(self.call("/run", request)[0], 200)
+        request["request"]["model"] = "private-unknown-model"
+        self.assertEqual(self.call("/run", request)[0], 200)
+        request["request"].update(model="gpt-5-pro", max_output_tokens=272000)
+        self.assertEqual(self.call("/run", request)[0], 200)
+
     def test_cancel_stops_active_runtime(self):
         results = []
         thread = threading.Thread(target=lambda: results.append(self.call("/run", self.request(prompt="wait"))), daemon=True)

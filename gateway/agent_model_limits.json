@@ -1,0 +1,322 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-11-24",
+  "compaction_ratio": 0.9,
+  "compaction_basis": "usable_input_budget",
+  "compaction_source": "https://developers.openai.com/api/docs/guides/compaction",
+  "models": {
+    "gpt-6.2-astra": {
+      "context_window": 1050000,
+      "max_input_tokens": 922000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.2-astra"
+    },
+    "gpt-6.2-sol": {
+      "context_window": 1050000,
+      "max_input_tokens": 922000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.2-sol"
+    },
+    "gpt-6.1-sol": {
+      "context_window": 1050000,
+      "max_input_tokens": 922000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol"
+    },
+    "gpt-6.1-terra": {
+      "context_window": 1050000,
+      "max_input_tokens": 922000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.1-terra"
+    },
+    "gpt-6-astra": {
+      "context_window": 1050000,
+      "max_input_tokens": 922000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-astra"
+    },
+    "gpt-6-sol": {
+      "context_window": 1050000,
+      "max_input_tokens": 922000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-sol"
+    },
+    "gpt-6-luna": {
+      "context_window": 1050000,
+      "max_input_tokens": 922000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-luna"
+    },
+    "gpt-5.6-sol": {
+      "context_window": 1050000,
+      "max_input_tokens": 922000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.6-sol"
+    },
+    "gpt-5.6-terra": {
+      "context_window": 1050000,
+      "max_input_tokens": 922000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.6-terra"
+    },
+    "gpt-5.6-luna": {
+      "context_window": 1050000,
+      "max_input_tokens": 922000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+    },
+    "gpt-5.5": {
+      "context_window": 1050000,
+      "max_input_tokens": null,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.5"
+    },
+    "gpt-5.5-pro": {
+      "context_window": 1050000,
+      "max_input_tokens": null,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.5-pro"
+    },
+    "gpt-5.4": {
+      "context_window": 1050000,
+      "max_input_tokens": null,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.4"
+    },
+    "gpt-5.4-pro": {
+      "context_window": 1050000,
+      "max_input_tokens": null,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.4-pro"
+    },
+    "gpt-5.4-mini": {
+      "context_window": 400000,
+      "max_input_tokens": 272000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.4-mini"
+    },
+    "gpt-5.4-nano": {
+      "context_window": 400000,
+      "max_input_tokens": 272000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.4-nano"
+    },
+    "gpt-5.3-codex": {
+      "context_window": 400000,
+      "max_input_tokens": 272000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.3-codex"
+    },
+    "gpt-5.2": {
+      "context_window": 400000,
+      "max_input_tokens": null,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.2"
+    },
+    "gpt-5.2-pro": {
+      "context_window": 400000,
+      "max_input_tokens": null,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": true,
+      "compaction_status": "documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.2-pro"
+    },
+    "gpt-5.1": {
+      "context_window": 400000,
+      "max_input_tokens": null,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.1"
+    },
+    "gpt-5": {
+      "context_window": 400000,
+      "max_input_tokens": 272000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5"
+    },
+    "gpt-5-mini": {
+      "context_window": 400000,
+      "max_input_tokens": 272000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5-mini"
+    },
+    "gpt-5-nano": {
+      "context_window": 400000,
+      "max_input_tokens": 272000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5-nano"
+    },
+    "gpt-5-pro": {
+      "context_window": 400000,
+      "max_input_tokens": null,
+      "max_output_tokens": 272000,
+      "reasoning": true,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5-pro"
+    },
+    "o3": {
+      "context_window": 200000,
+      "max_input_tokens": null,
+      "max_output_tokens": 100000,
+      "reasoning": true,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/o3"
+    },
+    "o3-mini": {
+      "context_window": 200000,
+      "max_input_tokens": null,
+      "max_output_tokens": 100000,
+      "reasoning": true,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/o3-mini"
+    },
+    "o4-mini": {
+      "context_window": 200000,
+      "max_input_tokens": null,
+      "max_output_tokens": 100000,
+      "reasoning": true,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/o4-mini"
+    },
+    "gpt-4.1": {
+      "context_window": 1047576,
+      "max_input_tokens": null,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-4.1"
+    },
+    "gpt-4.1-mini": {
+      "context_window": 1047576,
+      "max_input_tokens": null,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-4.1-mini"
+    },
+    "gpt-4.1-nano": {
+      "context_window": 1047576,
+      "max_input_tokens": null,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-4.1-nano"
+    },
+    "gpt-4o": {
+      "context_window": 128000,
+      "max_input_tokens": null,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-4o"
+    },
+    "gpt-4o-mini": {
+      "context_window": 128000,
+      "max_input_tokens": null,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "server_compaction": false,
+      "compaction_status": "not_documented",
+      "source": "https://developers.openai.com/api/docs/models/gpt-4o-mini"
+    }
+  },
+  "aliases": {
+    "gpt-5.6": "gpt-5.6-sol",
+    "gpt-5.5-2026-04-23": "gpt-5.5",
+    "gpt-5.5-pro-2026-04-23": "gpt-5.5-pro",
+    "gpt-5.4-2026-03-05": "gpt-5.4",
+    "gpt-5.4-pro-2026-03-05": "gpt-5.4-pro",
+    "gpt-5.4-mini-2026-03-17": "gpt-5.4-mini",
+    "gpt-5.4-nano-2026-03-17": "gpt-5.4-nano",
+    "gpt-5.2-2025-12-11": "gpt-5.2",
+    "gpt-5.2-pro-2025-12-11": "gpt-5.2-pro",
+    "gpt-5.1-2025-11-13": "gpt-5.1",
+    "gpt-5-2025-08-07": "gpt-5",
+    "gpt-5-mini-2025-08-07": "gpt-5-mini",
+    "gpt-5-nano-2025-08-07": "gpt-5-nano",
+    "gpt-5-pro-2025-10-06": "gpt-5-pro",
+    "o3-2025-04-16": "o3",
+    "o3-mini-2025-01-31": "o3-mini",
+    "o4-mini-2025-04-16": "o4-mini",
+    "gpt-4.1-2025-04-14": "gpt-4.1",
+    "gpt-4.1-mini-2025-04-14": "gpt-4.1-mini",
+    "gpt-4.1-nano-2025-04-14": "gpt-4.1-nano",
+    "gpt-4o-2024-08-06": "gpt-4o",
+    "gpt-4o-2024-11-20": "gpt-4o",
+    "gpt-4o-mini-2024-07-18": "gpt-4o-mini"
+  }
+}

@@ -1357,6 +1357,7 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
 .image-generation-set-header small { color: var(--muted); font: 8px/1.3 var(--font-mono); }
 .image-reasoning-panel {
     --reasoning-accent: #2563eb;
+    --reasoning-border: color-mix(in srgb, var(--reasoning-accent) 32%, var(--border));
     --reasoning-glow: rgba(37, 99, 235, 0.34);
     --reasoning-tint: color-mix(in srgb, #2563eb 8%, var(--bg));
     position: relative;
@@ -1364,7 +1365,7 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
     margin: 7px 8px;
 
     overflow: visible;
-    border: 1px solid color-mix(in srgb, var(--reasoning-accent) 32%, var(--border));
+    border: 1px solid var(--reasoning-border);
     border-left: 3px solid var(--reasoning-accent);
     border-radius: 6px;
     background: var(--reasoning-tint);
@@ -1460,12 +1461,12 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
     padding: 7px 22px 7px 8px;
     overflow-x: hidden;
     overflow-y: auto;
-    border-top: 1px solid color-mix(in srgb, var(--reasoning-accent) 20%, var(--border-soft));
+    border-top: 1px solid var(--reasoning-border);
     transition: max-height 360ms cubic-bezier(0.22, 0.8, 0.24, 1);
 }
 .image-reasoning-log.is-fully-expanded { max-height: min(62vh, 760px); }
 .image-reasoning-turn { display: grid; gap: 4px; }
-.image-reasoning-turn + .image-reasoning-turn { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--border-soft); }
+.image-reasoning-turn + .image-reasoning-turn { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--reasoning-border); }
 .image-reasoning-turn-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--reasoning-accent); }
 .image-reasoning-turn-title strong { font-size: 8px; }
 .image-reasoning-turn-title span { color: var(--muted); font: 7px/1.2 var(--font-mono); }
@@ -1496,7 +1497,7 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
 .image-reasoning-content-toggle { position: absolute; right: 14px; bottom: 4px; z-index: 3; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--muted); opacity: 0.72; }
 .image-reasoning-content-toggle:hover { background: transparent; color: var(--reasoning-accent); opacity: 1; }
 .image-reasoning-content-toggle svg { width: 11px; height: 11px; }
-.image-reasoning-supplement-tabs { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; gap: 0 12px; border-top: 1px solid var(--border-soft); }
+.image-reasoning-supplement-tabs { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; gap: 0 12px; border-top: 1px solid var(--reasoning-border); }
 .image-reasoning-supplement-toggle { display: inline-flex; align-items: center; min-height: 25px; padding: 4px 0; gap: 4px; border: 0; border-bottom: 1px solid transparent; background: transparent; color: var(--muted); font-size: 8px; font-weight: 650; }
 .image-reasoning-supplement-toggle:hover { color: var(--reasoning-accent); }
 .image-reasoning-supplement-toggle.is-active { border-bottom-color: var(--reasoning-accent); color: var(--reasoning-accent); }
@@ -1509,10 +1510,11 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
 .image-reasoning-web-sources a > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .image-reasoning-web-sources a > small { max-width: 115px; overflow: hidden; color: var(--muted); font: 7px/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .image-reasoning-web-references { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(84px, 120px)); align-items: stretch !important; padding: 7px 0 0; gap: 6px !important; animation: reasoningSupplementOpen 220ms ease-out both; }
-.image-reasoning-web-reference { display: grid; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text-soft); text-align: left; }
-.image-reasoning-web-reference:hover { border-color: #0f766e; }
-.image-reasoning-web-reference img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #fff; }
-.image-reasoning-web-reference span { display: block; overflow: hidden; padding: 4px 5px; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.image-reasoning-web-reference { display: grid; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--reasoning-border); border-radius: 4px; background: color-mix(in srgb, var(--reasoning-accent) 3%, var(--bg)); color: var(--text-soft); text-align: left; transition: border-color 220ms ease, background-color 220ms ease; }
+.image-reasoning-web-reference:hover { border-color: var(--reasoning-accent); background: color-mix(in srgb, var(--reasoning-accent) 8%, var(--bg)); }
+.image-reasoning-web-reference:focus-visible { border-color: var(--reasoning-accent); outline: 2px solid var(--reasoning-accent); outline-offset: 2px; }
+.image-reasoning-web-reference img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: var(--surface-soft); }
+.image-reasoning-web-reference span { display: block; overflow: hidden; padding: 4px 5px; border-top: 1px solid var(--reasoning-border); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .image-reasoning-final-prompt p {
     max-height: 180px;
     margin: 0;

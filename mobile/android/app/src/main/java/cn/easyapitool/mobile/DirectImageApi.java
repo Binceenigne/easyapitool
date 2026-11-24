@@ -22,6 +22,9 @@ import java.util.List;
 import java.util.UUID;
 import java.util.Set;
 import org.xmlpull.v1.XmlPullParser;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 final class DirectImageApi {
     static final String GATEWAY = "https://39.105.74.222/openai/v1";
@@ -74,6 +77,42 @@ final class DirectImageApi {
             .replaceAll("(?i)Bearer\\s+[^\\s\\\",}]+", "Bearer [redacted]")
             .replaceAll("(?i)(\\\"(?:api[_-]?key|authorization|password|secret)\\\"\\s*:\\s*)\\\"[^\\\"]*\\\"", "$1\\\"[redacted]\\\"")
             .replaceAll("(?i)(https?://)[^/\\s@]+@", "$1[redacted]@");
+    }
+
+    static String redactResponsePayload(String payload, String secret) {
+        try {
+            return redactResponseValue(new JSONObject(payload), secret).toString();
+        } catch (JSONException invalid) {
+            return redact(payload, secret);
+        }
+    }
+
+    private static Object redactResponseValue(Object value, String secret) throws JSONException {
+        if (value instanceof JSONObject object) {
+            JSONObject safe = new JSONObject();
+            var names = object.keys();
+            while (names.hasNext()) {
+                String name = names.next();
+                Object item = object.get(name);
+                if (item instanceof String && ("encrypted_content".equals(name) || "encryptedContent".equals(name))) {
+                    // This opaque provider state must round-trip byte for byte.
+                    // Regex redaction of a full JSON envelope could accidentally
+                    // replace random key-like bytes inside encrypted compaction.
+                    safe.put(name, item);
+                } else if (name.matches("(?i)api[_-]?key|authorization|password|secret")) {
+                    safe.put(name, "[redacted]");
+                } else {
+                    safe.put(name, redactResponseValue(item, secret));
+                }
+            }
+            return safe;
+        }
+        if (value instanceof JSONArray array) {
+            JSONArray safe = new JSONArray();
+            for (int i = 0; i < array.length(); i++) safe.put(redactResponseValue(array.get(i), secret));
+            return safe;
+        }
+        return value instanceof String text ? redact(text, secret) : value;
     }
 
     static String endpoint(String value) throws IOException {

@@ -70,7 +70,10 @@ func (g *gateway) rewriteAgent(ctx context.Context, selected route, model, effor
 	request := object{"requestId": requestID, "request": object{
 		"base_url": g.cfg.agentProxyBase, "api_key": lease, "model": model, "effort": effort,
 		"instructions": imagePromptInstructions(target), "input": prompt, "mode": objectString(target, "reasoningMode"),
-		"web_search_enabled": web, "max_turns": 12, "max_output_tokens": 8192, "max_attempts": maximum, "timeout": timeout.Seconds(),
+		// The shared SDK registry chooses the documented model output/context
+		// limits. An artificial per-call cap can exhaust reasoning tokens before
+		// a final prompt is produced.
+		"web_search_enabled": web, "max_turns": 12, "max_attempts": maximum, "timeout": timeout.Seconds(),
 	}}
 	planningTurns, _ := visualPlanningBudget(objectString(target, "reasoningMode"), effort)
 	if isContinuation(target) {

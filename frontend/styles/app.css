@@ -3470,13 +3470,14 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
 
 .image-reasoning-panel {
   --reasoning-accent: #2563eb;
+  --reasoning-border: color-mix(in srgb, var(--reasoning-accent) 32%, var(--border));
   --reasoning-glow: rgba(37, 99, 235, 0.34);
   --reasoning-tint: color-mix(in srgb, #2563eb 8%, var(--bg));
   position: relative;
   display: grid;
   margin: 7px 8px;
   overflow: visible;
-  border: 1px solid color-mix(in srgb, var(--reasoning-accent) 32%, var(--border));
+  border: 1px solid var(--reasoning-border);
   border-left: 3px solid var(--reasoning-accent);
   border-radius: 6px;
   background: var(--reasoning-tint);
@@ -3653,7 +3654,7 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
   padding: 7px 22px 7px 8px;
   overflow-x: hidden;
   overflow-y: auto;
-  border-top: 1px solid color-mix(in srgb, var(--reasoning-accent) 20%, var(--border-soft));
+  border-top: 1px solid var(--reasoning-border);
   transition: max-height 360ms cubic-bezier(0.22, 0.8, 0.24, 1);
 }
 
@@ -3669,7 +3670,7 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
 .image-reasoning-turn + .image-reasoning-turn {
   margin-top: 9px;
   padding-top: 8px;
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--reasoning-border);
 }
 
 .image-reasoning-turn-title {
@@ -3780,7 +3781,7 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
   align-items: center;
   min-width: 0;
   gap: 0 12px;
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--reasoning-border);
 }
 
 .image-reasoning-supplement-toggle {
@@ -3878,15 +3879,23 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
   min-width: 0;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--reasoning-border);
   border-radius: 4px;
-  background: var(--bg);
+  background: color-mix(in srgb, var(--reasoning-accent) 3%, var(--bg));
   color: var(--text-soft);
   text-align: left;
+  transition: border-color 220ms ease, background-color 220ms ease;
 }
 
 .image-reasoning-web-reference:hover {
-  border-color: #0f766e;
+  border-color: var(--reasoning-accent);
+  background: color-mix(in srgb, var(--reasoning-accent) 8%, var(--bg));
+}
+
+.image-reasoning-web-reference:focus-visible {
+  border-color: var(--reasoning-accent);
+  outline: 2px solid var(--reasoning-accent);
+  outline-offset: 2px;
 }
 
 .image-reasoning-web-reference img {
@@ -3894,13 +3903,14 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
   width: 100%;
   aspect-ratio: 4/3;
   object-fit: cover;
-  background: #fff;
+  background: var(--surface-soft);
 }
 
 .image-reasoning-web-reference span {
   display: block;
   overflow: hidden;
   padding: 4px 5px;
+  border-top: 1px solid var(--reasoning-border);
   font-size: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;

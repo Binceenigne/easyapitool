@@ -1,6 +1,29 @@
 import {Agent, Runner, OpenAIResponsesModel, webSearchTool, setTracingDisabled, tool, MaxTurnsExceededError, ModelRefusalError, UserError, ModelBehaviorError} from '@openai/agents';
 import OpenAI from 'openai';
+import modelLimits from '../../mirra_agents/model_limits.json';
 setTracingDisabled(true);
+function documentedLimits(model) {
+ const identifier=String(model||'').trim().toLowerCase();
+ return modelLimits.models[modelLimits.aliases?.[identifier]||identifier];
+}
+function modelPolicy(model) {
+ const limits=documentedLimits(model);
+ if(!limits)return{};
+ const usable=Math.min(limits.max_input_tokens??limits.context_window,limits.context_window-limits.max_output_tokens);
+ return{maxTokens:limits.max_output_tokens,truncation:'disabled',...(limits.server_compaction&&usable>0?{contextManagement:[{type:'compaction',compactThreshold:Math.floor(usable*9/10)}]}:{})};
+}
+const documentedReasoning=model=>Boolean(documentedLimits(model)?.reasoning);
+function compactedInput(input,updates) {
+ if(!Array.isArray(input))return input;
+ for(let index=input.length-1;index>=0;index--){
+  const marker=input[index];if(marker?.type!=='compaction'||typeof marker.encrypted_content!=='string'||!marker.encrypted_content)continue;
+  const suffix=input.slice(index),recorded=updates.get(marker.id);if(!recorded?.length)return suffix;
+  let end=1;while(suffix[end]?.type==='configuration_update')end++;
+  const seen=new Set(recorded.map(item=>JSON.stringify(item)));
+  return[suffix[0],...recorded,...suffix.slice(1,end).filter(item=>!seen.has(JSON.stringify(item))),...suffix.slice(end)];
+ }
+ return input;
+}
 function linkedSignals(...signals) {
  const controller=new AbortController();
  const listeners=signals.filter(Boolean).map(signal=>{const abort=()=>controller.abort(signal.reason);if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true});return{signal,abort};});
@@ -12,7 +35,7 @@ const publicCandidate=value=>Object.fromEntries(['id','title','caption','imageUr
 export async function runNativeAgent({model,effort,instructions,input,webSearch=false,signal,transport,onEvent=()=>{},inspectReferences,selectReferences,maxInspectReferences=0,maxAdoptReferences=0,maxTurns=8,getRequestCount}) {
  if(typeof transport!=='function')throw new Error('Native Agents transport is unavailable');
  let lastResponseMeta={},turn=0,localToolCount=0,selected=[],selectionMade=false;
- const images=new Map(),sources=new Map(),inspected=new Map(),attempted=new Set(),webCalls=new Set(),toolCalls=new Set();
+ const images=new Map(),sources=new Map(),inspected=new Map(),attempted=new Set(),webCalls=new Set(),toolCalls=new Set(),compactionUpdates=new Map();
  const stats=()=>{const requests=typeof getRequestCount==='function'?Number(getRequestCount()):NaN;return{turnCount:turn,requestCount:Number.isFinite(requests)&&requests>=0?requests:turn,toolCallCount:toolCalls.size,webSearchCallCount:webCalls.size,localToolCallCount:localToolCount};};
  const emit=event=>onEvent({...event,...stats()});
  const canInspect=webSearch&&maxInspectReferences>0&&typeof inspectReferences==='function';
@@ -42,8 +65,17 @@ export async function runNativeAgent({model,effort,instructions,input,webSearch=
  const client=new OpenAI({apiKey:'mirra-native-secret-placeholder',baseURL:'https://mirra-native.invalid/v1',dangerouslyAllowBrowser:true,maxRetries:0,timeout:16*60*1000,
   fetch:async(url,init={})=>{
    if(!String(url).endsWith('/responses')||init.method!=='POST')throw new Error('Unsupported SDK transport route');if(signal?.aborted)throw new DOMException('已取消','AbortError');
-   const body=JSON.parse(init.body||'{}');if(body.stream===true)throw new Error('Streaming SDK transport is not enabled');const linked=linkedSignals(signal,init.signal);turn++;emit({type:'turn_started',turn,attempt:1,maxAttempts:3});
+   const body=JSON.parse(init.body||'{}');if(body.stream===true)throw new Error('Streaming SDK transport is not enabled');
+   // SDK 0.22 trims to the latest opaque compaction, but does not create run
+   // items for its configuration_update suffix. Replay those accepted provider
+   // items unchanged so settings survive both tool loops and semantic resumes.
+   body.input=compactedInput(body.input,compactionUpdates);
+   const linked=linkedSignals(signal,init.signal);turn++;emit({type:'turn_started',turn,attempt:1,maxAttempts:3});
    try{const result=await transport(body,linked.signal),data=typeof result.body==='string'?JSON.parse(result.body):result.body;lastResponseMeta={status:result.status||200,request_id:result.headers?.['x-request-id']||data?.id};
+    if((result.status||200)<300&&data?.status==='completed')for(const[index,item]of(data.output||[]).entries()){
+     if(item.type!=='compaction'||!item.id||!item.encrypted_content)continue;
+     const updates=[];for(const following of data.output.slice(index+1)){if(following.type!=='configuration_update')break;updates.push(following);}compactionUpdates.set(item.id,updates);
+    }
     for(const item of data?.output||[]){
      if(item.type==='web_search_call'){const callId=item.id||`web-${turn}-${webCalls.size+1}`;if(!webCalls.has(callId)){webCalls.add(callId);toolCalls.add(callId);emit({type:'web_search_started',turn,callId,tool:'web_search',action:item.action?.type||'search',query:item.action?.query});}
       for(const image of item.results||[])if(image.type==='image_result'&&image.image_url?.startsWith('https://')&&images.size<48)images.set(image.image_url,image);
@@ -55,7 +87,7 @@ export async function runNativeAgent({model,effort,instructions,input,webSearch=
     emit({type:'turn_completed',turn,usage:data?.usage||{}});return new Response(typeof result.body==='string'?result.body:JSON.stringify(result.body),{status:result.status||200,headers:{'content-type':'application/json',...result.headers}});
    }finally{linked.cleanup();}
   }});
- const agent=new Agent({name:'Mirra image prompt planner',instructions,model:new OpenAIResponsesModel(client,model),modelSettings:{store:false,maxTokens:8192,parallelToolCalls:false,reasoning:{effort},retry:{maxRetries:0},...(webSearch?{providerData:{max_tool_calls:3,include:['web_search_call.action.sources','web_search_call.results']}}:{})},tools:[...(webSearch?[webSearchTool({searchContentTypes:['image','text'],imageSettings:{maxResults:8,caption:true}})]:[]),...localTools]});
+ const agent=new Agent({name:'Mirra image prompt planner',instructions,model:new OpenAIResponsesModel(client,model),modelSettings:{store:false,...modelPolicy(model),preserveRawUsage:true,parallelToolCalls:false,reasoning:{effort},retry:{maxRetries:0},providerData:{...(webSearch?{max_tool_calls:3}:{}),include:[...(documentedReasoning(model)?['reasoning.encrypted_content']:[]),...(webSearch?['web_search_call.action.sources','web_search_call.results']:[])]}},tools:[...(webSearch?[webSearchTool({searchContentTypes:['image','text'],imageSettings:{maxResults:8,caption:true}})]:[]),...localTools]});
  const runner=new Runner({tracingDisabled:true,traceIncludeSensitiveData:false});let result,history=input;const usage={inputTokens:0,outputTokens:0,totalTokens:0,cachedTokens:0};
  try{for(;;){if(turn>=maxTurns)throw Object.assign(new Error('Agent已达到处理轮数上限'),{code:'max_turns'});result=await runner.run(agent,history,{signal,maxTurns:maxTurns-turn});const part=result.state?.usage;if(part)for(const key of Object.keys(usage))usage[key]+=Number(part[key])||0;
    let feedback='';if(canInspect&&images.size&&!attempted.size)feedback='官方图片搜索已返回候选，请先调用inspect_visual_references检视真实图片，再完成方案。';else if(inspected.size&&!selectionMade)feedback='请调用select_visual_references明确采用哪些已检视的图片，或传空数组说明不采用原因，然后完成最终提示词。';if(!feedback)break;history=[...result.history,{role:'user',content:feedback}];

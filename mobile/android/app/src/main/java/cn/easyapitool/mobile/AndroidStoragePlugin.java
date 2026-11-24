@@ -61,6 +61,7 @@ public class AndroidStoragePlugin extends Plugin {
 
     private static final int MAX_REFERENCE_COUNT = 16;
     private static final long MAX_ASSET_BYTES = 50L * 1024L * 1024L;
+    private static final long MAX_AGENT_RESPONSE_BYTES = 16L * 1024L * 1024L;
     private static final long MAX_UPDATE_BYTES = 200L * 1024L * 1024L;
     private static final int BUFFER_BYTES = 64 * 1024;
     private static final String KEYSTORE = "AndroidKeyStore";
@@ -443,9 +444,9 @@ public class AndroidStoragePlugin extends Plugin {
                 }
                 if (sdkTransport) {
                     status = connection.getResponseCode();
-                    String payload = readDirectPayload(connection, status);
+                    String payload = readDirectPayload(connection, status, MAX_AGENT_RESPONSE_BYTES);
                     if (status >= 200 && status < 300) rememberVisualResults(keyId, requestId, payload);
-                    call.resolve(new JSObject().put("status", status).put("body", DirectImageApi.redact(payload, secret))
+                    call.resolve(new JSObject().put("status", status).put("body", DirectImageApi.redactResponsePayload(payload, secret))
                         .put("headers", directResponseHeaders(connection)));
                     return;
                 }
@@ -614,10 +615,14 @@ public class AndroidStoragePlugin extends Plugin {
     }
 
     private String readDirectPayload(HttpURLConnection connection, int status) throws IOException {
+        return readDirectPayload(connection, status, 2L * 1024L * 1024L);
+    }
+
+    private String readDirectPayload(HttpURLConnection connection, int status, long limit) throws IOException {
         InputStream stream = status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream();
         if (stream == null) return "";
         try (InputStream input = stream; java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
-            copy(input, output, 2 * 1024 * 1024);
+            copy(input, output, limit);
             return output.toString(StandardCharsets.UTF_8.name());
         }
     }

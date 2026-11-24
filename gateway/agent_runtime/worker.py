@@ -271,7 +271,18 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Invalid mode")
         if not isinstance(request.get("web_search_enabled", False), bool):
             raise ValueError("Invalid search setting")
-        for field, minimum, maximum, default in (("max_turns", 1, 32, 12), ("max_output_tokens", 1, 8192, 8192), ("max_attempts", 1, 5, 3)):
+        # Missing output limits are intentionally left missing: AgentRequest
+        # resolves the official per-model maximum and compaction policy. Keep
+        # explicit caller limits only when they fit that model's documented
+        # output budget; unknown models keep their provider defaults.
+        if "max_output_tokens" in request:
+            from mirra_agents.model_limits import get_model_limits
+            limit = request["max_output_tokens"]
+            model_limits = get_model_limits(request["model"])
+            if (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1
+                    or limit > (model_limits.max_output_tokens if model_limits else 2_147_483_647)):
+                raise ValueError("Invalid model output limit")
+        for field, minimum, maximum, default in (("max_turns", 1, 32, 12), ("max_attempts", 1, 5, 3)):
             value = request.get(field, default)
             if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
                 raise ValueError("Invalid runtime limit")
