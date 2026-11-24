@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .agent_metadata import IMAGE_AGENT_METADATA_FIELDS
+
 import base64
 import binascii
 import concurrent.futures
@@ -51,7 +53,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.6"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(

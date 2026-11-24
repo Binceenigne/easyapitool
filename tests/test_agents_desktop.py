@@ -14,12 +14,86 @@ import app
 import backend.controller_mixins.image_files as image_files
 import backend.controller_mixins.image_reasoning as image_reasoning
 from backend.image_editor import ImageGenerationClient, ImageGenerationService
+from backend.web_search import WebSearchService
 from mirra_agents import run_agent
 from mirra_agents.retry import ProviderResponseError
 from tests.test_agents_runtime import response_payload, sse_response
 
 
 class DesktopAgentsTests(unittest.TestCase):
+    def test_official_images_are_inspected_selected_submitted_and_restored(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller = self.controller()
+            controller.web_search = WebSearchService()
+            events, bodies, image_requests = [], [], []
+            image_url = "https://cdn.reference.test/subject.png"
+            source_url = "https://reference.test/subject"
+            candidate_id = controller.web_search._candidate_id(image_url)
+            source_image = io.BytesIO()
+            Image.new("RGB", (256, 192), "orange").save(source_image, format="PNG")
+            original_bytes = source_image.getvalue()
+            expected_reference = controller.web_search._normalized_image_bytes(original_bytes)
+
+            def function_call(name, arguments, suffix):
+                return {"id": "fc-" + suffix, "call_id": "call-" + suffix, "type": "function_call", "status": "completed", "name": name, "arguments": json.dumps(arguments)}
+
+            def handler(request):
+                body = json.loads(request.content)
+                bodies.append(body)
+                if len(bodies) == 1:
+                    tool = next(tool for tool in body["tools"] if tool["type"] == "web_search")
+                    self.assertEqual(tool["search_content_types"], ["image", "text"])
+                    self.assertIn("web_search_call.results", body["include"])
+                    text = "尚未看图的初步方案。\n<<<FINAL_PROMPT>>>OUTDATED FIRST PROMPT"
+                    web = {"id": "web-search-real", "type": "web_search_call", "status": "completed",
+                           "action": {"type": "search", "query": "subject reference", "sources": [{"type": "url", "url": source_url}]},
+                           "results": [{"type": "image_result", "image_url": image_url, "source_website_url": source_url, "caption": "Orange subject"}]}
+                    return sse_response(text, [web, *response_payload(text)["output"]])
+                if len(bodies) == 2:
+                    self.assertTrue(any("inspect_visual_references" in str(item.get("content")) for item in body["input"]))
+                    return sse_response("", [function_call("inspect_visual_references", {"image_urls": []}, "inspect")])
+                if len(bodies) == 3:
+                    output = next(item["output"] for item in body["input"] if item.get("type") == "function_call_output")
+                    images = [part for part in output if part["type"] == "input_image"]
+                    self.assertEqual(len(images), 1)
+                    with Image.open(io.BytesIO(base64.b64decode(images[0]["image_url"].split(",", 1)[1]))) as actual:
+                        self.assertEqual(actual.size, (256, 192))
+                    return sse_response("", [function_call("select_visual_references", {"candidate_ids": [candidate_id], "rationale": "采用这张图保持主体外观"}, "select")])
+                return sse_response("已看图并确认主体外观，补全光线与构图。\n<<<FINAL_PROMPT>>>FINAL VERIFIED SUBJECT PROMPT")
+
+            self.sdk_transport(controller, handler)
+
+            def generate(_base, _secret, request, output_dir, **_kwargs):
+                image_requests.append(request)
+                self.assertEqual(request.prompt, "FINAL VERIFIED SUBJECT PROMPT")
+                self.assertEqual(len(request.image_paths), 1)
+                self.assertEqual(request.image_paths[0].read_bytes(), expected_reference)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                path = output_dir / "result.png"
+                Image.new("RGB", (64, 64), "navy").save(path)
+                return {"ok": True, "path": str(path), "uri": path.as_uri(), "format": "png", "width": 64, "height": 64}
+
+            controller.image_generator = SimpleNamespace(generate=generate)
+            with patch.object(image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(image_files, "generated_pictures_dir", return_value=root / "Pictures"), patch.object(controller.web_search, "_public_image_bytes", return_value=original_bytes) as download:
+                result = controller.generate_image("key", "Draw the subject faithfully", [], {
+                    "requestId": "official-visual-loop", "reasoningMode": "max", "webSearchEnabled": True,
+                }, events.append)
+            self.assertTrue(result["ok"], result.get("error"))
+            self.assertEqual(len(image_requests), 1)
+            self.assertEqual(download.call_count, 1, "The adopted image must reuse the bytes the Agent actually inspected")
+            self.assertEqual((result["requestCount"], result["toolCallCount"], result["webReferenceCount"]), (4, 3, 1))
+            self.assertEqual(result["webReferences"][0]["sourceUrl"], source_url)
+            saved = app.ImageSessionStore(root / "Pictures").list_sets()[0]
+            self.assertEqual(saved["webReferenceCount"], 1)
+            self.assertTrue(Path(saved["webReferences"][0]["path"]).is_file())
+            self.assertTrue(Path(saved["webReferences"][0]["previewPath"]).is_file())
+            self.assertEqual(saved["webSearchSources"][0]["url"], source_url)
+            self.assertEqual((saved["requestCount"], len(saved["reasoningTurns"])), (4, 4))
+            tools = [tool for turn in saved["reasoningTurns"] for tool in turn["tools"]]
+            self.assertEqual(len(tools), 3)
+            self.assertTrue(all(tool["status"] == "completed" for tool in tools))
+
     def controller(self):
         controller=app.AppController.__new__(app.AppController)
         controller.store=SimpleNamespace(latest_payload=lambda _key:None,

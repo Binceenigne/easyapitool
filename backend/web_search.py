@@ -407,6 +407,64 @@ class WebSearchService:
             "errors": errors,
         }
 
+    def inspect_image_results(
+        self,
+        candidates: list[dict[str, Any]],
+        max_count: int = 6,
+        task_context: Any = None,
+    ) -> dict[str, Any]:
+        """Verify images discovered by the hosted search; never run another search engine."""
+        selected = candidates[:max(0, min(12, max_count))]
+
+        def inspect_candidate(candidate: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+            if task_context is not None:
+                task_context.check_cancelled()
+            image_url = str(candidate.get("imageUrl") or "")
+            errors: list[str] = []
+            for url in dict.fromkeys([image_url, str(candidate.get("thumbnailUrl") or "")]):
+                if not url:
+                    continue
+                try:
+                    payload = self._public_image_bytes(url, WEB_REFERENCE_IMAGE_MAX_BYTES, task_context)
+                    image_bytes = self._normalized_image_bytes(payload)
+                    with Image.open(io.BytesIO(image_bytes)) as preview_source:
+                        preview_image = preview_source.convert("RGB")
+                    preview_image.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                    for quality in (75, 60, 45):
+                        preview_buffer = io.BytesIO()
+                        preview_image.save(preview_buffer, format="JPEG", quality=quality, optimize=True)
+                        preview = preview_buffer.getvalue()
+                        if len(preview) <= 96 * 1024:
+                            break
+                    if len(preview) > 96 * 1024:
+                        raise ValueError("参考图缩略图超过检视大小限制")
+                    with Image.open(io.BytesIO(image_bytes)) as image:
+                        width, height = image.size
+                    return {
+                        **candidate,
+                        "id": self._candidate_id(image_url),
+                        "provider": "OpenAI web search",
+                        "width": width,
+                        "height": height,
+                        "_imageBytes": image_bytes,
+                        "_previewBytes": preview,
+                        "previewDataUrl": "data:image/jpeg;base64," + base64.b64encode(preview).decode("ascii"),
+                    }, None
+                except (OSError, RuntimeError, ValueError, Image.UnidentifiedImageError) as error:
+                    if task_context is not None:
+                        task_context.check_cancelled()
+                    errors.append(str(error))
+            return None, {"id": self._candidate_id(image_url), "message": errors[-1] if errors else "未能读取图片"}
+
+        if not selected:
+            return {"candidates": [], "errors": []}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(selected)), thread_name_prefix="official-image-reference") as pool:
+            results = list(pool.map(inspect_candidate, selected))
+        return {
+            "candidates": [record for record, _ in results if record is not None],
+            "errors": [error for _, error in results if error is not None],
+        }
+
     def stage_reference_records(
         self,
         candidates: list[dict[str, Any]],
@@ -417,8 +475,9 @@ class WebSearchService:
         records: list[dict[str, Any]] = []
         target_dir.mkdir(parents=True, exist_ok=True)
         for candidate in candidates[:max_count]:
-            image_bytes = b""
-            for url in (candidate.get("imageUrl"), candidate.get("thumbnailUrl")):
+            cached = candidate.get("_imageBytes")
+            image_bytes = cached if isinstance(cached, bytes) else b""
+            for url in (() if image_bytes else (candidate.get("imageUrl"), candidate.get("thumbnailUrl"))):
                 if not url:
                     continue
                 try:

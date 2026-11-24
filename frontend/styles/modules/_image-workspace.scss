@@ -1496,15 +1496,24 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
 .image-reasoning-tool span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .image-reasoning-tool.is-failed { color: var(--critical); }
 .image-reasoning-tool.is-failed svg { color: var(--critical); }
+.image-reasoning-tool.is-cancelled,
+.image-reasoning-tool.is-interrupted { color: var(--text-soft); opacity: 0.85; }
 .image-reasoning-content-toggle { position: absolute; right: 14px; bottom: 4px; z-index: 3; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--muted); opacity: 0.72; }
 .image-reasoning-content-toggle:hover { background: transparent; color: var(--reasoning-accent); opacity: 1; }
 .image-reasoning-content-toggle svg { width: 11px; height: 11px; }
-.image-reasoning-supplement-tabs { display: flex; align-items: center; min-width: 0; gap: 12px; border-top: 1px solid var(--border-soft); }
+.image-reasoning-supplement-tabs { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; gap: 0 12px; border-top: 1px solid var(--border-soft); }
 .image-reasoning-supplement-toggle { display: inline-flex; align-items: center; min-height: 25px; padding: 4px 0; gap: 4px; border: 0; border-bottom: 1px solid transparent; background: transparent; color: var(--muted); font-size: 8px; font-weight: 650; }
 .image-reasoning-supplement-toggle:hover { color: var(--reasoning-accent); }
 .image-reasoning-supplement-toggle.is-active { border-bottom-color: var(--reasoning-accent); color: var(--reasoning-accent); }
 .image-reasoning-supplement-toggle svg { width: 10px; height: 10px; }
-.image-reasoning-web-references { display: grid !important; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); align-items: stretch !important; padding: 7px 0 0; gap: 6px !important; animation: reasoningSupplementOpen 220ms ease-out both; }
+.image-reasoning-web-sources { display: grid; max-height: 180px; overflow: auto; gap: 3px; padding-top: 4px; animation: reasoningSupplementOpen 220ms ease-out both; }
+.image-reasoning-web-sources a { display: grid; grid-template-columns: 11px minmax(0, 1fr) auto; align-items: center; min-width: 0; gap: 5px; padding: 5px 6px; border-radius: 4px; color: var(--text-soft); font-size: 8px; text-decoration: none; }
+.image-reasoning-web-sources a:hover { background: color-mix(in srgb, var(--reasoning-accent) 8%, transparent); color: var(--reasoning-accent); }
+.image-reasoning-web-sources a:focus-visible { outline: 1px solid var(--reasoning-accent); outline-offset: -1px; }
+.image-reasoning-web-sources a > svg { width: 11px; height: 11px; color: var(--reasoning-accent); }
+.image-reasoning-web-sources a > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.image-reasoning-web-sources a > small { max-width: 115px; overflow: hidden; color: var(--muted); font: 7px/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.image-reasoning-web-references { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(84px, 120px)); align-items: stretch !important; padding: 7px 0 0; gap: 6px !important; animation: reasoningSupplementOpen 220ms ease-out both; }
 .image-reasoning-web-reference { display: grid; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text-soft); text-align: left; }
 .image-reasoning-web-reference:hover { border-color: #0f766e; }
 .image-reasoning-web-reference img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #fff; }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .agent_metadata import IMAGE_AGENT_METADATA_FIELDS
+
 import base64
 import binascii
 import hashlib
@@ -615,6 +617,7 @@ class ImageSessionStore:
                     "webSearchFailed": bool(options.get("webSearchFailed")),
                     "webSearchResultCount": int(options.get("webSearchResultCount") or 0),
                     "webReferenceCount": int(options.get("webReferenceCount") or 0),
+                    **{name: options[name] for name in IMAGE_AGENT_METADATA_FIELDS if name in options},
                 },
                 "items": [
                     {"itemIndex": item_index, "status": "queued", "error": ""}
@@ -1296,6 +1299,7 @@ class ImageSessionStore:
                             "webSearchResultCount": int(options.get("webSearchResultCount") or 0),
                             "webReferenceCount": len(web_references),
                             "webReferences": web_references,
+                            **{name: options[name] for name in IMAGE_AGENT_METADATA_FIELDS if name in options},
                             "createdAt": str(round_data.get("createdAt") or manifest.get("createdAt") or ""),
                             "status": str(round_data.get("status") or "completed"),
                             "items": items,

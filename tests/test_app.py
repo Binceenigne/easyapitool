@@ -1986,7 +1986,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("viewer.scale * distance / viewer.pinchDistance", page)
         self.assertIn("function reasoningToolIcon(tool)", page)
         self.assertNotIn("'search-check'", page)
-        self.assertIn("current.webReferences = set.webReferences.map", page)
+        self.assertIn("syncReasoningSupplements(current, set)", page)
 
     def test_image_prompt_assistance_controls_and_streaming_summary(self):
         self.maxDiff = 600
@@ -2064,7 +2064,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("event.type === 'prompt_polish_delta'", page)
         self.assertIn("event.type === 'react_summary_delta'", page)
         self.assertIn("event.type === 'react_tool_started'", page)
-        self.assertIn("event.type === 'react_tool_completed'", page)
+        self.assertIn("['react_tool_completed', 'react_tool_failed', 'react_tool_cancelled'].includes(event.type)", page)
         self.assertIn("event.type === 'react_tool_failed'", page)
         self.assertIn("event.type === 'react_visual_results'", page)
         self.assertIn("event.type === 'react_visual_selected'", page)
@@ -2083,7 +2083,7 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("set.webReferencesExpanded", page)
         self.assertIn("image-reasoning-web-references", page)
         self.assertIn("查看采用的网络参考图", page)
-        self.assertIn("网络参考 ${set.webReferenceCount}", page)
+        self.assertIn("采用的参考图 ${set.webReferenceCount}", page)
         self.assertIn("function toggleFinalPrompt(setId)", page)
         self.assertIn("set.finalPromptExpanded = !set.finalPromptExpanded", page)
         self.assertIn("if (set.finalPromptExpanded) set.webReferencesExpanded = false", page)
@@ -2110,7 +2110,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("function normalizeReasoningUsage(value)", page)
         self.assertIn("function formatReasoningUsage(set)", page)
         self.assertIn("function reasoningUsageTitle(set)", page)
-        self.assertIn("${tokens} token · ${calls} 次调用 · ${cost}", page)
+        self.assertIn("function reasoningToolCount(set)", page)
+        self.assertIn("API 请求 ${", page)
         self.assertIn("['response', 'estimate', 'mixed'].includes(costSource)", page)
         self.assertIn("costedCallCount === callCount", page)
         self.assertIn("官方价目估算", page)
@@ -2362,7 +2363,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn("browserImageSource(item.previewUri, item.uri)", page)
         self.assertIn("browserImageSource(item.previewUri, item.uri)", page)
         self.assertIn("browserImageSource(item.fullUri || item.result?.fullUri, frame.uri, frame.fallbackUri)", page)
-        self.assertIn("image.src = browserImageSource(result.previewUri, result.uri)", page)
+        self.assertIn("browserImageSource(result.previewUri, result.uri)", page)
+        self.assertIn("browserImageSource(result.fullUri, result.uri, result.previewUri)", page)
         self.assertIn("preview.src = browserImageSource(file.previewUri, file.uri)", page)
         self.assertIn("image.src = browserImageSource(reference.previewUri, reference.uri)", page)
         self.assertNotIn("image.src = result.uri || result.previewUri", page)
@@ -3426,6 +3428,7 @@ class ControllerTests(unittest.TestCase):
                 )
             )
             controller = app.AppController.__new__(app.AppController)
+            controller.web_search = app.WebSearchService()
             controller.image_generator = service
             controller.store = SimpleNamespace(
                 latest_payload=lambda _key_id: None,
@@ -3522,6 +3525,7 @@ class ControllerTests(unittest.TestCase):
                 )
             )
             controller = app.AppController.__new__(app.AppController)
+            controller.web_search = app.WebSearchService()
             controller.image_generator = service
             controller.store = SimpleNamespace(
                 latest_payload=lambda _key_id: None,
@@ -3574,6 +3578,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_flash_agent_assesses_information_gaps_and_keeps_search_tools(self):
         controller = app.AppController.__new__(app.AppController)
+        controller.web_search = app.WebSearchService()
         captured = {}
         events = []
 

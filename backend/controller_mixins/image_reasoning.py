@@ -529,6 +529,7 @@ class ImageReasoningMixin:
         reasoning_effort = ""
         reasoning_duration_ms = 0
         reasoning_usage: dict[str, Any] = {}
+        agent_metadata: dict[str, Any] = {}
         web_search_used = False
         web_search_failed = False
         web_search_result_count = 0
@@ -649,6 +650,7 @@ class ImageReasoningMixin:
                 web_search_used = bool(agent_result.get("webSearchUsed"))
                 web_search_failed = bool(agent_result.get("webSearchFailed"))
                 web_search_result_count = int(agent_result.get("webSearchResultCount") or 0)
+                agent_metadata = {name: agent_result[name] for name in IMAGE_AGENT_METADATA_FIELDS if name in agent_result}
                 if continuation_enabled:
                     continuation_plan = agent_result.get("continuationPlan")
             except (RuntimeError, OSError, ValueError) as exc:
@@ -768,6 +770,7 @@ class ImageReasoningMixin:
                 "webSearchFailed": web_search_failed,
                 "webSearchResultCount": web_search_result_count,
                 "webReferenceCount": len(web_reference_paths),
+                **agent_metadata,
                 "operation": request.operation,
             }
         )
@@ -870,6 +873,7 @@ class ImageReasoningMixin:
             webSearchResultCount=web_search_result_count,
             webReferenceCount=len(persisted_web_references),
             webReferences=persisted_web_references,
+            **agent_metadata,
         )
 
         def generate_one(item_index: int) -> dict[str, Any]:
@@ -984,6 +988,7 @@ class ImageReasoningMixin:
             "webSearchResultCount": web_search_result_count,
             "webReferenceCount": len(persisted_web_references),
             "webReferences": persisted_web_references,
+            **agent_metadata,
         }
         if not successful:
             result["error"] = "所有图片生成请求均失败：" + str(items[0].get("error") or "未返回有效图片")
@@ -1015,5 +1020,6 @@ class ImageReasoningMixin:
             webSearchResultCount=web_search_result_count,
             webReferenceCount=len(persisted_web_references),
             webReferences=persisted_web_references,
+            **agent_metadata,
         )
         return result

@@ -498,9 +498,17 @@
         }
 
         function reasoningToolLabel(tool) {
-            const query = String(tool.arguments?.query || '').trim();
+            const action = tool.arguments?.action;
+            const actionType = typeof action === 'string' ? action : action?.type;
+            const query = String(tool.arguments?.query || action?.query || tool.arguments?.queries?.[0] || action?.queries?.[0] || '').trim();
+            if (tool.name === 'web_search') {
+                if (actionType === 'open_page') return '阅读来源网页';
+                if (actionType === 'find_in_page') return '核对网页内容';
+                return query ? `联网检索“${query}”` : 'OpenAI 联网检索';
+            }
             if (tool.name === 'search_web') return query ? `搜索关键词“${query}”` : '搜索网页';
             if (tool.name === 'search_visual_references') return query ? `搜索图片“${query}”` : '搜索图片';
+            if (tool.name === 'inspect_visual_references' || tool.name === 'inspect_reference_pages') return '查看参考图与视觉细节';
             if (tool.name === 'select_visual_references') return '筛选可用参考图';
             if (tool.name === 'plan_image_continuation') return '规划续作与素材';
             return '调用工具';
@@ -509,8 +517,11 @@
         function reasoningToolIcon(tool) {
             if (tool.status === 'running') return 'loader-circle';
             if (tool.status === 'failed') return 'info';
-            if (tool.name === 'search_web') return 'globe';
+            if (tool.status === 'cancelled') return 'square';
+            if (tool.status === 'interrupted') return 'circle-dashed';
+            if (tool.name === 'web_search' || tool.name === 'search_web') return 'globe';
             if (tool.name === 'search_visual_references') return 'images';
+            if (tool.name === 'inspect_visual_references' || tool.name === 'inspect_reference_pages') return 'scan-eye';
             if (tool.name === 'select_visual_references') return 'list-checks';
             if (tool.name === 'plan_image_continuation') return 'corner-down-left';
             return 'circle-check';
@@ -523,12 +534,14 @@
                 set.reasoningModel,
                 set.reasoningDepth || set.reasoningEffort
             );
-            const statusLabel = set.retry ? imageRequestRetryMessage(set.retry) : activeTool
-                ? reasoningToolLabel(activeTool)
-                : set.reasoningStatus === 'completed'
+            const statusLabel = set.reasoningStatus === 'completed'
                     ? '方案已确定'
                     : set.reasoningStatus === 'cancelled'
                         ? '已停止'
+                    : set.reasoningStatus === 'failed'
+                        ? '方案处理失败'
+                    : set.retry ? imageRequestRetryMessage(set.retry)
+                    : activeTool ? reasoningToolLabel(activeTool)
                     : set.reasoningStatus === 'running'
                         ? '正在确认方案'
                         : activeTurn?.title || '正在分析问题';
@@ -540,7 +553,8 @@
             panel.className = `image-reasoning-panel is-${set.reasoningStatus} mode-${set.reasoningMode}${set.reasoningExpanded ? ' is-expanded' : ''}`;
             panel.dataset.reasoningSet = set.setId;
             const activeTurn = activeReasoningTurn(set);
-            const activeTool = [...(activeTurn?.tools || [])].reverse().find(tool => tool.status === 'running');
+            const activeTool = set.reasoningStatus === 'running'
+                ? [...(activeTurn?.tools || [])].reverse().find(tool => tool.status === 'running') : null;
 
             const toggle = document.createElement('button');
             toggle.type = 'button';
@@ -590,7 +604,11 @@
                     toolRow.className = `image-reasoning-tool is-${tool.status}`;
                     const resultSuffix = tool.status === 'completed' && Number(tool.resultCount) > 0
                         ? ` · ${Number(tool.resultCount)} 项结果`
-                        : tool.status === 'failed' ? ' · 已跳过' : '';
+                        : tool.status === 'failed' ? ' · 失败'
+                        : tool.status === 'cancelled' ? ' · 已停止'
+                        : tool.status === 'interrupted' ? ` · ${tool.interruptedReason || '已结束，未收到工具结果'}` : '';
+                    toolRow.dataset.reasoningCall = tool.callId || '';
+                    toolRow.title = tool.error || tool.interruptedReason || reasoningToolLabel(tool);
                     toolRow.innerHTML = `${iconMarkup(reasoningToolIcon(tool), `icon-11${tool.status === 'running' ? ' is-spinning' : ''}`)}<span>${escapeHtml(reasoningToolLabel(tool) + resultSuffix)}</span>`;
                     turnBlock.append(toolRow);
                 });
@@ -610,7 +628,7 @@
             logShell.append(expandContent);
             body.append(logShell);
 
-            if ((set.webReferenceCount > 0 && set.webReferences.length > 0) || set.effectivePrompt) {
+            if ((set.webReferenceCount > 0 && set.webReferences.length > 0) || set.webSearchSources?.length || set.effectivePrompt) {
                 const supplementTabs = document.createElement('div');
                 supplementTabs.className = 'image-reasoning-supplement-tabs';
                 if (set.webReferenceCount > 0 && set.webReferences.length > 0) {
@@ -619,9 +637,20 @@
                     referenceToggle.className = `image-reasoning-supplement-toggle${set.webReferencesExpanded ? ' is-active' : ''}`;
                 referenceToggle.title = set.webReferencesExpanded ? '收起网络参考图' : '查看采用的网络参考图';
                 referenceToggle.setAttribute('aria-expanded', String(set.webReferencesExpanded));
-                    referenceToggle.innerHTML = `${iconMarkup('images', 'icon-10')}<span>网络参考 ${set.webReferenceCount}</span>`;
+                    referenceToggle.innerHTML = `${iconMarkup('images', 'icon-10')}<span>采用的参考图 ${set.webReferenceCount}</span>`;
                 referenceToggle.addEventListener('click', () => void toggleWebReferences(set.setId));
                     supplementTabs.append(referenceToggle);
+                }
+                if (set.webSearchSources?.length) {
+                    const sourcesToggle = document.createElement('button');
+                    sourcesToggle.type = 'button';
+                    sourcesToggle.className = `image-reasoning-supplement-toggle${set.webSearchSourcesExpanded ? ' is-active' : ''}`;
+                    sourcesToggle.title = '查看联网检索使用的网页链接';
+                    sourcesToggle.setAttribute('aria-expanded', String(set.webSearchSourcesExpanded));
+                    sourcesToggle.dataset.reasoningSources = set.setId;
+                    sourcesToggle.innerHTML = `${iconMarkup('globe', 'icon-10')}<span>网页来源 ${set.webSearchSources.length}</span>`;
+                    sourcesToggle.addEventListener('click', () => toggleWebSearchSources(set.setId));
+                    supplementTabs.append(sourcesToggle);
                 }
                 if (set.effectivePrompt) {
                     const promptToggle = document.createElement('button');
@@ -634,6 +663,26 @@
                     supplementTabs.append(promptToggle);
                 }
                 body.append(supplementTabs);
+            }
+
+            if (set.webSearchSourcesExpanded && set.webSearchSources?.length) {
+                const sources = document.createElement('div');
+                sources.className = 'image-reasoning-web-sources';
+                for (const source of normalizeWebSearchSources(set.webSearchSources)) {
+                    const link = document.createElement('a');
+                    link.href = source.url;
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+                    link.title = source.url;
+                    const title = document.createElement('span');
+                    title.textContent = source.title;
+                    const domain = document.createElement('small');
+                    domain.textContent = new URL(source.url).hostname;
+                    link.innerHTML = iconMarkup('external-link', 'icon-11');
+                    link.append(title, domain);
+                    sources.append(link);
+                }
+                body.append(sources);
             }
 
             if (set.webReferencesExpanded && set.webReferences.length) {
@@ -655,9 +704,10 @@
                         referenceButton.append(image, label);
                         referenceButton.addEventListener('click', () => openImageResultModal({
                             ...reference,
-                            uri: reference.previewUri || reference.uri || '',
+                            uri: browserImageSource(reference.uri, reference.previewUri),
+                            previewUri: browserImageSource(reference.previewUri, reference.uri),
                             actualSize: reference.provider || '网络参考',
-                            format: 'jpg',
+                            format: reference.format || 'png',
                             status: 'reference'
                         }));
                         references.append(referenceButton);
