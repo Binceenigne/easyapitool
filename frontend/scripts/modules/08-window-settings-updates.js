@@ -242,7 +242,7 @@
         }
 
         const DEVTOOLS_SEQUENCE = 'ddjjyyxx';
-        const MIRRA_DEFAULT_API = 'https://39.105.74.222/openai/v1';
+        const MIRRA_DEFAULT_API = 'https://imggen.djyx.pw/openai/v1';
         const OPENAI_OFFICIAL_API = 'https://api.openai.com/v1';
         let apiEndpointUnlocked = false;
 

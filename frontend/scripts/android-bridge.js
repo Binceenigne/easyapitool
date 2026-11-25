@@ -8,8 +8,8 @@
     if (!isAndroid || window.pywebview?.api) return;
 
     document.documentElement.dataset.platform = 'android';
-    const DEFAULT_ANDROID_SERVICE_URL = 'https://39.105.74.222/v1';
-    const GATEWAY_API_URL = 'https://39.105.74.222/openai/v1';
+    const DEFAULT_ANDROID_SERVICE_URL = 'https://imggen.djyx.pw/v1';
+    const GATEWAY_API_URL = 'https://imggen.djyx.pw/openai/v1';
     const EVENT_CURSOR_KEY = 'api-tools-android-event-cursor';
     const EVENT_EPOCH_KEY = 'api-tools-android-event-epoch';
     const IMAGE_SETS_KEY = 'image-sets';
@@ -74,7 +74,8 @@
 
     function currentServiceUrl(value) {
         const url = String(value || '').trim().replace(/\/+$/, '');
-        return /^https:\/\/imggen\.djyx\.(?:me|pw)\/v1$/i.test(url) ? DEFAULT_ANDROID_SERVICE_URL : url;
+        const previous = /^https:\/\/(?:imggen\.djyx\.me|39\.105\.74\.222(?::8443)?)\/v1$/i;
+        return previous.test(url) ? DEFAULT_ANDROID_SERVICE_URL : url;
     }
 
     async function loadServiceConfig() {

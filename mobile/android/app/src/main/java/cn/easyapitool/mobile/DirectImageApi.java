@@ -27,7 +27,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 final class DirectImageApi {
-    static final String GATEWAY = "https://39.105.74.222/openai/v1";
+    static final String GATEWAY = "https://imggen.djyx.pw/openai/v1";
     static final String OPENAI = "https://api.openai.com/v1";
     private static final String SVG_NS = "http://www.w3.org/2000/svg";
     private static final Set<String> UNSUPPORTED_SVG_TAGS = new java.util.HashSet<>(
@@ -135,7 +135,8 @@ final class DirectImageApi {
     static boolean isGateway(String endpoint) {
         return GATEWAY.equalsIgnoreCase(endpoint)
             || "https://imggen.djyx.me/openai/v1".equalsIgnoreCase(endpoint)
-            || "https://imggen.djyx.pw/openai/v1".equalsIgnoreCase(endpoint);
+            || "https://39.105.74.222/openai/v1".equalsIgnoreCase(endpoint)
+            || "https://39.105.74.222:8443/openai/v1".equalsIgnoreCase(endpoint);
     }
 
     static void writeJson(HttpURLConnection connection, JSObject body) throws IOException {
