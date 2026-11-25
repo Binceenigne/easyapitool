@@ -80,8 +80,9 @@ class Store:
                 );
                 """
             )
+            prior_url_slots = ", ".join("?" for _ in MIRRA_PREVIOUS_API_URLS)
             db.execute(
-                "UPDATE api_keys SET base_url=? WHERE lower(rtrim(base_url, '/')) IN (?,?)",
+                f"UPDATE api_keys SET base_url=? WHERE lower(rtrim(base_url, '/')) IN ({prior_url_slots})",
                 (MIRRA_API_URL, *MIRRA_PREVIOUS_API_URLS),
             )
             invalid_snapshot_ids: list[int] = []

@@ -57,15 +57,22 @@ class StoreTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_saved_mirra_key_moves_to_ip_gateway(self):
-        key_id = self.store.add_key("Mirra", "sk-mirra-fixture", "https://imggen.djyx.me/openai/v1")
+    def test_saved_mirra_key_moves_to_new_domain(self):
+        previous_urls = (
+            "https://imggen.djyx.me/openai/v1",
+            "https://39.105.74.222/openai/v1/",
+            "https://39.105.74.222:8443/openai/v1",
+        )
+        key_ids = [self.store.add_key(f"Mirra {i}", f"sk-mirra-fixture-{i}", url)
+                   for i, url in enumerate(previous_urls)]
         direct_id = self.store.add_key("Direct", "fixture", "https://example.test/v1")
         reopened = app.Store(self.store.path)
-        self.assertEqual(reopened.get_key_record(key_id)["base_url"], "https://39.105.74.222/openai/v1")
-        self.assertEqual(reopened.get_secret(key_id), "sk-mirra-fixture")
+        for i, key_id in enumerate(key_ids):
+            self.assertEqual(reopened.get_key_record(key_id)["base_url"], "https://imggen.djyx.pw/openai/v1")
+            self.assertEqual(reopened.get_secret(key_id), f"sk-mirra-fixture-{i}")
         self.assertEqual(reopened.get_key_record(direct_id)["base_url"], "https://example.test/v1")
         with patch.dict(__import__("os").environ, {"MIRRA_PUBLIC_OPENAI_BASE_URL": "https://imggen.djyx.me/openai/v1/"}):
-            self.assertEqual(app.api_base_url_for_key("sk-mirra-fixture"), "https://39.105.74.222/openai/v1")
+            self.assertEqual(app.api_base_url_for_key("sk-mirra-fixture"), "https://imggen.djyx.pw/openai/v1")
 
     def test_changelog_between_includes_only_uninstalled_versions(self):
         markdown = (
@@ -3954,7 +3961,7 @@ class ControllerTests(unittest.TestCase):
             controller._download_update_worker()
             self.assertEqual(controller.update_state["status"], "ready")
             self.assertEqual(Path(controller.update_state["downloadedPath"]).read_bytes(), data)
-            self.assertEqual(download_urls[0], "https://39.105.74.222/v1/app/update/download?platform=windows")
+            self.assertEqual(download_urls[0], "https://imggen.djyx.pw/v1/app/update/download?platform=windows")
             self.assertIn("/releases/download/imagen-v9.9.9/API_TOOLS.exe", download_urls[1])
             checksum.assert_not_called()
 
