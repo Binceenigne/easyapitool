@@ -8,8 +8,9 @@
     if (!isAndroid || window.pywebview?.api) return;
 
     document.documentElement.dataset.platform = 'android';
-    const DEFAULT_ANDROID_SERVICE_URL = 'https://imggen.djyx.pw/v1';
-    const GATEWAY_API_URL = 'https://imggen.djyx.pw/openai/v1';
+    const MIRRA_ORIGIN = 'https://imggen.djyx.pw';
+    const DEFAULT_ANDROID_SERVICE_URL = `${MIRRA_ORIGIN}/v1`;
+    const GATEWAY_API_URL = `${MIRRA_ORIGIN}/openai/v1`;
     const EVENT_CURSOR_KEY = 'api-tools-android-event-cursor';
     const EVENT_EPOCH_KEY = 'api-tools-android-event-epoch';
     const IMAGE_SETS_KEY = 'image-sets';
@@ -44,7 +45,7 @@
     let appUpdateState = { status: 'idle', percent: 0, message: '尚未检查服务器更新' };
     let updateCheck = null;
     let serviceConfig = {
-        baseUrl: currentServiceUrl(window.__EASYAPITOOL_SERVICE_URL__ || DEFAULT_ANDROID_SERVICE_URL),
+        baseUrl: currentMirraUrl(window.__EASYAPITOOL_SERVICE_URL__ || DEFAULT_ANDROID_SERVICE_URL),
         bearerToken: String(window.__EASYAPITOOL_SERVICE_TOKEN__ || '').trim()
     };
     let serviceConfigLoad = null;
@@ -72,10 +73,10 @@
         return /^device-v1\./.test(String(token || '').trim());
     }
 
-    function currentServiceUrl(value) {
+    function currentMirraUrl(value) {
         const url = String(value || '').trim().replace(/\/+$/, '');
-        const previous = /^https:\/\/(?:imggen\.djyx\.me|39\.105\.74\.222(?::8443)?)\/v1$/i;
-        return previous.test(url) ? DEFAULT_ANDROID_SERVICE_URL : url;
+        const previous = /^https:\/\/(?:imggen\.djyx\.me|39\.105\.74\.222(?::8443)?)(\/(?:openai\/)?v1)$/i.exec(url);
+        return previous ? MIRRA_ORIGIN + previous[1].toLowerCase() : url;
     }
 
     async function loadServiceConfig() {
@@ -86,7 +87,7 @@
         if (serviceConfigLoad) return serviceConfigLoad;
         serviceConfigLoad = pluginCall('readServiceConfig')
             .then(config => {
-                const savedBaseUrl = currentServiceUrl(config.serviceUrl);
+                const savedBaseUrl = currentMirraUrl(config.serviceUrl);
                 const savedBearerToken = String(config.bearerToken || '').trim();
                 if (/^https:\/\/clife\.djyx\.(?:me|pw)(?:\/|$)/i.test(savedBaseUrl)) {
                     void pluginCall('clearServiceConfig').catch(() => {});
@@ -143,7 +144,7 @@
 
     function serviceSettings() {
         return {
-            baseUrl: serviceConfig.baseUrl || currentServiceUrl(localPreferences.get('service-url', DEFAULT_ANDROID_SERVICE_URL)),
+            baseUrl: serviceConfig.baseUrl || currentMirraUrl(localPreferences.get('service-url', DEFAULT_ANDROID_SERVICE_URL)),
             bearerToken: serviceConfig.bearerToken
         };
     }
@@ -269,7 +270,7 @@
     }
 
     function usesDirectApi(key) {
-        const base = String(key?.baseUrl || '').toLowerCase();
+        const base = currentMirraUrl(key?.baseUrl).toLowerCase();
         return base !== '' && base !== GATEWAY_API_URL;
     }
 
