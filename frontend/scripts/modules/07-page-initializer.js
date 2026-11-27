@@ -49,6 +49,7 @@
             updateRateLimitModeButtons();
             renderLucideIcons();
 
+            imageVisualSkills.init();
             const promptTextarea = document.getElementById('imageEditPrompt');
             const modalPromptTextarea = document.getElementById('imagePromptModalTextarea');
             promptTextarea.addEventListener('input', resizeImagePrompt);
@@ -95,6 +96,7 @@
             document.addEventListener('keydown', event => {
                 handlePageZoomShortcut(event);
                 if (event.key === 'Escape') {
+                    imageVisualSkills.close();
                     closeKeySwitcher();
                     closeModelModal();
                     closeUpdateModal();

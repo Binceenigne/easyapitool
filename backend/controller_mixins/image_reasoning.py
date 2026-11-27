@@ -536,8 +536,11 @@ class ImageReasoningMixin:
             except Exception:
                 pass
 
-        original_prompt = request.prompt
-        final_prompt = original_prompt
+        submitted_prompt = request.prompt
+        original_prompt = str(clean_options.get("originalPrompt") or "").strip()
+        if not original_prompt or not submitted_prompt.startswith(f"{original_prompt}\n\n【已选视觉风格】\n"):
+            original_prompt = submitted_prompt
+        final_prompt = submitted_prompt
         reasoning_summary = ""
         reasoning_model = ""
         reasoning_effort = ""
@@ -620,7 +623,7 @@ class ImageReasoningMixin:
                 agent_result = self._run_image_prompt_agent(
                     record,
                     secret,
-                    original_prompt,
+                    submitted_prompt,
                     tuple(
                         Path(str(asset.get("path") or ""))
                         for asset in visible_assets

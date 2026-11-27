@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJYX_APITOOL</title>
-    <link rel="stylesheet" href="styles/app.css?v=44">
+    <link rel="stylesheet" href="styles/app.css?v=45">
+    <link rel="stylesheet" href="styles/visual-skills.css?v=1">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -152,20 +153,27 @@
                                 <span id="editImageScrollbarThumb"></span>
                             </div>
                         </div>
+                        <button type="button" id="clearImageReferencesButton" class="image-composer-action" title="清空参考图和风格" aria-label="清空参考图和风格" disabled><i data-lucide="x" aria-hidden="true"></i></button>
                     </div>
 
-                    <label class="image-edit-prompt">
-                        <span>提示词</span>
+                    <div class="image-edit-prompt">
+                        <label for="imageEditPrompt">提示词</label>
                         <div class="image-edit-prompt-shell">
                             <textarea id="imageEditPrompt" rows="7" maxlength="32000" placeholder="描述要生成的图片；也可以粘贴或拖入参考图片"></textarea>
-                            <button type="button" id="polishImagePromptButton" onclick="polishImagePrompt()" title="一键润色提示词" aria-label="一键润色提示词">
-                                <i data-lucide="sparkles" aria-hidden="true"></i>
-                            </button>
-                            <button type="button" id="expandImagePromptButton" hidden onclick="openImagePromptModal()" title="全屏编辑提示词" aria-label="全屏编辑提示词">
-                                <i data-lucide="maximize-2" aria-hidden="true"></i>
-                            </button>
+                            <div class="image-composer-actions">
+                                <button type="button" id="polishImagePromptButton" onclick="polishImagePrompt()" title="一键润色提示词" aria-label="一键润色提示词">
+                                    <i data-lucide="sparkles" aria-hidden="true"></i>
+                                </button>
+                                <button type="button" id="imageSkillButton" class="image-composer-action" aria-controls="imageSkillPicker" aria-haspopup="dialog" aria-expanded="false" title="添加视觉风格" aria-label="添加视觉风格">
+                                    <i data-lucide="palette" aria-hidden="true"></i>
+                                </button>
+                                <button type="button" id="expandImagePromptButton" hidden onclick="openImagePromptModal()" title="全屏编辑提示词" aria-label="全屏编辑提示词">
+                                    <i data-lucide="maximize-2" aria-hidden="true"></i>
+                                </button>
+                                <button type="button" id="clearImagePromptButton" class="image-composer-action" title="清空提示词" aria-label="清空提示词" disabled><i data-lucide="x" aria-hidden="true"></i></button>
+                            </div>
                         </div>
-                    </label>
+                    </div>
 
                     <div class="image-generation-footer">
                         <span id="imageEditStatus" role="status">填写提示词即可生成，参考图可选</span>
@@ -337,6 +345,21 @@
                         </div>
                     </div>
                 </form>
+                <section id="imageSkillPicker" class="visual-skill-picker" role="dialog" aria-labelledby="imageSkillTitle" hidden>
+                    <header class="visual-skill-header">
+                        <div class="visual-skill-heading">
+                            <button type="button" id="imageSkillBack" title="返回风格库" aria-label="返回风格库" hidden><i data-lucide="arrow-left" aria-hidden="true"></i></button>
+                            <h2 id="imageSkillTitle">视觉风格</h2>
+                        </div>
+                        <button type="button" id="imageSkillClose" title="关闭风格面板" aria-label="关闭风格面板"><i data-lucide="x" aria-hidden="true"></i></button>
+                    </header>
+                    <nav id="imageSkillSteps" class="visual-skill-step-bar" aria-label="配置风格" hidden>
+                        <button type="button" id="imageSkillPrevious" title="上一步" aria-label="上一步"><i data-lucide="chevron-left" aria-hidden="true"></i></button>
+                        <span id="imageSkillStepLabel" aria-live="polite"></span>
+                        <button type="button" id="imageSkillNext" title="下一步" aria-label="下一步"><i data-lucide="chevron-right" aria-hidden="true"></i></button>
+                    </nav>
+                    <div id="imageSkillGrid" class="visual-skill-grid"></div>
+                </section>
 
                 <section id="imageEditResult" aria-labelledby="imageEditResultHeading">
                     <div class="image-results-header">
@@ -934,16 +957,18 @@
     <script src="vendor/lucide/lucide.min.js"></script>
     <script src="scripts/modules/00-core-ui.js?v=2"></script>
     <script src="scripts/modules/01-app-state.js?v=5"></script>
-    <script src="scripts/modules/02-image-controls.js?v=10"></script>
-    <script src="scripts/modules/03-image-reasoning.js?v=6"></script>
+    <script src="scripts/modules/02-image-controls.js?v=11"></script>
+    <script src="scripts/modules/03-image-reasoning.js?v=7"></script>
     <script src="scripts/modules/04-image-stream-rendering.js?v=2"></script>
-    <script src="scripts/modules/05-image-events-sessions.js?v=6"></script>
+    <script src="scripts/modules/05-image-events-sessions.js?v=7"></script>
     <script src="scripts/modules/06-backend-bridge.js?v=2"></script>
-    <script src="scripts/modules/07-page-initializer.js?v=4"></script>
+    <script src="scripts/modules/07-page-initializer.js?v=5"></script>
     <script src="scripts/modules/08-window-settings-updates.js?v=4"></script>
     <script src="scripts/modules/09-modals-input-refresh.js?v=1"></script>
     <script src="scripts/modules/10-dashboard-rendering.js?v=3"></script>
     <script src="scripts/modules/11-theme-bootstrap.js?v=1"></script>
+    <script src="scripts/visual-skill-catalog.js?v=1"></script>
+    <script src="scripts/visual-skills.js?v=1"></script>
     <script src="scripts/modules/12-bootstrap.js?v=1"></script>
 
 

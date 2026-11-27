@@ -147,16 +147,31 @@
             syncEditImageScrollbar();
         }
 
+        function createEditImageRemoveButton(label, onRemove) {
+            const button = document.createElement('button');
+            button.className = 'image-edit-remove';
+            button.type = 'button';
+            button.title = `移除 ${label}`;
+            button.setAttribute('aria-label', button.title);
+            button.innerHTML = iconMarkup('trash-2', 'icon-12');
+            button.addEventListener('click', onRemove);
+            return button;
+        }
+
         function renderEditImageList(scrollToEnd = false) {
             const files = window.imageEditState.files;
             const selection = document.getElementById('editImageSelection');
             const list = document.getElementById('editImageList');
             const addTile = document.getElementById('editImageAddTile');
             const previousScrollLeft = list.scrollLeft;
-            const empty = files.length === 0;
-            const referencesChanged = selection.classList.contains('is-empty') !== empty;
-            selection.classList.toggle('is-empty', empty);
-            document.getElementById('editImageCount').textContent = `${files.length}/${imageReferenceLimit()}`;
+            const skillCount = imageVisualSkills.count();
+            const hasItems = files.length > 0 || skillCount > 0;
+            const referencesChanged = selection.classList.contains('has-reference-files') !== Boolean(files.length);
+            selection.classList.toggle('has-reference-files', Boolean(files.length));
+            selection.classList.toggle('has-reference-items', hasItems);
+            selection.classList.toggle('is-empty', !hasItems);
+            document.getElementById('clearImageReferencesButton').disabled = !hasItems;
+            document.getElementById('editImageCount').textContent = `${files.length}/${imageReferenceLimit()}` + (skillCount ? ` · ${skillCount} 个风格` : '');
             list.replaceChildren();
             files.forEach((file, index) => {
                 const item = document.createElement('div');
@@ -168,15 +183,11 @@
                 preview.draggable = false;
                 const name = document.createElement('span');
                 name.textContent = `图片${index + 1}`;
-                const remove = document.createElement('button');
-                remove.type = 'button';
-                remove.title = `移除 ${file.name}`;
-                remove.setAttribute('aria-label', remove.title);
-                remove.innerHTML = iconMarkup('trash-2', 'icon-12');
-                remove.addEventListener('click', () => removeEditImage(index));
+                const remove = createEditImageRemoveButton(file.name, () => removeEditImage(index));
                 item.append(preview, name, remove);
                 list.append(item);
             });
+            imageVisualSkills.renderCards(list);
             addTile.hidden = imageReferenceLimit() > 0 && files.length >= imageReferenceLimit();
             applyImageChoiceAvailability(addTile, imageReferenceLimit() === 0, imageReferenceLimit() === 0, '当前档位未开放参考图编辑');
             addTile.setAttribute('aria-label', imageReferenceLimit() === 0 ? '当前档位未开放参考图编辑' : '添加参考图');
@@ -271,6 +282,7 @@
 
         function resizeImagePrompt() {
             const textarea = document.getElementById('imageEditPrompt');
+            document.getElementById('clearImagePromptButton').disabled = !textarea.value || window.imageEditState.polishing;
             const overflowing = textarea.scrollHeight > textarea.clientHeight + 1;
             document.getElementById('expandImagePromptButton').hidden = !overflowing;
         }
@@ -445,8 +457,8 @@
             const state = window.imageEditState;
             const complexLocked = state.outputFormat !== 'svg' && imageModelFeatures().complexity
                 && !['low', 'medium', 'high'].some(level => imageTierAllows('complexities', level));
-            const reason = complexLocked ? '当前档位未开放此模型的复杂度，请切换模型或联系管理员'
-                : !imageGenerationAllowed() ? '当前档位未开放这些生图选项，请调整模型、格式或参考图' : '';
+            const reason = imageVisualSkills.reasoningIssue() || (complexLocked ? '当前档位未开放此模型的复杂度，请切换模型或联系管理员'
+                : !imageGenerationAllowed() ? '当前档位未开放这些生图选项，请调整模型、格式或参考图' : '');
             if (!state.pendingSubmission) applyImageChoiceAvailability(button, Boolean(reason), Boolean(reason), reason || '当前档位未开放');
             button.title = reason;
             button.dataset.imageTip = reason;

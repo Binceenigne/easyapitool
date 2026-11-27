@@ -1243,7 +1243,7 @@ html.dark #keySwitcherMenu {
   white-space: nowrap;
 }
 
-.image-edit-file button {
+.image-edit-file > .image-edit-remove {
   position: absolute;
   top: 5px;
   right: 5px;
@@ -1261,14 +1261,14 @@ html.dark #keySwitcherMenu {
   transition: transform 140ms ease, background 140ms ease;
 }
 
-.image-edit-file:is(:hover, :focus-within) > button {
+.image-edit-file:is(:hover, :focus-within) > .image-edit-remove {
   visibility: visible;
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
 }
 
-.image-edit-file button:hover {
+.image-edit-file > .image-edit-remove:hover {
   background: var(--critical);
 }
 
@@ -1304,7 +1304,7 @@ html.dark #keySwitcherMenu {
   gap: 4px;
 }
 
-.image-edit-prompt > span {
+.image-edit-prompt > label {
   color: var(--muted);
   font-size: 8px;
   font-weight: 700;

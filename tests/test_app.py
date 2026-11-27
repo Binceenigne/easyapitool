@@ -2465,7 +2465,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="imageTransparencyButtons"', page)
         self.assertIn("is-transparency-preview", rendering)
         self.assertIn("createImageGenerationSet(requestId, imageCount, finalPrompt", page)
-        self.assertIn("activeKey.id,\n                    finalPrompt,", page)
+        self.assertIn("const requestPrompt = imageVisualSkills.compose(finalPrompt);", page)
+        self.assertIn("activeKey.id,\n                    requestPrompt,", page)
 
     def test_main_page_window_controls_use_lucide_icons(self):
         page = frontend_source()
@@ -3114,14 +3115,17 @@ class ControllerTests(unittest.TestCase):
             )
             controller._run_sdk_agent = Mock(side_effect=sdk_text_fixture(controller.client.stream_response))
             events = []
+            original_prompt = "make this clearer"
+            style_prompt = original_prompt + "\n\n【已选视觉风格】\n电影海报\nAgent 规划：先梳理标题层级和主体关系。"
             with patch.object(controller_image_reasoning, "app_data_dir", return_value=root / "data"), patch.object(
                 controller_image_files, "generated_pictures_dir", return_value=root / "Pictures"
             ):
                 result = controller.generate_image(
                     "key-1",
-                    "make this clearer",
+                    style_prompt,
                     [str(input_path)],
-                    {"requestId": "react-1", "reasoningMode": "medium", "imageModel": "gpt-image-2.5", "aspectRatio": "16:9", "transparency": "transparent"},
+                    {"requestId": "react-1", "reasoningMode": "medium", "imageModel": "gpt-image-2.5",
+                     "aspectRatio": "16:9", "transparency": "transparent", "originalPrompt": original_prompt},
                     event_callback=events.append,
                 )
 
@@ -3147,6 +3151,7 @@ class ControllerTests(unittest.TestCase):
         )
         response_input = response_call.args[4]
         self.assertEqual(response_input[0]["content"][0]["type"], "input_text")
+        self.assertIn(style_prompt, response_input[0]["content"][0]["text"])
         self.assertEqual(response_input[0]["content"][1]["type"], "input_image")
         event_types = [event["type"] for event in events]
         self.assertEqual(event_types[0], "react_started")
