@@ -27,6 +27,7 @@ type featureTier struct {
 	WebSearch        bool             `json:"webSearch"`
 	PromptPolish     bool             `json:"promptPolish"`
 	ImageEditing     bool             `json:"imageEditing"`
+	VisualSkills     *bool            `json:"visualSkills,omitempty"`
 	MaxResolution    int              `json:"maxResolution"`
 	MaxImages        int              `json:"maxImages"`
 	MaxReferences    int              `json:"maxReferences"`
@@ -36,10 +37,15 @@ type featureTier struct {
 }
 
 func fullTier() featureTier {
+	visualSkills := true
 	return featureTier{ID: "default", Name: "完整权限", Description: "所有已开放模型与功能",
 		ImageModels: []string{"*"}, ReasoningModels: []string{"*"}, ReasoningModes: []string{"*"}, ReasoningEfforts: []string{"*"},
 		Qualities: []string{"*"}, Complexities: []string{"*"}, Formats: []string{"*"}, Advanced: true, Transparency: true,
-		WebSearch: true, PromptPolish: true, ImageEditing: true, MaxResolution: 3840, MaxImages: 9, MaxReferences: 16, MaxGIFFrames: 16}
+		WebSearch: true, PromptPolish: true, ImageEditing: true, VisualSkills: &visualSkills, MaxResolution: 3840, MaxImages: 9, MaxReferences: 16, MaxGIFFrames: 16}
+}
+
+func (t featureTier) visualSkillsEnabled() bool {
+	return t.VisualSkills == nil || *t.VisualSkills
 }
 
 func (s *modelSettings) keyTierID(k accessKey) string {
@@ -184,7 +190,7 @@ func tierScore(t featureTier) int {
 	for _, v := range [][]string{t.ImageModels, t.ReasoningModels, t.ReasoningModes, t.ReasoningEfforts, t.Qualities, t.Complexities, t.Formats} {
 		score += count(v) * 8
 	}
-	for _, enabled := range []bool{t.Advanced, t.Transparency, t.WebSearch, t.PromptPolish, t.ImageEditing} {
+	for _, enabled := range []bool{t.Advanced, t.Transparency, t.WebSearch, t.PromptPolish, t.ImageEditing, t.visualSkillsEnabled()} {
 		if enabled {
 			score += 64
 		}
@@ -231,6 +237,8 @@ func (g *gateway) modelsForKey(k accessKey) (*modelSettings, error) {
 	profile.Catalog = catalogForModels(current)
 	profile.Tier = &t
 	profile.ImageModels = allowedSubset(current.ImageModels, t.ImageModels)
+	visualSkills := t.visualSkillsEnabled() && len(profile.ImageModels) > 0
+	t.VisualSkills = &visualSkills
 	profile.ImageFeatures = maps.Clone(current.ImageFeatures)
 	if !slices.Contains(profile.ImageModels, profile.DefaultImage) {
 		profile.DefaultImage = ""

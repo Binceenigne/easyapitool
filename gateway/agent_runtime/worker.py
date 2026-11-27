@@ -182,6 +182,9 @@ class Handler(BaseHTTPRequestHandler):
                     from mirra_agents.reference_policy import VISUAL_REFERENCE_POLICY
                     options["instructions"] += "\n" + VISUAL_REFERENCE_POLICY
                     options["response_observer"] = visual.observe
+                    options["reference_review_needed"] = lambda: visual.adopt_limit > 0 and not visual.selected and (
+                        not visual.images or bool(visual.inspected)
+                    )
                 events = run_agent_stream(AgentRequest(**options), cancel_event=cancellation, tools=[*visual.tools(), *(workspace.tools() if workspace else [])])
             else:
                 events = self.server.runner(parameters, cancellation)

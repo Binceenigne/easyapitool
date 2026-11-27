@@ -68,7 +68,7 @@ export async function runNativeAgent({model,effort,instructions,input,webSearch=
    })}));
   localTools.push(tool({name:'select_visual_references',description:`选择用于本轮生图的已检视参考图ID，最多${maxAdoptReferences}张。可空选，简短说明选择依据。`,parameters:selectSchema,errorFunction:null,
    execute:execute('select_visual_references',async args=>{const ids=[...new Set(args.candidate_ids)];if(typeof args.rationale!=='string'||!args.rationale.trim()||args.rationale.length>1600)return JSON.stringify({error:{code:'invalid_reference_selection',message:'请简短说明采用或不采用的原因'}});if(ids.length>visualLimits().adopt||ids.some(id=>!inspected.has(id)))return JSON.stringify({error:{code:'invalid_reference_selection',message:'只能采用已检视且在当前参考槽位上限内的候选'}});const next=ids.map(id=>inspected.get(id));workspace?.setWebReferences?.(next);if(selectReferences)await selectReferences(next,args.rationale);selected=next;selectionRationale=args.rationale;selectionMade=true;selectionRevision=`${candidateRevision}:${inspectionRevision}`;emit({type:'visual_selected',...referenceMetadata(),webReferences:selected.map(({previewDataUrl,...item})=>item),webReferenceCount:selected.length});return JSON.stringify({selectedIds:ids,rationale:args.rationale});})}));
-  instructions+='\n按任务需要自主搜索、查看和选用有帮助的参考图。实际选中的图片会提交生图，网页来源与已检视图片如实记录。';
+  instructions+='\n点名具体角色、表情包或作品时，先从来源确认正名与别名，再用确认后的名称和来源域名检索图片。若先找到的图片是相近角色，换词重查。检视吻合的图片，用 select_visual_references 选择有帮助的真实候选，网页来源与实际采用分别记录。';
  }
  if(workspace){
   const specs=[['list_image_workspace',{type:'object',properties:{kind:{type:'string',enum:['history','assets']},offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:50}},required:['kind','offset','limit'],additionalProperties:false},'查询当前工作区的历史和素材目录。'],['view_image_workspace_assets',{type:'object',properties:{asset_ids:{type:'array',items:{type:'string'},minItems:1,maxItems:16}},required:['asset_ids'],additionalProperties:false},'查看当前工作区素材的真实图片。'],['select_image_workspace_inputs',{type:'object',properties:{operation:{type:'string',enum:['edit','generate']},asset_ids:{type:'array',items:{type:'string'},maxItems:16},rationale:{type:'string',minLength:1,maxLength:1600}},required:['operation','asset_ids','rationale'],additionalProperties:false},'按需要调整本轮操作和参考素材。']];
@@ -102,6 +102,15 @@ export async function runNativeAgent({model,effort,instructions,input,webSearch=
  const agent=new Agent({name:'Mirra image prompt planner',instructions,model:new OpenAIResponsesModel(client,model),modelSettings:{store:false,...modelPolicy(model),preserveRawUsage:true,parallelToolCalls:false,reasoning:{effort},retry:{maxRetries:0},providerData:{...(webSearch?{max_tool_calls:3}:{}),include:[...(documentedReasoning(model)?['reasoning.encrypted_content']:[]),...(webSearch?['web_search_call.action.sources','web_search_call.results']:[])]}},tools:[...(webSearch?[webSearchTool({searchContentTypes:['image','text'],imageSettings:{maxResults:8,caption:true}})]:[]),...localTools]});
  const runner=new Runner({tracingDisabled:true,traceIncludeSensitiveData:false});let result,history=input;const usage={inputTokens:0,outputTokens:0,totalTokens:0,cachedTokens:0};
  try{for(;;){if(turn>=maxTurns)throw Object.assign(new Error('Agent已达到处理轮数上限'),{code:'max_turns'});result=await runner.run(agent,history,{signal,maxTurns:maxTurns-turn});const part=result.state?.usage;if(part)for(const key of Object.keys(usage))usage[key]+=Number(part[key])||0;
+   if(!canInspect||!webCalls.size||selected.length||(images.size&&!inspected.size)||visualLimits().adopt<=0||maxTurns-turn<2)break;
+   const review='复核参考图。若任务点名了具体视觉主体，从可靠来源确认正名，用正名和来源域名查实际图像。检视吻合的候选并通过 select_visual_references 提交给生图。没有合适图片时保留方案并说明原因。';
+   try{
+    const reviewed=await runner.run(agent,[...result.history,{role:'user',content:review}],{signal,maxTurns:maxTurns-turn});
+    if(String(reviewed.finalOutput||'').trim()){
+     result=reviewed;const reviewUsage=reviewed.state?.usage;
+     if(reviewUsage)for(const key of Object.keys(usage))usage[key]+=Number(reviewUsage[key])||0;
+    }
+   }catch(error){if(signal?.aborted)throw error;}
    break;
   }}catch(error){if(error instanceof MaxTurnsExceededError)error.code='max_turns';else if(error instanceof ModelRefusalError)error.code='model_refusal';else if(error instanceof UserError)error.code='invalid_request';else if(error instanceof ModelBehaviorError)error.code='invalid_agent_output';if(!error.status)error.status=lastResponseMeta.status;if(!error.request_id)error.request_id=lastResponseMeta.request_id;error.reasoningStats=stats();Object.assign(error,referenceMetadata(),workspace?.metadata?.()||{});throw error;}
  const prompt=String(result.finalOutput||'').trim();if(!prompt){const error=new Error('Agent 未返回可用的提示词');error.code='empty_agent_output';Object.assign(error,lastResponseMeta);throw error;}

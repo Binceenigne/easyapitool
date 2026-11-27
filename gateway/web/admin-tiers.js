@@ -4,7 +4,7 @@
   const efforts = [['none','不启用'],['minimal','最少'],['low','低'],['medium','中'],['high','高'],['xhigh','超高'],['max','最高']];
   const qualities = [['low','低'],['medium','中'],['high','高'],['xhigh','超高'],['max','最高']];
   const formats = [['png','PNG'],['jpeg','JPEG'],['webp','WebP'],['svg','SVG 矢量图'],['gif','GIF 动图']];
-  const switches = [['advanced','高级模式','允许自由组合已开放的思维模型与思考深度。'],['transparency','透明背景','PNG 和 WebP 可以保留透明通道。'],['webSearch','联网搜索','思维链可以使用上游联网搜索工具。'],['promptPolish','提示词润色','允许一键优化当前提示词。'],['imageEditing','参考图与图片编辑','允许上传参考图和继续编辑图片。']];
+  const switches = [['advanced','高级模式','允许自由组合已开放的思维模型与思考深度。'],['transparency','透明背景','PNG 和 WebP 可以保留透明通道。'],['webSearch','联网搜索','思维链可以使用上游联网搜索工具。'],['promptPolish','提示词润色','允许一键优化当前提示词。'],['imageEditing','参考图与图片编辑','允许上传参考图和继续编辑图片。'],['visualSkills','视觉风格','允许使用内置风格与分步配方。Agent 风格还需要可用的思维预设或高级模式。']];
   let editing = null, revision = 0, deleting = null;
   const tiers = () => state?.appModels?.tiers || [];
   const permissionPreferences=new Map(), switchPreferences=new Map(), limitPreferences=new Map();
@@ -13,7 +13,7 @@
   const limitNames=['maxResolution','maxImages','maxReferences','maxGifFrames'];
   window.effectiveTierFor=tier=>!tier?null:(state?.effectiveTiers || []).find(value=>value.id===tier.id) || {
     ...tier,imageModels:[],reasoningModels:[],reasoningModes:[],reasoningEfforts:[],qualities:[],complexities:[],formats:[],
-    advanced:false,transparency:false,webSearch:false,promptPolish:false,imageEditing:false,maxResolution:0,maxImages:0,maxReferences:0,maxGifFrames:0
+    advanced:false,transparency:false,webSearch:false,promptPolish:false,imageEditing:false,visualSkills:false,maxResolution:0,maxImages:0,maxReferences:0,maxGifFrames:0
   };
 
   const all = (values, value) => (values || []).includes('*') || (values || []).includes(value);
@@ -21,7 +21,7 @@
   const defaultTierId = () => state?.appModels?.defaultTierId || '';
   const tierFor = key => tiers().find(t => t.id === (key?.policy?.tierId || defaultTierId()));
   const bindingCount = id => (state?.keys || []).filter(k => (k.policy?.tierId || defaultTierId()) === id).length;
-  const fullTierBaseline = () => ({id:'',name:'',description:'',imageModels:['*'],reasoningModels:['*'],reasoningModes:['*'],reasoningEfforts:['*'],qualities:['*'],complexities:['*'],formats:['*'],advanced:true,transparency:true,webSearch:true,promptPolish:true,imageEditing:true,rpmLimit:0,maxResolution:3840,maxImages:9,maxReferences:16,maxGifFrames:16,defaultQuota:{expiresInDays:0,totalMicroUSD:0,fiveHourMicroUSD:0,dayMicroUSD:0,weekMicroUSD:0}});
+  const fullTierBaseline = () => ({id:'',name:'',description:'',imageModels:['*'],reasoningModels:['*'],reasoningModes:['*'],reasoningEfforts:['*'],qualities:['*'],complexities:['*'],formats:['*'],advanced:true,transparency:true,webSearch:true,promptPolish:true,imageEditing:true,visualSkills:true,rpmLimit:0,maxResolution:3840,maxImages:9,maxReferences:16,maxGifFrames:16,defaultQuota:{expiresInDays:0,totalMicroUSD:0,fiveHourMicroUSD:0,dayMicroUSD:0,weekMicroUSD:0}});
   const rpmName = t => Number(t.rpmLimit)>0 ? number(t.rpmLimit)+' 次/分钟' : '不限';
   const limitName = t => !t.imageModels?.length?'未开放生图':({1536:'标清',2560:'高清',3840:'超清'}[t.maxResolution] || '未开放');
   const allowedText = (list, catalog) => (list || []).includes('*') ? '全部' : (list || []).length ? list.map(v => catalog?.find(([id]) => id === v)?.[1] || v).join('、') : '未开放';
@@ -143,7 +143,7 @@
   }
 
   function availabilityReason(name) {
-    return {imageModels:'此模型未在网关全局开放',reasoningModels:'此思维模型未在网关全局开放',reasoningModes:'所选思维模型不支持此预设',reasoningEfforts:'所选思维模型不支持此思考深度',qualities:'所选生图模型不支持此图片质量',complexities:'所选生图模型不支持构图复杂度',formats:'所选生图模型或网关未开放此格式',advanced:'没有已选且可用的思维模型与深度组合',transparency:'所选模型或输出格式不支持透明背景',webSearch:'所选思维模型不支持联网搜索',promptPolish:'没有可用的提示词润色模型',imageEditing:'所选模型或输出格式不支持参考图编辑'}[name] || '所选模型不支持此功能';
+    return {imageModels:'此模型未在网关全局开放',reasoningModels:'此思维模型未在网关全局开放',reasoningModes:'所选思维模型不支持此预设',reasoningEfforts:'所选思维模型不支持此思考深度',qualities:'所选生图模型不支持此图片质量',complexities:'所选生图模型不支持构图复杂度',formats:'所选生图模型或网关未开放此格式',advanced:'没有已选且可用的思维模型与深度组合',transparency:'所选模型或输出格式不支持透明背景',webSearch:'所选思维模型不支持联网搜索',promptPolish:'没有可用的提示词润色模型',imageEditing:'所选模型或输出格式不支持参考图编辑',visualSkills:'请先开放至少一个生图模型'}[name] || '所选模型不支持此功能';
   }
 
   function applyEditorOptions(result) {
@@ -205,7 +205,7 @@
   }
 
   function openTier(t = null, duplicate = false) {
-    const value=structuredClone(t || fullTierBaseline());editing=t&&!duplicate?t:null;revision=state.appModels.revision;
+    const value=structuredClone(t || fullTierBaseline());value.visualSkills=value.visualSkills!==false;editing=t&&!duplicate?t:null;revision=state.appModels.revision;
     optionsSequence++;clearTimeout(optionsTimer);optionsAbort?.abort();editorOptions=null;editorEffective=null;optionsValid=false;
     permissionPreferences.clear();switchPreferences.clear();limitPreferences.clear();
     if(!t){value.name='';value.description='';}if(duplicate)value.name+=' · 副本';
@@ -357,7 +357,7 @@
       ['透明背景',t => t.transparency],['最大分辨率',t => t.imageModels.length?limitName(t)+' · '+t.maxResolution+' px':'未开放生图'],
       ['图片质量',t => allowedText(t.qualities,qualities)],['构图复杂度',t => allowedText(t.complexities,[['low','低'],['medium','中'],['high','高']])],
       ['输出格式',t => allowedText(t.formats,formats)],['最多生成张数',t => t.imageModels.length?t.maxImages+' 张':'未开放生图'],['最多参考图',t => t.imageEditing?t.maxReferences+' 张':'未开放'],
-      ['GIF 最大帧数',t => all(t.formats,'gif')?t.maxGifFrames+' 帧':'—'],['图片编辑',t => t.imageEditing],['联网搜索',t => t.webSearch],['提示词润色',t => t.promptPolish],['绑定密钥',t => bindingCount(t.id)+' 把']
+      ['GIF 最大帧数',t => all(t.formats,'gif')?t.maxGifFrames+' 帧':'—'],['图片编辑',t => t.imageEditing],['联网搜索',t => t.webSearch],['提示词润色',t => t.promptPolish],['视觉风格',t => t.visualSkills],['绑定密钥',t => bindingCount(t.id)+' 把']
     ];
     const wrap = node('div','tier-table-scroll'), grid = node('table','tier-comparison-table');
     const header = grid.createTHead().insertRow(); header.append(node('th','','功能权限'));

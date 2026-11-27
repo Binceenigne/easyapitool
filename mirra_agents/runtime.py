@@ -38,6 +38,7 @@ class AgentRequest:
     validate_output: Any = field(default=None, repr=False)
     response_observer: Any = field(default=None, repr=False)
     final_output_feedback: Any = field(default=None, repr=False)
+    reference_review_needed: Any = field(default=None, repr=False)
 
 
 def _dump(value: Any) -> Any:
@@ -397,21 +398,35 @@ async def run_agent_stream(request: AgentRequest, *, cancel_event: Any = None, t
             agent = Agent(name="Mirra visual planner", instructions=request.instructions, model=RetryingResponsesModel(request.model, client), model_settings=settings, tools=model_tools)
             turn_budget = max(1, min(32, request.max_turns))
             next_input = compacted_history(request.input) if isinstance(request.input, list) else request.input
+            accepted_before_review = ""
             while True:
                 check_cancelled(cancel_event)
                 remaining = turn_budget - state["turn"]
                 if remaining <= 0:
                     raise ProviderResponseError("max_turns", f"Agent 已达到 {turn_budget} 轮处理上限，工作流尚未完成")
-                result = Runner.run_streamed(agent, next_input, max_turns=remaining, hooks=Hooks(),
-                                            run_config=RunConfig(tracing_disabled=True, call_model_input_filter=filter_context))
-                state["runner"] = result
-                async for _ in result.stream_events():
+                try:
+                    result = Runner.run_streamed(agent, next_input, max_turns=remaining, hooks=Hooks(),
+                                                run_config=RunConfig(tracing_disabled=True, call_model_input_filter=filter_context))
+                    state["runner"] = result
+                    async for _ in result.stream_events():
+                        check_cancelled(cancel_event)
                     check_cancelled(cancel_event)
-                check_cancelled(cancel_event)
-                text = str(result.final_output or "").strip()
-                if not text:
-                    raise RuntimeError("Agent 没有返回完整结果")
+                    text = str(result.final_output or "").strip()
+                    if not text:
+                        raise RuntimeError("Agent 没有返回完整结果")
+                except Exception:
+                    check_cancelled(cancel_event)
+                    if not accepted_before_review:
+                        raise
+                    text = accepted_before_review
+                    break
                 feedback = request.final_output_feedback(text) if request.final_output_feedback is not None else None
+                if (not feedback and not accepted_before_review and image_search and state["web"]
+                        and turn_budget - state["turn"] >= 2 and request.reference_review_needed
+                        and request.reference_review_needed()):
+                    from .reference_policy import VISUAL_REFERENCE_REVIEW
+                    feedback = VISUAL_REFERENCE_REVIEW
+                    accepted_before_review = text
                 if not isinstance(feedback, str) or not feedback.strip():
                     break
                 if state["turn"] >= turn_budget:

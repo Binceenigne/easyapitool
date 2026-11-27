@@ -9,7 +9,7 @@
   const hasFormat = (tier, format) => (tier.formats || []).includes('*') || (tier.formats || []).includes(format);
   const displayResolution = tier => !tier.imageModels?.length?'未开放生图':({1536:'标清',2560:'高清',3840:'超清'}[tier.maxResolution] || tier.maxResolution+' px');
   const sameIds = (left,right) => JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
-  const publicTierFields=['id','name','description','imageModels','reasoningModels','reasoningModes','reasoningEfforts','qualities','complexities','formats','advanced','transparency','webSearch','promptPolish','imageEditing','maxResolution','maxImages','maxReferences','maxGifFrames','defaultQuota','rpmLimit'];
+  const publicTierFields=['id','name','description','imageModels','reasoningModels','reasoningModes','reasoningEfforts','qualities','complexities','formats','advanced','transparency','webSearch','promptPolish','imageEditing','visualSkills','maxResolution','maxImages','maxReferences','maxGifFrames','defaultQuota','rpmLimit'];
   const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value;
   const samePublishedContent=(left,right)=>JSON.stringify(stable(left.map(tier=>Object.fromEntries(publicTierFields.map(field=>[field,tier[field]])))))===JSON.stringify(stable(right.map(tier=>Object.fromEntries(publicTierFields.map(field=>[field,tier[field]])))));
 
@@ -60,6 +60,7 @@
       ['高级模式',tier=>tier.advanced],
       ['联网搜索',tier=>tier.webSearch],
       ['提示词润色',tier=>tier.promptPolish],
+      ['视觉风格',tier=>tier.visualSkills!==false],
       ['参考图与编辑',tier=>tier.imageEditing],
       ['输出格式',tier=>allowed(tier.formats,{png:'PNG',jpeg:'JPEG',webp:'WebP',svg:'SVG',gif:'GIF'})],
       ['思维深度预设',tier=>allowed(tier.reasoningModes,{instant:'Instant',flash:'Flash',medium:'Medium',high:'High',extra:'Extra',max:'Max'})],

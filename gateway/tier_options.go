@@ -23,6 +23,7 @@ type tierCapabilityOptions struct {
 	WebSearch        bool     `json:"webSearch"`
 	PromptPolish     bool     `json:"promptPolish"`
 	ImageEditing     bool     `json:"imageEditing"`
+	VisualSkills     bool     `json:"visualSkills"`
 	MaxResolution    int      `json:"maxResolution"`
 	MaxImages        int      `json:"maxImages"`
 	MaxReferences    int      `json:"maxReferences"`
@@ -64,6 +65,9 @@ func tierOptions(settings *modelSettings, draft *featureTier) (tierCapabilityOpt
 	}
 	effective := *draft
 	effective.ImageModels = allowedSubset(options.ImageModels, draft.ImageModels)
+	options.VisualSkills = len(effective.ImageModels) > 0
+	visualSkills := draft.visualSkillsEnabled() && options.VisualSkills
+	effective.VisualSkills = &visualSkills
 	effective.ReasoningModels = allowedSubset(options.ReasoningModels, draft.ReasoningModels)
 	qualities, efforts, formats := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, model := range effective.ImageModels {

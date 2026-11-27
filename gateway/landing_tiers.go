@@ -39,6 +39,7 @@ type publicFeatureTier struct {
 	WebSearch        bool             `json:"webSearch"`
 	PromptPolish     bool             `json:"promptPolish"`
 	ImageEditing     bool             `json:"imageEditing"`
+	VisualSkills     bool             `json:"visualSkills"`
 	MaxResolution    int              `json:"maxResolution"`
 	MaxImages        int              `json:"maxImages"`
 	MaxReferences    int              `json:"maxReferences"`
@@ -57,7 +58,7 @@ func publicTiers(tiers []featureTier) []publicFeatureTier {
 			ReasoningModes: list(t.ReasoningModes), ReasoningEfforts: list(t.ReasoningEfforts),
 			Qualities: list(t.Qualities), Complexities: list(t.Complexities), Formats: list(t.Formats),
 			Advanced: t.Advanced, Transparency: t.Transparency, WebSearch: t.WebSearch,
-			PromptPolish: t.PromptPolish, ImageEditing: t.ImageEditing,
+			PromptPolish: t.PromptPolish, ImageEditing: t.ImageEditing, VisualSkills: t.visualSkillsEnabled(),
 			MaxResolution: t.MaxResolution, MaxImages: t.MaxImages, MaxReferences: t.MaxReferences,
 			MaxGIFFrames: t.MaxGIFFrames, DefaultQuota: t.DefaultQuota, RPMLimit: t.RPMLimit,
 		})

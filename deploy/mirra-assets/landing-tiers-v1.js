@@ -57,6 +57,7 @@ const extraRows = [
   ['GIF 最大帧数', 'play', t => permitted(t.formats, 'gif') ? `${t.maxGifFrames} 帧` : false, 'animation'],
   ['联网搜索', 'scan-eye', t => t.webSearch, 'search'],
   ['提示词润色', 'sparkles', t => t.promptPolish, 'reasoning'],
+  ['视觉风格', 'aperture', t => t.visualSkills !== false],
 ];
 
 function capabilityBadge(text, tone, icon) {

@@ -67,6 +67,40 @@ func installTier(t *testing.T, g *gateway, tier featureTier) {
 	}
 }
 
+func TestVisualSkillPermissionDefaultsAndExplicitOptOut(t *testing.T) {
+	g := testGateway(t)
+	adminAPI := &admin{gateway: g}
+	for _, enabled := range []bool{true, false} {
+		tier := limitedTier()
+		if enabled {
+			tier.VisualSkills = nil // Older records and new submissions can omit the field.
+		} else {
+			tier.ID = "no-style"
+			tier.VisualSkills = &enabled
+		}
+		choices, effective := tierOptions(g.appModels(), &tier)
+		if !choices.VisualSkills || effective.visualSkillsEnabled() != enabled {
+			t.Fatal("the editor did not preserve the visual style permission")
+		}
+		body, err := json.Marshal(object{"tier": tier, "revision": g.appModels().Revision})
+		if err != nil {
+			t.Fatal(err)
+		}
+		reply := httptest.NewRecorder()
+		adminAPI.saveTier(reply, httptest.NewRequest("POST", "/admin/tiers", bytes.NewReader(body)))
+		if reply.Code != http.StatusOK {
+			t.Fatalf("saving visual skill settings failed: %d %s", reply.Code, reply.Body.String())
+		}
+		profile, err := g.modelsForKey(accessKey{Policy: keyPolicy{TierID: tier.ID}})
+		if err != nil || profile.Tier.VisualSkills == nil || *profile.Tier.VisualSkills != enabled {
+			t.Fatal("the distributed key did not receive the effective permission", err)
+		}
+		if got := publicTiers([]featureTier{effective})[0].VisualSkills; got != enabled {
+			t.Fatal("comparison snapshot did not reflect the visual skill setting")
+		}
+	}
+}
+
 func TestTierAuthorizesBeforeForwardingAndPreservesBody(t *testing.T) {
 	g := testGateway(t)
 	installTier(t, g, limitedTier())

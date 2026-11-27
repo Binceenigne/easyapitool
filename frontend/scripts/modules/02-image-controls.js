@@ -657,6 +657,7 @@
         function syncManagedImageControls() {
             const state = window.imageEditState;
             const profile = activeImageProfile();
+            imageVisualSkills.syncPermissions();
             const models = availableImageModels(profile);
             const fallback = profile?.defaultImage || 'gpt-image-2';
             const signature = JSON.stringify([fallback, models, profile?.revision, profile?.tier]);

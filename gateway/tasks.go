@@ -33,9 +33,11 @@ type generationInput struct {
 	Options      object
 }
 
+const visualSkillSeparator = "\n\n【已选视觉风格】\n"
+
 func (req generationInput) originalPrompt() string {
 	original := strings.TrimSpace(objectString(req.Options, "originalPrompt"))
-	if original != "" && strings.HasPrefix(req.Prompt, original+"\n\n【已选视觉风格】\n") {
+	if original != "" && strings.HasPrefix(req.Prompt, original+visualSkillSeparator) {
 		return original
 	}
 	return req.Prompt
@@ -75,6 +77,17 @@ func (m *mobile) createGeneration(w http.ResponseWriter, r *http.Request, owner 
 		settings, err = m.g.modelsForKey(selected.key)
 		if err != nil {
 			m.g.proxyError(w, err)
+			return
+		}
+	}
+	if original := req.originalPrompt(); original != req.Prompt {
+		if settings != nil && !settings.Tier.visualSkillsEnabled() {
+			m.g.proxyError(w, denied("视觉风格"))
+			return
+		}
+		mode := objectString(req.Options, "reasoningMode")
+		if (mode == "" || mode == "instant") && strings.Contains(req.Prompt[len(original)+len(visualSkillSeparator):], "\nAgent 规划：") {
+			jsonError(w, http.StatusBadRequest, "此视觉风格需要使用已开放的思维模式")
 			return
 		}
 	}
