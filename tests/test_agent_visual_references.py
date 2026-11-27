@@ -190,6 +190,46 @@ class VisualReferenceSessionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FlashVisualWorkflowTests(unittest.TestCase):
+    def test_text_only_identity_search_can_recover_an_inspected_reference(self):
+        controller = app.AppController.__new__(app.AppController)
+        controller.store = SimpleNamespace(latest_payload=lambda _key: None)
+        controller.web_search = WebSearchService()
+        url = "https://images.example.com/naiwa.png"
+        identifier = controller.web_search._candidate_id(url)
+        bodies = []
+
+        def tool_call(name, arguments):
+            return {"type": "function_call", "id": "fc-" + name, "call_id": "call-" + name,
+                    "name": name, "arguments": json.dumps(arguments), "status": "completed"}
+
+        def handler(request):
+            bodies.append(json.loads(request.content))
+            if len(bodies) == 1:
+                text = "确认了来源，图片搜索尚未返回角色。\n<<<FINAL_PROMPT>>>时代广场上的角色"
+                return sse_response(text, [search_item("identity", "奶蛙的出处"), *response_payload(text)["output"]])
+            if len(bodies) == 2:
+                return sse_response("", [official_results(url)["output"][0],
+                                         tool_call("inspect_visual_references", {"image_urls": [url]})])
+            if len(bodies) == 3:
+                return sse_response("", [tool_call("select_visual_references", {
+                    "candidate_ids": [identifier], "rationale": "采用来源中已检视的角色外观"})])
+            return sse_response("已检视并采用角色参考图。\n<<<FINAL_PROMPT>>>保留奶蛙外观的时代广场屏幕")
+
+        def sdk(request, **kwargs):
+            request.http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+            return run_agent(request, **kwargs)
+
+        controller._run_sdk_agent = sdk
+        with patch.object(controller.web_search, "_public_image_bytes", return_value=fixture_png()):
+            result = controller._run_image_prompt_agent(
+                {"id": "key", "base_url": "https://provider.test/v1"}, "test-key", "奶娃在纽约时代广场", (), "flash",
+                True, lambda *args, **kwargs: None,
+            )
+        self.assertEqual(len(bodies), 4)
+        self.assertIn("复核上一轮的参考图决定", json.dumps(bodies[1], ensure_ascii=False))
+        self.assertEqual([item["id"] for item in result["webCandidates"]], [identifier])
+        self.assertEqual(result["webReferenceCount"], 1)
+
     def test_sdk_cancellation_returns_before_pending_inspection_is_released(self):
         started, release, finished, watchdog_fired = (threading.Event() for _ in range(4))
         context = ImageTaskContext()

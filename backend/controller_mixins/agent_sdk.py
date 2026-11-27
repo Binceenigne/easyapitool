@@ -153,10 +153,9 @@ def run_prompt_agent(controller: Any, record: Any, secret: str, prompt: str,
         f"当前思维模式 {reasoning_mode}，思考深度 {effort}，可用模型轮数 {total_budget}。"
     )
     tools = []
-    if web_search_enabled:
+    if web_search_enabled and inspect_limit > 0:
         instructions += VISUAL_REFERENCE_POLICY
-        if inspect_limit > 0:
-            tools.extend(make_visual_reference_tools(references.inspect, references.select))
+        tools.extend(make_visual_reference_tools(references.inspect, references.select))
     if workspace is not None:
         instructions += (
             "当前为继续编辑，父集成果和本轮上传已附在输入中，默认沿用为编辑素材。"
@@ -186,7 +185,8 @@ def run_prompt_agent(controller: Any, record: Any, secret: str, prompt: str,
         web_image_max_results=max(1, inspect_limit), max_turns=total_budget,
         max_attempts=max_attempts("agent"),
         validate_output=validate_final, response_observer=references.observe if web_search_enabled else None,
-        final_output_feedback=None)
+        reference_review_needed=lambda: adoption_limit() > 0 and not references.adopted
+        and (not references.candidates or bool(references.inspected)))
     result = controller._run_sdk_agent(request, cancel_event=getattr(task_context, "cancel_event", None), tools=tools, on_event=progress)
     summary, final_prompt = str(result["text"]).split(PROMPT_RESULT_MARKER, 1)
     if reasoning_mode == "instant":

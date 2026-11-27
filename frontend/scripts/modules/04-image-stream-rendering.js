@@ -477,12 +477,11 @@
                         `[data-reasoning-turn-text="${CSS.escape(pendingSetId)}:${pendingTurnNumber}"]`
                     );
                     if (!pendingSet || !turn || !text) return;
+                    const log = text.closest('.image-reasoning-log');
+                    const follow = log && log.scrollHeight - log.scrollTop - log.clientHeight < 16;
                     text.textContent = reasoningTurnDisplayText(turn);
                     text.classList.toggle('is-streaming', turn.status === 'running');
-                    const log = text.closest('.image-reasoning-log');
-                    if (log && !pendingSet.reasoningContentExpanded) {
-                        log.scrollTo({ top: log.scrollHeight, behavior: 'smooth' });
-                    }
+                    if (follow && !pendingSet.reasoningContentExpanded) log.scrollTop = log.scrollHeight;
                 });
                 pendingReasoningTurnRenders.clear();
             });
@@ -554,6 +553,15 @@
             return `${modeLabel}：${statusLabel}`;
         }
 
+        function reasoningIconMarkup(name, className = '') {
+            const iconName = name.split('-').map(word => word[0].toUpperCase() + word.slice(1)).join('');
+            const icon = window.lucide?.icons?.[iconName];
+            if (!icon || !window.lucide?.createElement) return iconMarkup(name, className);
+            const [tag, attributes, children] = icon;
+            return window.lucide.createElement([tag, { ...attributes, class: 'lucide lucide-' + name + ' ' + className,
+                'aria-hidden': 'true', focusable: 'false' }, children]).outerHTML;
+        }
+
         function renderReasoningPanel(set) {
             const panel = document.createElement('div');
             panel.className = `image-reasoning-panel is-${set.reasoningStatus} mode-${set.reasoningMode}${set.reasoningExpanded ? ' is-expanded' : ''}`;
@@ -573,7 +581,7 @@
                     ? 'info'
                     : set.reasoningStatus === 'cancelled' ? 'square' : 'circle-check';
             const title = reasoningPanelTitle(set, activeTurn, activeTool);
-            toggle.innerHTML = `${iconMarkup(statusIcon, 'icon-12')}<strong>${escapeHtml(title)}</strong><span class="image-reasoning-usage" data-reasoning-elapsed="${escapeHtml(set.setId)}" title="${escapeHtml(reasoningUsageTitle(set))}">${totalReasoningElapsed(set)} · ${formatReasoningUsage(set)}</span>${iconMarkup(set.reasoningExpanded ? 'chevron-up' : 'chevron-right', 'icon-12')}`;
+            toggle.innerHTML = `${reasoningIconMarkup(statusIcon, 'icon-12')}<strong>${escapeHtml(title)}</strong><span class="image-reasoning-usage" data-reasoning-elapsed="${escapeHtml(set.setId)}" title="${escapeHtml(reasoningUsageTitle(set))}">${totalReasoningElapsed(set)} · ${formatReasoningUsage(set)}</span>${reasoningIconMarkup(set.reasoningExpanded ? 'chevron-up' : 'chevron-right', 'icon-12')}`;
             panel.append(toggle);
 
             if (!set.reasoningExpanded) return panel;
@@ -595,6 +603,7 @@
             turns.forEach(turn => {
                 const turnBlock = document.createElement('section');
                 turnBlock.className = `image-reasoning-turn is-${turn.status}`;
+                turnBlock.dataset.reasoningTurn = String(turn.turn);
                 const turnTitle = document.createElement('div');
                 turnTitle.className = 'image-reasoning-turn-title';
                 turnTitle.innerHTML = `<strong>${escapeHtml(turn.title || '正在完善方案')}</strong><span>${reasoningElapsed(set, turn)}</span>`;
@@ -615,7 +624,7 @@
                         : tool.status === 'interrupted' ? ` · ${tool.interruptedReason || '已结束，未收到工具结果'}` : '';
                     toolRow.dataset.reasoningCall = tool.callId || '';
                     toolRow.title = tool.error || tool.interruptedReason || reasoningToolLabel(tool);
-                    toolRow.innerHTML = `${iconMarkup(reasoningToolIcon(tool), `icon-11${tool.status === 'running' ? ' is-spinning' : ''}`)}<span>${escapeHtml(reasoningToolLabel(tool) + resultSuffix)}</span>`;
+                    toolRow.innerHTML = `${reasoningIconMarkup(reasoningToolIcon(tool), `icon-11${tool.status === 'running' ? ' is-spinning' : ''}`)}<span>${escapeHtml(reasoningToolLabel(tool) + resultSuffix)}</span>`;
                     turnBlock.append(toolRow);
                 });
                 log.append(turnBlock);
@@ -629,7 +638,7 @@
             expandContent.className = 'image-reasoning-content-toggle';
             expandContent.title = set.reasoningContentExpanded ? '收起思考内容' : '展开全部思考内容';
             expandContent.setAttribute('aria-label', expandContent.title);
-            expandContent.innerHTML = iconMarkup(set.reasoningContentExpanded ? 'minimize-2' : 'maximize-2', 'icon-11');
+            expandContent.innerHTML = reasoningIconMarkup(set.reasoningContentExpanded ? 'minimize-2' : 'maximize-2', 'icon-11');
             expandContent.addEventListener('click', () => toggleReasoningContent(set.setId));
             logShell.append(expandContent);
             body.append(logShell);
@@ -646,7 +655,7 @@
                 referenceToggle.title = set.webReferencesExpanded ? '收起参考图记录' : '查看检视图片、采用状态与说明';
                 if (set.webImageCandidateCount) referenceToggle.title += `（搜索返回 ${set.webImageCandidateCount} 张图片候选）`;
                 referenceToggle.setAttribute('aria-expanded', String(set.webReferencesExpanded));
-                    referenceToggle.innerHTML = `${iconMarkup('images', 'icon-10')}<span>已检视 ${referenceGallery.length} · 采用 ${Number(set.webReferenceCount) || 0}</span>`;
+                    referenceToggle.innerHTML = `${reasoningIconMarkup('images', 'icon-10')}<span>已检视 ${referenceGallery.length} · 采用 ${Number(set.webReferenceCount) || 0}</span>`;
                 referenceToggle.addEventListener('click', () => void toggleWebReferences(set.setId));
                     supplementTabs.append(referenceToggle);
                 }
@@ -657,7 +666,7 @@
                     sourcesToggle.title = '查看联网检索使用的网页链接';
                     sourcesToggle.setAttribute('aria-expanded', String(set.webSearchSourcesExpanded));
                     sourcesToggle.dataset.reasoningSources = set.setId;
-                    sourcesToggle.innerHTML = `${iconMarkup('globe', 'icon-10')}<span>网页来源 ${set.webSearchSources.length}</span>`;
+                    sourcesToggle.innerHTML = `${reasoningIconMarkup('globe', 'icon-10')}<span>网页来源 ${set.webSearchSources.length}</span>`;
                     sourcesToggle.addEventListener('click', () => toggleWebSearchSources(set.setId));
                     supplementTabs.append(sourcesToggle);
                 }
@@ -667,7 +676,7 @@
                     promptToggle.className = `image-reasoning-supplement-toggle${set.finalPromptExpanded ? ' is-active' : ''}`;
                     promptToggle.title = set.finalPromptExpanded ? '收起最终提示词' : '查看最终提示词';
                     promptToggle.setAttribute('aria-expanded', String(set.finalPromptExpanded));
-                    promptToggle.innerHTML = `${iconMarkup('file-text', 'icon-10')}<span>最终提示词</span>`;
+                    promptToggle.innerHTML = `${reasoningIconMarkup('file-text', 'icon-10')}<span>最终提示词</span>`;
                     promptToggle.addEventListener('click', () => toggleFinalPrompt(set.setId));
                     supplementTabs.append(promptToggle);
                 }
@@ -687,7 +696,7 @@
                     title.textContent = source.title;
                     const domain = document.createElement('small');
                     domain.textContent = new URL(source.url).hostname;
-                    link.innerHTML = iconMarkup('external-link', 'icon-11');
+                    link.innerHTML = reasoningIconMarkup('external-link', 'icon-11');
                     link.append(title, domain);
                     sources.append(link);
                 }
@@ -723,7 +732,7 @@
                 const references = document.createElement('div');
                 references.className = 'image-reasoning-web-references';
                 if (set.webReferencesLoading) {
-                    references.innerHTML = `${iconMarkup('loader-circle', 'icon-13 is-spinning')}<span>正在加载网络参考图</span>`;
+                    references.innerHTML = `${reasoningIconMarkup('loader-circle', 'icon-13 is-spinning')}<span>正在加载网络参考图</span>`;
                 } else {
                     referenceGallery.forEach((reference, referenceIndex) => {
                         const referenceButton = document.createElement('button');
@@ -765,13 +774,76 @@
                 copyEffectiveButton.className = 'image-prompt-copy';
                 copyEffectiveButton.title = '复制思维优化提示词';
                 copyEffectiveButton.setAttribute('aria-label', copyEffectiveButton.title);
-                copyEffectiveButton.innerHTML = iconMarkup('copy', 'icon-11');
+                copyEffectiveButton.innerHTML = reasoningIconMarkup('copy', 'icon-11');
                 copyEffectiveButton.addEventListener('click', () => void copyImagePrompt(visibleImagePrompt(set.effectivePrompt), '思维优化提示词'));
                 finalPromptContent.append(finalPromptText, copyEffectiveButton);
                 body.append(finalPromptContent);
             }
             panel.append(body);
             return panel;
+        }
+
+        function syncReasoningChildren(live, next) {
+            const key = element => element.dataset.reasoningTurn || element.dataset.reasoningCall
+                || element.classList[0] || element.tagName;
+            const previous = new Map([...live.children].map(element => [key(element), element]));
+            const isLog = live.classList.contains('image-reasoning-log');
+            const follow = isLog && live.scrollHeight - live.scrollTop - live.clientHeight < 16;
+            let after = null;
+            for (const desired of [...next.children]) {
+                const id = key(desired);
+                const existing = previous.get(id);
+                previous.delete(id);
+                let child = desired;
+                let scrollTop = 0;
+                if (existing) {
+                    if (existing.tagName === 'DETAILS') desired.open = existing.open;
+                    if (existing.matches('.image-reasoning-log-shell, .image-reasoning-log, .image-reasoning-turn')) {
+                        existing.className = desired.className;
+                        syncReasoningChildren(existing, desired);
+                        child = existing;
+                    } else if (existing.isEqualNode(desired)) {
+                        child = existing;
+                    } else {
+                        scrollTop = existing.scrollTop;
+                        existing.remove();
+                    }
+                }
+                const before = after ? after.nextElementSibling : live.firstElementChild;
+                if (child !== before) live.insertBefore(child, before);
+                if (scrollTop) child.scrollTop = scrollTop;
+                after = child;
+            }
+            for (const extra of previous.values()) extra.remove();
+            if (follow && !live.classList.contains('is-fully-expanded')) live.scrollTop = live.scrollHeight;
+        }
+
+        function refreshImageReasoningPanel(set) {
+            const section = document.querySelector('.image-generation-set[data-set-id="' + CSS.escape(set.setId) + '"]');
+            if (!section) return false;
+            if (!set.expanded) return true;
+            const grid = section.querySelector('.image-generation-set-grid');
+            if (!grid) return false;
+            const panel = section.querySelector('.image-reasoning-panel');
+            const next = renderReasoningPanel(set);
+            if (!panel) {
+                section.insertBefore(next, grid);
+            } else {
+                const pulse = panel.classList.contains('is-completion-pulsing');
+                panel.className = next.className;
+                if (pulse) panel.classList.add('is-completion-pulsing');
+                const button = panel.querySelector('.image-reasoning-toggle');
+                const nextButton = next.querySelector('.image-reasoning-toggle');
+                button.setAttribute('aria-expanded', nextButton.getAttribute('aria-expanded'));
+                if (button.innerHTML !== nextButton.innerHTML) button.replaceChildren(...nextButton.childNodes);
+                const body = panel.querySelector('.image-reasoning-body');
+                const nextBody = next.querySelector('.image-reasoning-body');
+                if (body && nextBody) syncReasoningChildren(body, nextBody);
+                else if (body) body.remove();
+                else if (nextBody) panel.append(nextBody);
+            }
+            grid.hidden = set.reasoningStatus === 'running';
+            return true;
         }
 
         function imageGenerationItemAspectRatio(item) {

@@ -145,7 +145,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.image-edit-file button {
+.image-edit-file > .image-edit-remove {
     position: absolute;
     top: 5px;
     right: 5px;
@@ -162,13 +162,13 @@
     transform: translateY(-3px);
     transition: transform 140ms ease, background 140ms ease;
 }
-.image-edit-file:is(:hover, :focus-within) > button {
+.image-edit-file:is(:hover, :focus-within) > .image-edit-remove {
     visibility: visible;
     opacity: 1;
     pointer-events: auto;
     transform: translateY(0);
 }
-.image-edit-file button:hover { background: var(--critical); }
+.image-edit-file > .image-edit-remove:hover { background: var(--critical); }
 #editImageAddTile {
     display: flex;
     flex: 0 0 86px;
@@ -186,7 +186,7 @@
 #imagePromptModalTextarea.is-dragging-image { border-color: var(--brand); background: var(--brand-soft); }
 
 .image-edit-prompt { display: grid; grid-template-rows: auto minmax(0, 1fr); flex: 1 1 164px; min-height: 0; gap: 4px; }
-.image-edit-prompt > span { color: var(--muted); font-size: 8px; font-weight: 700; }
+.image-edit-prompt > label { color: var(--muted); font-size: 8px; font-weight: 700; }
 .image-edit-prompt-shell { position: relative; min-height: 0; border: 1px solid var(--border); background: var(--bg); }
 .image-edit-prompt textarea {
     display: block;
@@ -265,7 +265,14 @@
 }
 #imageModelChoices > .is-active,
 #imageModelChoices .image-choice-menu [aria-selected="true"] { color: var(--image-purple); }
-html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generation-controls-wrap) {
+.image-generation-popover {
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    background: var(--surface);
+    box-shadow: 0 18px 52px rgba(2, 6, 23, 0.2), 0 2px 10px rgba(2, 6, 23, 0.1);
+}
+html.dark :is(.image-generation-popover, #imageReasoningMenu, .image-generation-controls-wrap) {
     --bg: #334155;
     --surface: #1e293b;
     --surface-strong: #263449;
@@ -328,15 +335,10 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
     left: var(--image-popover-left, 12px);
     display: grid;
     width: var(--image-popover-width, 100%);
-    padding: 16px;
     gap: 6px;
     max-height: var(--image-popover-max-height);
     overflow-y: auto;
     overscroll-behavior: contain;
-    border: 1px solid var(--border);
-    border-radius: 13px;
-    background: var(--surface);
-    box-shadow: 0 18px 52px rgba(2, 6, 23, 0.2), 0 2px 10px rgba(2, 6, 23, 0.1);
     opacity: 0;
     pointer-events: none;
     transform: translate3d(0, 12px, 0) scale(0.985);
@@ -1672,7 +1674,8 @@ html.dark :is(#imageGenerationControlPanel, #imageReasoningMenu, .image-generati
 .image-result-modal-canvas.is-dragging img { transition: none; }
 
 @media (max-width: 600px) {
-    #imageGenerationControlPanel { --image-choice-height: 36px; padding: 12px; gap: 10px; }
+    .image-generation-popover { padding: 12px; }
+    #imageGenerationControlPanel { --image-choice-height: 36px; gap: 10px; }
     .image-aspect-options { grid-template-columns: repeat(5, minmax(0, 1fr)); }
     .image-aspect-options button { min-height: 52px; }
     .image-result-modal-header { align-items: flex-start; height: auto; min-height: 52px; }

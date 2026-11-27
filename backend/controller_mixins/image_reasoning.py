@@ -12,6 +12,8 @@ from mirra_agents import AgentRequest, AgentRunFailure, run_agent
 from mirra_agents.retry import AgentCancelled, failure_details, max_attempts, retry_sync
 from ..prompt_targets import (format_prompt_instructions, choose_reasoning_pair, stored_model_profile, apply_reasoning_profile)
 
+VISUAL_SKILL_SEPARATOR = "\n\n【已选视觉风格】\n"
+
 class ImageGenerationCancelled(Exception):
     pass
 
@@ -467,6 +469,13 @@ class ImageReasoningMixin:
             )
         )
         tier = profile.get("tier") if isinstance(profile, dict) else None
+        original_prompt = str(clean_options.get("originalPrompt") or "").strip()
+        style_prefix = original_prompt + VISUAL_SKILL_SEPARATOR
+        if original_prompt and isinstance(prompt, str) and prompt.strip().startswith(style_prefix):
+            if isinstance(tier, dict) and tier.get("visualSkills") is False:
+                return {"ok": False, "error": "当前密钥档位未开放视觉风格"}
+            if reasoning_mode == "instant" and "\nAgent 规划：" in prompt.strip()[len(style_prefix):]:
+                return {"ok": False, "error": "此视觉风格需要使用已开放的思维模式"}
         if isinstance(tier, dict) and not tier.get("webSearch"):
             web_search_enabled = False
         reference_limit = self._tier_reference_limit(record)
@@ -537,8 +546,7 @@ class ImageReasoningMixin:
                 pass
 
         submitted_prompt = request.prompt
-        original_prompt = str(clean_options.get("originalPrompt") or "").strip()
-        if not original_prompt or not submitted_prompt.startswith(f"{original_prompt}\n\n【已选视觉风格】\n"):
+        if not original_prompt or not submitted_prompt.startswith(style_prefix):
             original_prompt = submitted_prompt
         final_prompt = submitted_prompt
         reasoning_summary = ""

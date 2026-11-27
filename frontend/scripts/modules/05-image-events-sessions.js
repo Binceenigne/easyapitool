@@ -107,6 +107,7 @@
                 if (retry.waiting) setTimeout(() => {
                     if (target.retry !== retry) return;
                     retry.waiting = false;
+                    if (!item && refreshImageReasoningPanel(set)) return;
                     renderImageGenerationSets();
                 }, Math.min(2147483647, retry.delayMs));
             } else if (event.type === 'set_started') {
@@ -377,7 +378,9 @@
                     item.error = event.error || '生成已停止';
                 });
             }
-            renderImageGenerationSets();
+            const reasoningEvent = event.type.startsWith('react_')
+                || event.type === 'request_retry' && !Number.isInteger(event.itemIndex);
+            if (!reasoningEvent || !refreshImageReasoningPanel(set)) renderImageGenerationSets();
             if (event.type === 'set_completed') notifyImageGenerationCompleted(set);
             refreshOpenImageViewer(set, event.itemIndex);
         };

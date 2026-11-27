@@ -10,6 +10,7 @@ const imageVisualSkills = (() => {
     let panelMotion = null;
     let gridMotion = null;
     let outgoingGrid = null;
+    let availability = null;
     let root;
     let grid;
 
@@ -41,53 +42,81 @@ const imageVisualSkills = (() => {
     }
 
     function requiresAgent() {
-        return [...selected].some(([id, choices]) => agentInstructions(catalog.get(id), choices).length > 0);
+        return activeRecipes().some(({ agent }) => agent.length > 0);
     }
 
     function hasAgentMode() {
-        return imageEditState.reasoningAdvanced && imageAdvancedAllowed()
-            || imageReasoningModesForTier().some(mode => mode !== 'instant');
+        return imageAdvancedAllowed() || imageReasoningModesForTier().some(mode => mode !== 'instant');
+    }
+
+    function lockReason(needsAgent = false) {
+        if (activeImageTier()?.visualSkills === false) return '当前档位未开放视觉风格';
+        return needsAgent && !hasAgentMode() ? '当前档位未开放此风格所需的思维模式' : '';
+    }
+
+    function activeRecipes() {
+        if (lockReason()) return [];
+        return [...selected].map(([id, chosen]) => {
+            const skill = catalog.get(id);
+            return { skill, chosen, agent: agentInstructions(skill, chosen) };
+        }).filter(({ agent }) => !lockReason(agent.length > 0));
+    }
+
+    function styleLock(button, reason) {
+        applyImageChoiceAvailability(button, !!reason, !!reason, reason);
+        button.removeAttribute('title');
+    }
+
+    function ensureAgentMode() {
+        const state = imageEditState;
+        if (!requiresAgent() || state.reasoningAdvanced && imageAdvancedAllowed()) return;
+        const modes = imageReasoningModesForTier().filter(mode => mode !== 'instant');
+        if (modes.includes(state.reasoningMode)) return;
+        if (modes.length) setImageReasoningMode('flash');
+        else setImageAdvancedMode(state.reasoningAdvancedModel, state.reasoningAdvancedEffort);
+    }
+
+    function syncPermissions() {
+        const allowed = !lockReason();
+        const key = String(allowed) + ':' + hasAgentMode();
+        if (key !== availability) {
+            availability = key;
+            const trigger = document.getElementById('imageSkillButton');
+            trigger.dataset.imageTip = '打开风格库，选择可叠加的摄影、印刷或插画风格。';
+            styleLock(trigger, lockReason());
+            if (opener) {
+                if (!allowed) close(false);
+                else {
+                    if (editor && lockReason(Boolean(editor.skill.agent))) editor = null;
+                    render();
+                }
+            }
+        }
+        ensureAgentMode();
     }
 
     function reasoningIssue() {
         if (!requiresAgent()) return '';
-        if (!hasAgentMode()) return '当前档位没有可用的思维模式，请移除 Agent 风格或切换密钥';
-        return !imageEditState.reasoningAdvanced && imageEditState.reasoningMode === 'instant'
+        return imageEditState.reasoningMode === 'instant'
             ? 'Agent 风格需要 Flash 或其他已开放的思维模式' : '';
     }
 
     function compose(prompt) {
-        if (!selected.size) return prompt;
-        const recipes = [...selected].map(([id, chosen]) => {
-            const skill = catalog.get(id);
+        const recipes = activeRecipes().map(({ skill, chosen, agent }) => {
             const options = choiceList(skill, chosen).filter(choice => choice.prompt);
-            const agent = agentInstructions(skill, chosen);
             return [`${skill.name}`, skill.prompt, ...options.map(choice => `${choice.name}：${choice.prompt}`),
                 ...agent.map(instruction => `Agent 规划：${instruction}`)].join('\n');
         });
+        if (!recipes.length) return prompt;
         return `${prompt}\n\n【已选视觉风格】\n按用户的主题、参考图和所选输出规格使用下列配方。按现有素材理解模板变量，组合多个风格时融合相容特征。\n\n${recipes.join('\n\n')}`;
     }
 
-    function thumbnail(skill, choice, step) {
+    function thumbnail(skill, choice) {
         const thumb = document.createElement('span');
         thumb.className = 'visual-skill-thumb';
         thumb.setAttribute('aria-hidden', 'true');
         const cover = choice?.cover || skill.cover;
-        if (choice?.colors?.length) {
-            const colors = choice.colors;
-            thumb.classList.add('is-swatch');
-            for (const color of colors) {
-                const band = document.createElement('span');
-                band.style.backgroundColor = color;
-                thumb.append(band);
-            }
-        } else if (step?.layout && choice.id !== 'default') {
-            const variant = Number(choice.id) - 1;
-            thumb.classList.add('is-diagram');
-            thumb.dataset.scheme = String(variant % 9);
-            thumb.style.setProperty('--diagram-hue', String((skill.cell * 41 + variant * 27) % 360));
-            thumb.append(document.createElement('span'), document.createElement('span'), document.createElement('span'));
-        } else if (cover) {
+        if (cover) {
             const picture = document.createElement('img');
             picture.src = assets + cover;
             picture.alt = '';
@@ -97,7 +126,6 @@ const imageVisualSkills = (() => {
             thumb.classList.add('is-atlas');
             thumb.style.backgroundImage = `url('${assets}${skill.atlas}.webp')`;
             thumb.style.backgroundPosition = `${skill.cell % 3 * 50}% ${Math.floor(skill.cell / 3) * 50}%`;
-            if (choice && choice.id !== 'default') thumb.style.setProperty('--variant-hue', `${(Number(choice.id) - 1) * 19}deg`);
         }
         return thumb;
     }
@@ -109,7 +137,7 @@ const imageVisualSkills = (() => {
         return sentence.length > 64 ? sentence.slice(0, 63).trimEnd() + '…' : sentence;
     }
 
-    function makeTile(skill, { choice, step, active = false, onSelect }) {
+    function makeTile(skill, { choice, active = false, onSelect }) {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'visual-skill-choice';
@@ -126,12 +154,8 @@ const imageVisualSkills = (() => {
         button.setAttribute('aria-label', choice?.name || skill.title);
         if (needsAgent) description.push('需要 Flash 或其他已开放的思维档位。');
         if (containsAgentChoice) description.push('部分配置需要 Agent。');
-        if (needsAgent && !hasAgentMode()) {
-            button.disabled = true;
-            description.push('当前密钥档位未开放此功能。');
-        }
         button.dataset.imageTip = description.join(' ');
-        button.append(thumbnail(skill, choice, step), name);
+        button.append(thumbnail(skill, choice), name);
         if (needsAgent || containsAgentChoice) {
             const badge = document.createElement('span');
             badge.className = 'visual-skill-agent-badge';
@@ -145,6 +169,7 @@ const imageVisualSkills = (() => {
             mark.innerHTML = iconMarkup('check', 'icon-12');
             button.append(mark);
         }
+        styleLock(button, lockReason(needsAgent));
         button.addEventListener('click', onSelect);
         return button;
     }
@@ -203,7 +228,7 @@ const imageVisualSkills = (() => {
         previous.disabled = !step || editor.index === 0;
         if (step) {
             grid.replaceChildren(...choicesFor(step, editor.chosen).map(choice => makeTile(editor.skill, {
-                choice, step, active: choice.id === editor.chosen[step.id], onSelect: () => selectChoice(choice)
+                choice, active: choice.id === editor.chosen[step.id], onSelect: () => selectChoice(choice)
             })));
         } else {
             grid.replaceChildren(...IMAGE_VISUAL_SKILLS.map(skill => makeTile(skill, {
@@ -223,7 +248,8 @@ const imageVisualSkills = (() => {
     }
 
     function chooseSkill(skill) {
-        if (skill.agent && !hasAgentMode()) return showToast('当前密钥档位未开放此风格所需的思维模式', 'info');
+        const reason = lockReason(Boolean(skill.agent));
+        if (reason) return showToast(reason, 'info');
         if (!selected.has(skill.id) && (skill.quick || !skill.steps.length)) {
             const chosen = Object.fromEntries(skill.steps.map(step => [step.id, step.choices[0].id]));
             activate(skill, chosen);
@@ -235,7 +261,8 @@ const imageVisualSkills = (() => {
     function selectChoice(choice) {
         const step = activeStep();
         if (!step) return;
-        if (choice.agent && !hasAgentMode()) return showToast('这项配方需要已开放的思维模式', 'info');
+        const reason = lockReason(Boolean(editor.skill.agent || choice.agent));
+        if (reason) return showToast(reason, 'info');
         editor.chosen[step.id] = choice.id;
         editor.steps = stepsFor(editor.skill, editor.chosen);
         for (const item of editor.steps) {
@@ -252,10 +279,8 @@ const imageVisualSkills = (() => {
     }
 
     function activate(skill, chosen) {
-        if (agentInstructions(skill, chosen).length && !hasAgentMode()) {
-            showToast('当前密钥档位未开放此风格所需的思维模式', 'info');
-            return;
-        }
+        const reason = lockReason(agentInstructions(skill, chosen).length > 0);
+        if (reason) return showToast(reason, 'info');
         const editing = selected.has(skill.id);
         selected.set(skill.id, { ...chosen });
         close(false);
@@ -267,9 +292,7 @@ const imageVisualSkills = (() => {
     }
 
     function updateSelection() {
-        if (requiresAgent() && imageEditState.reasoningMode === 'instant' && !imageEditState.reasoningAdvanced) {
-            setImageReasoningMode('flash');
-        }
+        ensureAgentMode();
         syncImageReasoningLabels();
         renderEditImageList();
         syncImageGenerationAvailability();
@@ -281,14 +304,16 @@ const imageVisualSkills = (() => {
             const card = document.createElement('div');
             card.className = 'image-edit-file visual-skill-package';
             const agent = agentInstructions(skill, chosen).length > 0;
+            const reason = lockReason(agent);
             card.toggleAttribute('data-agent', agent);
+            card.toggleAttribute('data-locked', Boolean(reason));
             const edit = document.createElement('button');
             edit.type = 'button';
             edit.className = 'visual-skill-reopen';
             edit.dataset.skillId = id;
             const options = choiceList(skill, chosen).filter(choice => choice.id !== 'default').map(choice => choice.name);
             const details = [skill.summary, options.length ? `已选 ${options.join('、')}。` : '',
-                agent ? '此风格由 Agent 规划。' : '', '点击重新编辑。'];
+                agent ? '此风格由 Agent 规划。' : '', reason ? '此风格已暂停使用。' : '点击重新编辑。'];
             edit.dataset.imageTip = details.filter(Boolean).join(' ');
             edit.setAttribute('aria-label', `编辑风格 ${skill.name}`);
             edit.setAttribute('aria-haspopup', 'dialog');
@@ -305,6 +330,7 @@ const imageVisualSkills = (() => {
                 edit.append(badge);
             }
             edit.addEventListener('click', () => open(edit, skill));
+            styleLock(edit, reason);
             const remove = createEditImageRemoveButton(skill.name, () => {
                 selected.delete(id);
                 updateSelection();
@@ -354,6 +380,8 @@ const imageVisualSkills = (() => {
     }
 
     function open(trigger, skill = null) {
+        const reason = lockReason(Boolean(skill?.agent));
+        if (reason) return showToast(reason, 'info');
         if (opener === trigger) return close();
         closeImageGenerationControls();
         closeImageReasoningMenu();
@@ -420,5 +448,5 @@ const imageVisualSkills = (() => {
         renderEditImageList();
     }
 
-    return { init, close, renderCards, count: () => selected.size, requiresAgent, reasoningIssue, compose };
+    return { init, close, renderCards, syncPermissions, count: () => selected.size, requiresAgent, reasoningIssue, compose };
 })();
