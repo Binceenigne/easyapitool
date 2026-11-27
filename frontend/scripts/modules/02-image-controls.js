@@ -579,7 +579,10 @@
         }
 
         function initializeImageOptionTooltips() {
-            const panels = ['imageGenerationControlPanel', 'imageReasoningMenu'].map(id => document.getElementById(id));
+            const menus = ['imageGenerationControlPanel', 'imageReasoningMenu'].map(id => document.getElementById(id));
+            const skillAreas = ['imageSkillPicker', 'editImageSelection', 'imageSkillButton'].map(id => document.getElementById(id));
+            const isVisible = panel => !panel.hidden && !panel.inert
+                && (!menus.includes(panel) || panel.classList.contains('is-open'));
             const bubble = document.createElement('div');
             bubble.id = 'imageOptionTooltip';
             bubble.setAttribute('role', 'tooltip');
@@ -595,12 +598,12 @@
                 bubble.hidden = true;
             }
             function show(element, panel) {
-                if (!element?.dataset.imageTip || panel.hidden) return;
+                if (!element?.dataset.imageTip || !isVisible(panel)) return;
                 if (target === element) return;
                 hide();
                 target = element;
                 timer = setTimeout(() => {
-                    if (!element.getClientRects().length || !panel.classList.contains('is-open')) return hide();
+                    if (!element.getClientRects().length || !isVisible(panel)) return hide();
                     bubble.textContent = element.dataset.imageTip;
                     bubble.hidden = false;
                     element.setAttribute('aria-describedby', bubble.id);
@@ -608,13 +611,14 @@
                     const width = bubble.offsetWidth;
                     const height = bubble.offsetHeight;
                     const left = Math.max(7, Math.min(innerWidth - width - 7, box.left + (box.width - width) / 2));
-                    const top = box.top >= height + 12 ? box.top - height - 6 : box.bottom + 6;
+                    const anchorTop = box.top >= height + 12 ? box.top - height - 6 : box.bottom + 6;
+                    const top = Math.max(7, Math.min(innerHeight - height - 7, anchorTop));
                     bubble.style.left = left + 'px';
                     bubble.style.top = top + 'px';
                 }, 280);
             }
-            panels[0].addEventListener('scroll', () => closeImagePicker(true));
-            for (const panel of panels) {
+            menus[0].addEventListener('scroll', () => closeImagePicker(true));
+            for (const panel of [...menus, ...skillAreas]) {
                 const trackPointer = event => {
                     if (event.pointerType === 'touch') return;
                     hover = { panel, x: event.clientX, y: event.clientY };
@@ -624,6 +628,7 @@
                 panel.addEventListener('pointermove', trackPointer);
                 panel.addEventListener('pointerleave', () => {
                     if (hover?.panel === panel) hover = null;
+                    if (panel.contains(target)) hide();
                 });
                 panel.addEventListener('pointerout', event => {
                     if (target && target.contains(event.target) && !target.contains(event.relatedTarget)) hide();
@@ -640,8 +645,8 @@
                 }, true);
                 panel.addEventListener('click', hide);
                 new MutationObserver(() => {
-                    if (target && panel.contains(target) && (panel.hidden || !panel.classList.contains('is-open'))) hide();
-                }).observe(panel, { attributes: true, attributeFilter: ['hidden', 'class'] });
+                    if (panel.contains(target) && !isVisible(panel)) hide();
+                }).observe(panel, { attributes: true, attributeFilter: ['hidden', 'class', 'inert'] });
             }
         }
 

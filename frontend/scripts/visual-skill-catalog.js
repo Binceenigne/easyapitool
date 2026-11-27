@@ -2,6 +2,7 @@
 const IMAGE_VISUAL_SKILLS = [
   {
     "id": "paper-zine",
+    "summary": "把实景照片与纸面插画拼成一页小刊，突出撕纸边缘和纸纤维。",
     "name": "拾景纸刊",
     "title": "Gathered Scenes Zine · 拾景纸刊",
     "atlas": "print",
@@ -65,6 +66,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "mono-print",
+    "summary": "用单墨或双色油墨表现网点、套印和纸感，适合克制的编辑印刷。",
     "name": "单双色印",
     "title": "Mono Color · 单墨与双色编辑印刷",
     "atlas": "print",
@@ -415,6 +417,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "stamp",
+    "summary": "把照片与定制图章并排呈现，可选印章轮廓和档案版式。",
     "name": "印章档案",
     "title": "Photo Stamp Archive · 印章摄影档案",
     "atlas": "print",
@@ -480,6 +483,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "photo-abstract",
+    "summary": "从照片提取色彩与轮廓，配成摄影和几何图形的双面板。",
     "name": "摄影抽象",
     "title": "Photo Abstract Editorial · 摄影与抽象面板",
     "atlas": "print",
@@ -533,6 +537,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "imagebook",
+    "summary": "把照片重绘成蜡笔、水彩、孔版、像素等 24 种媒介风格，支持原图对照。",
     "name": "影像风格书",
     "title": "Albert Imagebook · 照片艺术风格书（24 种）",
     "atlas": "print",
@@ -717,6 +722,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "fruit-doodle",
+    "summary": "用稚拙的手绘线条画角色和物件，适合俏皮的产品小故事。",
     "name": "稚拙手绘",
     "title": "Heytea-style · 稚拙手绘与产品互动",
     "atlas": "print",
@@ -766,6 +772,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "crt",
+    "summary": "用早期电脑的位图、窗口和荧光配色组织主视觉。",
     "name": "复古屏幕",
     "title": "TaiT CRT Interface · 复古计算机界面",
     "atlas": "print",
@@ -995,6 +1002,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "americana",
+    "summary": "用胶片色调和电影构图写出美式复古氛围，可选五种叙事方向。",
     "name": "美式复古",
     "title": "Cinematic Americana · 电影美式复古五谱系",
     "atlas": "print",
@@ -1132,6 +1140,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "restaged",
+    "summary": "以真实摄影质感呈现尺度、空间或重力的反常变化。",
     "name": "现实重构",
     "title": "Reality Restaged · 现实重构",
     "atlas": "print",
@@ -1241,6 +1250,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "minimal-zine",
+    "summary": "以大面积纸白衬托一个醒目的视觉重心，适合小刊和极简海报。",
     "name": "极简纸刊",
     "title": "GC Minimal Zine Poster · 极简纸刊海报",
     "atlas": "editorial",
@@ -1315,6 +1325,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "travel",
+    "summary": "从旅途照片提取场所、光线和形态，转化为抽象艺术页。",
     "name": "旅行抽象",
     "title": "Travel Photo Abstraction · 旅行影像抽象",
     "atlas": "editorial",
@@ -1377,6 +1388,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "culture",
+    "summary": "用中文编辑排版、摄影与留白呈现建筑、器物和地方文化。",
     "name": "文化营造",
     "title": "归藏营造 · 东方文化编辑设计",
     "atlas": "editorial",
@@ -1447,6 +1459,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "editorial",
+    "summary": "用清晰的主视觉和精细的排版设计科技或文化主题封面。",
     "name": "编辑封面",
     "title": "OpenAI Editorial Cover · 编辑封面九式",
     "atlas": "editorial",
@@ -1510,6 +1523,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "phosphor",
+    "summary": "模拟相机重拍荧光屏的点阵、余辉、重影与摩尔纹。",
     "name": "荧光重摄",
     "title": "Phosphor Relay Style · 荧光屏再摄影",
     "atlas": "editorial",
@@ -1684,6 +1698,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "pop",
+    "summary": "把纪实黑白摄影和高饱和图形拼接起来，制造反差和尺度错觉。",
     "name": "波普拼贴",
     "title": "Surreal Pop Collage · 超现实波普拼贴",
     "atlas": "editorial",
@@ -1738,6 +1753,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "cinema",
+    "summary": "从人物、字体、场景和概念四类海报中选版式，交给 Agent 规划画面。",
     "name": "电影海报",
     "title": "Vane Cinematic Poster · 电影海报 36 式",
     "atlas": "editorial",
@@ -1751,21 +1767,25 @@ const IMAGE_VISUAL_SKILLS = [
           {
             "id": "1",
             "name": "人物主导",
+            "summary": "以角色、姿态或人物关系为海报主视觉，接着选择人物版式。",
             "prompt": ""
           },
           {
             "id": "2",
             "name": "字体主导",
+            "summary": "让片名和字形参与构图，可选大字覆盖、字形开窗等版式。",
             "prompt": ""
           },
           {
             "id": "3",
             "name": "场景主导",
+            "summary": "用地平线、空间尺度或环境光讲故事，人物可作为场景中的一部分。",
             "prompt": ""
           },
           {
             "id": "4",
             "name": "概念主导",
+            "summary": "用一件物品、视觉隐喻或图形聚焦影片的核心概念。",
             "prompt": ""
           }
         ],
@@ -2005,6 +2025,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "candid",
+    "summary": "模拟手机随手抓拍，保留生活化构图、轻微手抖和自然曝光。",
     "name": "手机随拍",
     "title": "iPhone Candid Snapshot · 随手微糊手机照片",
     "atlas": "editorial",
@@ -2048,6 +2069,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "realism",
+    "summary": "用真实镜头透视、材质和光线塑造照片级画面，可选焦段。",
     "name": "超写实",
     "title": "Hyperrealistic Photography · 超写实照片级画质",
     "atlas": "editorial",
@@ -2095,6 +2117,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "ccd",
+    "summary": "模拟千禧年卡片机直闪，突出硬阴影、近处高光和轻微数码颗粒。",
     "name": "卡片机",
     "title": "CCD Direct Flash · 千禧年卡片机直闪",
     "atlas": "camera",
@@ -2132,6 +2155,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "luxury-anime",
+    "summary": "用高级时装插画和编辑摄影构图呈现角色，突出布料与剪裁。",
     "name": "时装动漫",
     "title": "Luxury Anime Editorial · 高级时装角色海报",
     "atlas": "camera",
@@ -2170,6 +2194,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "type-anime",
+    "summary": "把大字形当作构图元素，让文字与角色的动作和轮廓交错。",
     "name": "字体动漫",
     "title": "Typographic Anime Editorial · 巨型字体角色海报",
     "atlas": "camera",
@@ -2207,6 +2232,7 @@ const IMAGE_VISUAL_SKILLS = [
   },
   {
     "id": "geometry",
+    "summary": "用少量几何形体重构人物，突出姿态和服装轮廓。",
     "name": "几何人物",
     "title": "Geometric Editorial Character · 几何人物编辑插画",
     "atlas": "camera",

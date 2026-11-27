@@ -14,7 +14,7 @@
         })();
     </script>
     <link rel="stylesheet" href="styles/app.css?v=51">
-    <link rel="stylesheet" href="styles/visual-skills.css?v=1">
+    <link rel="stylesheet" href="styles/visual-skills.css?v=3">
     <link rel="stylesheet" href="styles/legacy.css?v=1" media="not all" data-legacy-styles-disabled>
 </head>
 <body>
@@ -173,7 +173,7 @@
                                 <button type="button" id="polishImagePromptButton" onclick="polishImagePrompt()" title="一键润色提示词" aria-label="一键润色提示词">
                                     <i data-lucide="sparkles" aria-hidden="true"></i>
                                 </button>
-                                <button type="button" id="imageSkillButton" class="image-composer-action" aria-controls="imageSkillPicker" aria-haspopup="dialog" aria-expanded="false" title="添加视觉风格" aria-label="添加视觉风格">
+                                <button type="button" id="imageSkillButton" class="image-composer-action" aria-controls="imageSkillPicker" aria-haspopup="dialog" aria-expanded="false" aria-label="添加视觉风格" data-image-tip="打开风格库，选择可叠加的摄影、印刷或插画风格。">
                                     <i data-lucide="palette" aria-hidden="true"></i>
                                 </button>
                                 <button type="button" id="expandImagePromptButton" hidden onclick="openImagePromptModal()" title="全屏编辑提示词" aria-label="全屏编辑提示词">
@@ -357,17 +357,21 @@
                 <section id="imageSkillPicker" class="visual-skill-picker" role="dialog" aria-labelledby="imageSkillTitle" hidden>
                     <header class="visual-skill-header">
                         <div class="visual-skill-heading">
-                            <button type="button" id="imageSkillBack" title="返回风格库" aria-label="返回风格库" hidden><i data-lucide="arrow-left" aria-hidden="true"></i></button>
+                            <i class="visual-skill-title-icon" data-lucide="palette" aria-hidden="true"></i>
+                            <button type="button" id="imageSkillBack" aria-label="返回风格库" data-image-tip="返回风格库" hidden><i data-lucide="arrow-left" aria-hidden="true"></i></button>
                             <h2 id="imageSkillTitle">视觉风格</h2>
                         </div>
-                        <button type="button" id="imageSkillClose" title="关闭风格面板" aria-label="关闭风格面板"><i data-lucide="x" aria-hidden="true"></i></button>
+                        <button type="button" id="imageSkillClose" aria-label="关闭风格面板" data-image-tip="关闭风格面板"><i data-lucide="x" aria-hidden="true"></i></button>
                     </header>
                     <nav id="imageSkillSteps" class="visual-skill-step-bar" aria-label="配置风格" hidden>
-                        <button type="button" id="imageSkillPrevious" title="上一步" aria-label="上一步"><i data-lucide="chevron-left" aria-hidden="true"></i></button>
-                        <span id="imageSkillStepLabel" aria-live="polite"></span>
-                        <button type="button" id="imageSkillNext" title="下一步" aria-label="下一步"><i data-lucide="chevron-right" aria-hidden="true"></i></button>
+                        <button type="button" id="imageSkillPrevious" aria-label="上一步" data-image-tip="上一步"><i data-lucide="chevron-left" aria-hidden="true"></i></button>
+                        <div class="visual-skill-step-meta">
+                            <span id="imageSkillStepLabel" aria-live="polite"></span>
+                            <span class="visual-skill-step-progress" aria-hidden="true"></span>
+                        </div>
+                        <button type="button" id="imageSkillNext" aria-label="下一步" data-image-tip="下一步"><i data-lucide="chevron-right" aria-hidden="true"></i></button>
                     </nav>
-                    <div id="imageSkillGrid" class="visual-skill-grid"></div>
+                    <div class="visual-skill-viewport"><div id="imageSkillGrid" class="visual-skill-grid" tabindex="-1"></div></div>
                 </section>
 
                 <section id="imageEditResult" aria-labelledby="imageEditResultHeading">
@@ -948,7 +952,7 @@
     <script src="scripts/agents-sdk.js?v=1"></script>
     <script src="scripts/android-bridge.js?v=11"></script>
     <script src="scripts/modules/01-app-state.js?v=5"></script>
-    <script src="scripts/modules/02-image-controls.js?v=13"></script>
+    <script src="scripts/modules/02-image-controls.js?v=14"></script>
     <script src="scripts/modules/03-image-reasoning.js?v=6"></script>
     <script src="scripts/modules/04-image-stream-rendering.js?v=2"></script>
     <script src="scripts/modules/05-image-events-sessions.js?v=9"></script>
@@ -959,8 +963,8 @@
     <script src="scripts/modules/10-dashboard-rendering.js?v=3"></script>
     <script src="scripts/modules/11-theme-bootstrap.js?v=2"></script>
     <script src="scripts/mobile-nav.js?v=2"></script>
-    <script src="scripts/visual-skill-catalog.js?v=1"></script>
-    <script src="scripts/visual-skills.js?v=1"></script>
+    <script src="scripts/visual-skill-catalog.js?v=2"></script>
+    <script src="scripts/visual-skills.js?v=3"></script>
     <script src="scripts/modules/12-bootstrap.js?v=1"></script>
 
 
