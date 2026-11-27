@@ -2,10 +2,25 @@ const imageVisualSkills = (() => {
     const catalog = new Map(IMAGE_VISUAL_SKILLS.map(skill => [skill.id, skill]));
     const selected = new Map();
     const assets = 'assets/visual-skills/';
+    const motionEase = 'cubic-bezier(0.22, 1, 0.36, 1)';
+    const closedFrame = { opacity: 0, transform: 'translateY(6px) scale(.99)' };
+    const openFrame = { opacity: 1, transform: 'translateY(0) scale(1)' };
     let editor = null;
     let opener = null;
+    let panelMotion = null;
+    let gridMotion = null;
+    let outgoingGrid = null;
     let root;
     let grid;
+
+    function motionEnabled() {
+        return typeof root.animate === 'function' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+
+    function panelFrame() {
+        const style = getComputedStyle(root);
+        return { opacity: style.opacity, transform: style.transform };
+    }
 
     function stepsFor(skill, choices) {
         return skill.steps.filter(step => !step.when || Object.entries(step.when)
@@ -87,6 +102,13 @@ const imageVisualSkills = (() => {
         return thumb;
     }
 
+    function choiceDescription(choice) {
+        if (choice.summary) return choice.summary;
+        if (choice.id === 'default') return '沿用此风格的默认处理。';
+        const sentence = choice.prompt.replace(/[【】]/g, '').match(/^[^。！？\r\n]+[。！？]?/)?.[0].trim() || choice.prompt;
+        return sentence.length > 64 ? sentence.slice(0, 63).trimEnd() + '…' : sentence;
+    }
+
     function makeTile(skill, { choice, step, active = false, onSelect }) {
         const button = document.createElement('button');
         button.type = 'button';
@@ -100,17 +122,28 @@ const imageVisualSkills = (() => {
         const name = document.createElement('span');
         name.className = 'visual-skill-choice-name';
         name.textContent = choice?.name || skill.name;
-        button.title = choice ? choice.name : skill.title;
+        const description = [choice ? choiceDescription(choice) : skill.summary];
+        button.setAttribute('aria-label', choice?.name || skill.title);
+        if (needsAgent) description.push('需要 Flash 或其他已开放的思维档位。');
+        if (containsAgentChoice) description.push('部分配置需要 Agent。');
         if (needsAgent && !hasAgentMode()) {
             button.disabled = true;
-            button.title += ' · 当前档位未开放此风格所需的思维模式';
+            description.push('当前密钥档位未开放此功能。');
         }
+        button.dataset.imageTip = description.join(' ');
         button.append(thumbnail(skill, choice, step), name);
         if (needsAgent || containsAgentChoice) {
             const badge = document.createElement('span');
             badge.className = 'visual-skill-agent-badge';
             badge.textContent = containsAgentChoice ? '含 Agent' : 'Agent';
             button.append(badge);
+        }
+        if (active) {
+            const mark = document.createElement('span');
+            mark.className = 'visual-skill-choice-mark';
+            mark.setAttribute('aria-hidden', 'true');
+            mark.innerHTML = iconMarkup('check', 'icon-12');
+            button.append(mark);
         }
         button.addEventListener('click', onSelect);
         return button;
@@ -120,7 +153,38 @@ const imageVisualSkills = (() => {
         return editor && editor.steps[editor.index];
     }
 
+    function finishGridSlide() {
+        gridMotion?.cancel();
+        outgoingGrid?.remove();
+        gridMotion = null;
+        outgoingGrid = null;
+    }
+
+    function slideGrids(previousGrid, scrollTop, direction) {
+        previousGrid.removeAttribute('id');
+        previousGrid.classList.add('is-leaving');
+        previousGrid.inert = true;
+        previousGrid.setAttribute('aria-hidden', 'true');
+        grid.parentElement.append(previousGrid);
+        previousGrid.scrollTop = scrollTop;
+        outgoingGrid = previousGrid;
+        const offset = direction === 'right' ? 100 : -100;
+        const options = { duration: 240, easing: motionEase };
+        const exit = previousGrid.animate([
+            { transform: 'translateX(0)' }, { transform: `translateX(${-offset}%)` }
+        ], options);
+        gridMotion = grid.animate([
+            { transform: `translateX(${offset}%)` }, { transform: 'translateX(0)' }
+        ], options);
+        void exit.finished.then(() => {
+            if (outgoingGrid === previousGrid) finishGridSlide();
+        }, () => {});
+    }
+
     function render(direction = '') {
+        const previousGrid = direction && motionEnabled() && grid.childElementCount ? grid.cloneNode(true) : null;
+        const previousScroll = grid.scrollTop;
+        finishGridSlide();
         const step = activeStep();
         root.dataset.view = editor ? 'steps' : 'library';
         document.getElementById('imageSkillTitle').textContent = editor?.skill.name || '视觉风格';
@@ -128,10 +192,13 @@ const imageVisualSkills = (() => {
         document.getElementById('imageSkillSteps').hidden = !step;
         const indicator = document.getElementById('imageSkillStepLabel');
         indicator.textContent = step ? `${step.name} · ${editor.index + 1}/${editor.steps.length}` : '';
+        document.getElementById('imageSkillSteps').style.setProperty('--skill-step-progress',
+            step ? (editor.index + 1) / editor.steps.length : 0);
         const next = document.getElementById('imageSkillNext');
         next.disabled = !step || !editor.chosen[step.id];
-        next.title = step && editor.index === editor.steps.length - 1 ? '应用风格' : '下一步';
-        next.setAttribute('aria-label', next.title);
+        const nextLabel = step && editor.index === editor.steps.length - 1 ? '应用风格' : '下一步';
+        next.dataset.imageTip = nextLabel;
+        next.setAttribute('aria-label', nextLabel);
         const previous = document.getElementById('imageSkillPrevious');
         previous.disabled = !step || editor.index === 0;
         if (step) {
@@ -144,19 +211,15 @@ const imageVisualSkills = (() => {
             })));
         }
         grid.scrollTop = 0;
-        grid.classList.remove('from-left', 'from-right');
-        if (direction && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-            void grid.offsetWidth;
-            grid.classList.add(`from-${direction}`);
-        }
+        if (previousGrid) slideGrids(previousGrid, previousScroll, direction);
         renderLucideIcons();
-        (grid.querySelector('.visual-skill-choice[data-selected]') || grid.firstElementChild)?.focus({ preventScroll: true });
+        grid.focus({ preventScroll: true });
     }
 
-    function begin(skill) {
+    function begin(skill, direction = 'right') {
         const chosen = { ...selected.get(skill.id) };
         editor = { skill, chosen, steps: stepsFor(skill, chosen), index: 0 };
-        render('right');
+        render(direction);
     }
 
     function chooseSkill(skill) {
@@ -196,18 +259,19 @@ const imageVisualSkills = (() => {
         const editing = selected.has(skill.id);
         selected.set(skill.id, { ...chosen });
         close(false);
-        updateSelection(!editing);
-        const target = editing ? document.querySelector(`.visual-skill-reopen[data-skill-id="${skill.id}"]`)
-            : document.getElementById('imageSkillButton');
+        updateSelection();
+        const card = document.querySelector(`.visual-skill-reopen[data-skill-id="${skill.id}"]`);
+        card?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        const target = editing ? card : document.getElementById('imageSkillButton');
         target?.focus({ preventScroll: true });
     }
 
-    function updateSelection(scrollToEnd = false) {
+    function updateSelection() {
         if (requiresAgent() && imageEditState.reasoningMode === 'instant' && !imageEditState.reasoningAdvanced) {
             setImageReasoningMode('flash');
         }
         syncImageReasoningLabels();
-        renderEditImageList(scrollToEnd);
+        renderEditImageList();
         syncImageGenerationAvailability();
     }
 
@@ -222,9 +286,14 @@ const imageVisualSkills = (() => {
             edit.type = 'button';
             edit.className = 'visual-skill-reopen';
             edit.dataset.skillId = id;
-            edit.title = [skill.name, ...choiceList(skill, chosen).map(choice => choice.name), agent ? '需要 Agent' : ''].filter(Boolean).join(' · ');
-            edit.setAttribute('aria-label', `编辑风格 ${edit.title}`);
+            const options = choiceList(skill, chosen).filter(choice => choice.id !== 'default').map(choice => choice.name);
+            const details = [skill.summary, options.length ? `已选 ${options.join('、')}。` : '',
+                agent ? '此风格由 Agent 规划。' : '', '点击重新编辑。'];
+            edit.dataset.imageTip = details.filter(Boolean).join(' ');
+            edit.setAttribute('aria-label', `编辑风格 ${skill.name}`);
             edit.setAttribute('aria-haspopup', 'dialog');
+            edit.setAttribute('aria-controls', 'imageSkillPicker');
+            edit.setAttribute('aria-expanded', 'false');
             const label = document.createElement('span');
             label.className = 'visual-skill-package-name';
             label.textContent = skill.name;
@@ -275,35 +344,58 @@ const imageVisualSkills = (() => {
         const width = Math.min(shell.width - 2, window.innerWidth - left - 8);
         const bottom = Math.max(8, window.innerHeight - trigger.top + 8);
         const height = Math.max(0, trigger.top - Math.max(8, bounds.top + 8) - 8);
+        const anchor = opener?.getBoundingClientRect() || trigger;
+        const origin = Math.max(0, Math.min(width, anchor.left + anchor.width / 2 - left));
         root.style.left = `${left}px`;
         root.style.width = `${width}px`;
         root.style.bottom = `${bottom}px`;
         root.style.height = `${Math.min(height, 420)}px`;
+        root.style.transformOrigin = `${origin}px bottom`;
     }
 
     function open(trigger, skill = null) {
-        if (!root.hidden && opener === trigger) return close();
+        if (opener === trigger) return close();
         closeImageGenerationControls();
         closeImageReasoningMenu();
+        const start = root.hidden ? closedFrame : panelFrame();
+        panelMotion?.cancel();
+        panelMotion = null;
         if (opener) opener.setAttribute('aria-expanded', 'false');
         opener = trigger;
         editor = null;
         root.hidden = false;
+        root.inert = false;
         opener.setAttribute('aria-expanded', 'true');
         position();
-        if (skill) begin(skill);
+        if (skill) begin(skill, '');
         else render();
+        if (motionEnabled()) panelMotion = root.animate([start, openFrame], { duration: 180, easing: motionEase });
     }
 
     function close(restoreFocus = true) {
-        if (!root || root.hidden) return;
-        root.hidden = true;
-        if (opener) {
-            opener.setAttribute('aria-expanded', 'false');
-            if (restoreFocus && opener.isConnected) opener.focus({ preventScroll: true });
-        }
+        if (!opener) return;
+        const source = opener;
         opener = null;
         editor = null;
+        source.setAttribute('aria-expanded', 'false');
+        if (restoreFocus && source.isConnected) source.focus({ preventScroll: true });
+        root.inert = true;
+        finishGridSlide();
+        const start = panelFrame();
+        panelMotion?.cancel();
+        panelMotion = null;
+        if (!motionEnabled()) {
+            root.hidden = true;
+            return;
+        }
+        const closing = root.animate([start, closedFrame], { duration: 150, easing: 'ease-in', fill: 'forwards' });
+        panelMotion = closing;
+        void closing.finished.then(() => {
+            if (panelMotion !== closing) return;
+            root.hidden = true;
+            closing.cancel();
+            panelMotion = null;
+        }, () => {});
     }
 
     function init() {
@@ -321,7 +413,7 @@ const imageVisualSkills = (() => {
             if (editor?.index > 0) { editor.index -= 1; render('left'); }
         });
         document.addEventListener('pointerdown', event => {
-            if (!root.hidden && !root.contains(event.target) && !opener?.contains(event.target)) close(false);
+            if (opener && !root.contains(event.target) && !opener.contains(event.target)) close(false);
         });
         window.addEventListener('resize', position, { passive: true });
         window.visualViewport?.addEventListener('resize', position, { passive: true });

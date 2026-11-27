@@ -1573,6 +1573,26 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertEqual(self.cache.status()["status"], "ready")
         self.assertTrue((self.cache.release_dir / "frontend/vendor/lucide/lucide.min.js").is_file())
 
+    def test_visual_skills_are_installed_and_validated_in_the_startup_cache(self):
+        thumbnail = "frontend/assets/visual-skills/print.webp"
+        image = self.bundle / thumbnail
+        image.parent.mkdir(parents=True, exist_ok=True)
+        image.write_bytes(b"style-preview")
+        script = b"lucide-test-script"
+        with patch.object(backend_platform, "LUCIDE_SHA256", app.sha256_bytes(script)):
+            cache = app.StaticAssetCache(self.data, self.bundle)
+        with patch.object(cache, "_download_lucide", return_value=script):
+            cache.install()
+
+        self.assertNotEqual(cache.release_id, self.cache.release_id)
+        self.assertTrue(cache.is_ready())
+        for relative in ("frontend/styles/visual-skills.css", "frontend/scripts/visual-skill-catalog.js",
+                         "frontend/scripts/visual-skills.js", thumbnail):
+            cached = cache.release_dir / relative
+            self.assertEqual(cached.read_bytes(), (self.bundle / relative).read_bytes())
+        (cache.release_dir / thumbnail).write_bytes(b"damaged")
+        self.assertFalse(cache.is_ready())
+
     def test_replace_release_path_retries_transient_permission_errors(self):
         source = self.data / "staging"
         destination = self.data / "release"

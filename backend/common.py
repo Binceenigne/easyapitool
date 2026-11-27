@@ -53,7 +53,7 @@ from winotify import Notification, audio
 
 APP_NAME = "DJYX_APITOOL"
 WINDOW_TITLE = "DJYX_APITOOL"
-APP_VERSION = "1.2.10"
+APP_VERSION = "1.2.11"
 TITLE_BAR_MODES = {"default", "minimal", "original"}
 BACKGROUND_UI_MODES = {"delayed", "active", "low_power"}
 GITHUB_REPOSITORY = os.environ.get(
@@ -669,7 +669,10 @@ FRONTEND_RUNTIME_FILES = (
     "frontend/benchmark.html",
     "frontend/styles/app.css",
     "frontend/styles/legacy.css",
+    "frontend/styles/visual-skills.css",
     "frontend/assets/title_logo.png",
+    "frontend/scripts/visual-skill-catalog.js",
+    "frontend/scripts/visual-skills.js",
     "frontend/scripts/modules/00-core-ui.js",
     "frontend/scripts/modules/01-app-state.js",
     "frontend/scripts/modules/02-image-controls.js",

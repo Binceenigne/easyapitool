@@ -727,6 +727,11 @@ class StaticAssetCache:
             relative: self.bundle_root / Path(relative)
             for relative in FRONTEND_RUNTIME_FILES
         }
+        visual_assets = self.bundle_root / "frontend" / "assets" / "visual-skills"
+        self.source_files.update({
+            path.relative_to(self.bundle_root).as_posix(): path
+            for path in visual_assets.rglob("*") if path.is_file()
+        })
         self.source_hashes = {
             relative: sha256_file(path) for relative, path in self.source_files.items()
         }
