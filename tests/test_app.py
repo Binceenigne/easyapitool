@@ -2458,7 +2458,8 @@ class StaticAssetCacheTests(unittest.TestCase):
         self.assertIn('id="imageTransparencyButtons"', page)
         self.assertIn("is-transparency-preview", rendering)
         self.assertIn("createImageGenerationSet(requestId, imageCount, finalPrompt", page)
-        self.assertIn("activeKey.id,\n                    finalPrompt,", page)
+        self.assertIn("const requestPrompt = imageVisualSkills.compose(finalPrompt);", page)
+        self.assertIn("activeKey.id,\n                    requestPrompt,", page)
 
     def test_main_page_window_controls_use_lucide_icons(self):
         page = frontend_source()

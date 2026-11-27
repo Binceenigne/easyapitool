@@ -33,6 +33,14 @@ type generationInput struct {
 	Options      object
 }
 
+func (req generationInput) originalPrompt() string {
+	original := strings.TrimSpace(objectString(req.Options, "originalPrompt"))
+	if original != "" && strings.HasPrefix(req.Prompt, original+"\n\n【已选视觉风格】\n") {
+		return original
+	}
+	return req.Prompt
+}
+
 func (m *mobile) createGeneration(w http.ResponseWriter, r *http.Request, owner string) {
 	var req generationInput
 	if !decodeRequest(w, r, 256<<10, &req) {
@@ -302,7 +310,7 @@ func (m *mobile) runGeneration(ctx context.Context, cancel context.CancelFunc, i
 	defer visual.release()
 	ctx = context.WithValue(ctx, agentVisualScopeKey{}, visual)
 	result := object{"ok": false, "requestId": id.id, "setId": id.id, "sessionId": id.id,
-		"prompt": req.Prompt, "originalPrompt": req.Prompt, "imageModel": opts.model,
+		"prompt": req.Prompt, "originalPrompt": req.originalPrompt(), "imageModel": opts.model,
 		"requestedCount": opts.n, "aspectRatio": opts.ratio, "transparency": opts.background,
 		"createdAt": time.Now().UTC(), "items": []object{}, "reasoningMode": objectString(req.Options, "reasoningMode")}
 	result["inputAssetIds"] = []string{}

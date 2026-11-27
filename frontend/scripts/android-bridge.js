@@ -612,6 +612,7 @@
                 setId: event.setId || event.requestId
             });
             result.requestId = requestId;
+            result.originalPrompt = pending?.prompt || result.originalPrompt || result.prompt;
             result.setId = pending?.setId || result.setId || requestId;
             result.sessionId = pending?.sessionId || result.sessionId || requestId;
             result.parentSetId = pending?.parentSetId || result.parentSetId || '';
@@ -913,15 +914,16 @@
 
     async function generateImage(keyId, prompt, paths, options = {}) {
         const requestId = normalizeRequestId(options.requestId || newRequestId());
+        const originalPrompt = options.originalPrompt || prompt;
         if (pendingTasks.has(requestId) || directTasks.has(requestId)) throw new Error('同一任务正在生成');
         options = { ...options, requestId };
         const key = (await secureKeyMetadata()).find(item => String(item.id) === String(keyId));
         try { paths = await resolveGenerationReferences(keyId, paths, options); }
-        catch (error) { return persistFailedGeneration(options, prompt, error); }
+        catch (error) { return persistFailedGeneration(options, originalPrompt, error); }
         if (usesDirectApi(key)) {
             if (key.distributed) {
                 const state = await directKeyState(key);
-                if (!state.appModels) return persistFailedGeneration(options, prompt, new Error('无法读取网关模型配置，请刷新密钥后重试'));
+                if (!state.appModels) return persistFailedGeneration(options, originalPrompt, new Error('无法读取网关模型配置，请刷新密钥后重试'));
             }
             return generateDirectImage(key, prompt, paths, options);
         }
@@ -939,7 +941,7 @@
                 sessionId: String(options.sessionId || requestId),
                 parentSetId: String(options.parentSetId || ''),
                 roundNumber: Number(options.roundNumber) || 1,
-                prompt,
+                prompt: originalPrompt,
                 requestedCount: Number(options.imageCount) || 1,
                 transparency: options.background || options.transparency || 'auto',
                 imageModel: options.imageModel || 'gpt-image-2',
@@ -966,7 +968,7 @@
             const requestId = String(options.requestId || pending?.requestId || '');
             if (requestId) pendingTasks.delete(requestId);
             if (!pending?.failurePersisted) {
-                const failed = persistFailedGeneration(options, prompt, error, pending);
+                const failed = persistFailedGeneration(options, originalPrompt, error, pending);
                 window.applyImageGenerationEvent?.({ ...failed, type: 'set_completed' });
             }
             throw error;
@@ -1282,7 +1284,8 @@
         const result = {
             ...options, ok: false, requestId, setId: requestId, sessionId: options.sessionId || requestId,
             imageModel: options.imageModel, createdAt: new Date().toISOString(),
-            prompt, originalPrompt: prompt, transparency: options.background || 'auto', requestedCount: imageCount, items: []
+            prompt, originalPrompt: options.originalPrompt || prompt,
+            transparency: options.background || 'auto', requestedCount: imageCount, items: []
         };
         const emit = event => window.applyImageGenerationEvent?.({ requestId, setId: requestId, sessionId: result.sessionId, ...event });
         const output = options.output_format || 'png';

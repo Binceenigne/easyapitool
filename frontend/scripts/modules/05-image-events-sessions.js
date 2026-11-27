@@ -604,7 +604,6 @@
                 previousPrompt: result.originalPrompt || result.prompt || ''
             };
             setImageEditSessionUi(true);
-            window.imageEditState.files = [];
             renderEditImageList();
             document.getElementById('imageEditPrompt').value = '';
             resizeImagePrompt();
@@ -1031,9 +1030,16 @@
                 return showToast('SVG 仅支持单张生成，请先移除参考图并退出续作', 'error');
             }
             const finalPrompt = visibleImagePrompt(prompt);
+            const styleError = imageVisualSkills.reasoningIssue();
+            if (styleError) return showToast(styleError, 'info');
+            const requestPrompt = imageVisualSkills.compose(finalPrompt);
+            if (Array.from(requestPrompt).length > 32000) {
+                return showToast('提示词与已选风格合计超过 32000 字符，请精简提示词或减少风格', 'error');
+            }
             const reasoningOptions = currentImageReasoningRequestOptions();
             const useReasoning = imageModeUsesReasoning(reasoningOptions.reasoningMode);
             const requestOptions = {
+                ...(requestPrompt !== finalPrompt ? { originalPrompt: finalPrompt } : {}),
                 imageModel: window.imageEditState.imageModel,
                 size: document.getElementById('imageEditSize').value,
                 resolution: window.imageEditState.resolution,
@@ -1112,11 +1118,6 @@
                 : files.length
                 ? `正在参考 ${files.length} 张图片生成新图`
                 : '正在根据提示词生成图片';
-            if (!session) {
-                promptInput.value = '';
-                document.getElementById('imagePromptModalTextarea').value = '';
-                resizeImagePrompt();
-            }
             if (isAndroidPlatform() && window.matchMedia('(max-width: 600px)').matches) {
                 setWorkspaceMode('image-edit', true);
             }
@@ -1124,7 +1125,7 @@
             try {
                 const result = await window.pywebview.api.generate_image(
                     activeKey.id,
-                    finalPrompt,
+                    requestPrompt,
                     files.map(file => file.path),
                     requestOptions
                 );

@@ -83,9 +83,14 @@
         let imageReasoningPulseTimer = 0;
         let imageReasoningMaxTransitionTimer = 0;
 
-        function availableImageReasoningModes() {
+        function imageReasoningModesForTier() {
             const profile = activeImageProfile();
             return !profile?.tier ? IMAGE_REASONING_MODES : IMAGE_REASONING_MODES.filter(mode => mode === 'instant' || imageTierAllows('reasoningModes', mode) && Object.hasOwn(profile.reasoningModes || {}, mode));
+        }
+
+        function availableImageReasoningModes() {
+            const modes = imageReasoningModesForTier();
+            return imageVisualSkills.requiresAgent() ? modes.filter(mode => mode !== 'instant') : modes;
         }
 
         function availableImageAdvancedModels() {
@@ -270,7 +275,8 @@
             document.querySelectorAll('#reasoningSliderTrack .slider-dot').forEach((dot, index) => {
                 const permitted = availableImageReasoningModes().includes(IMAGE_REASONING_MODES[index]);
                 dot.classList.toggle('is-unavailable', !permitted);
-                dot.title = permitted ? IMAGE_REASONING_LABELS[IMAGE_REASONING_MODES[index]] : '当前档位未开放';
+                dot.title = permitted ? IMAGE_REASONING_LABELS[IMAGE_REASONING_MODES[index]]
+                    : index === 0 && imageVisualSkills.requiresAgent() ? '移除 Agent 风格后可选 Instant' : '当前档位未开放';
             });
             syncImageAdvancedAvailability();
             const normalTrack = document.getElementById('reasoningSliderTrack');
@@ -468,6 +474,10 @@
         }
 
         function returnToNormalImageReasoningMode(persist = true) {
+            if (!availableImageReasoningModes().length) {
+                showToast('移除 Agent 风格后可切换到 Instant', 'info');
+                return;
+            }
             const previousMode = normalizeImageReasoningPreset(window.imageEditState.reasoningPreviousMode);
             setImageReasoningMode(previousMode, persist);
             showImageReasoningMainView();
@@ -645,7 +655,8 @@
         function setImageReasoningMode(mode, persist = true) {
             const wantedMode = normalizeImageReasoningPreset(mode);
             const permittedModes = availableImageReasoningModes();
-            const cleanMode = permittedModes.includes(wantedMode) ? wantedMode : permittedModes.reduce((best, candidate) => Math.abs(IMAGE_REASONING_MODES.indexOf(candidate) - IMAGE_REASONING_MODES.indexOf(wantedMode)) < Math.abs(IMAGE_REASONING_MODES.indexOf(best) - IMAGE_REASONING_MODES.indexOf(wantedMode)) ? candidate : best, 'instant');
+            if (!permittedModes.length) return;
+            const cleanMode = permittedModes.includes(wantedMode) ? wantedMode : permittedModes.reduce((best, candidate) => Math.abs(IMAGE_REASONING_MODES.indexOf(candidate) - IMAGE_REASONING_MODES.indexOf(wantedMode)) < Math.abs(IMAGE_REASONING_MODES.indexOf(best) - IMAGE_REASONING_MODES.indexOf(wantedMode)) ? candidate : best, permittedModes[0]);
             const modeIndex = IMAGE_REASONING_MODES.indexOf(cleanMode);
             const previousMode = window.imageEditState.reasoningMode;
             window.imageEditState.reasoningMode = cleanMode;
@@ -952,6 +963,7 @@
                 showToast(message, 'error');
             } finally {
                 window.imageEditState.polishing = false;
+                resizeImagePrompt();
                 button.disabled = !imageTierFeature('promptPolish');
                 button.classList.remove('is-active');
                 setLucideIcon(button.querySelector('[data-lucide], svg'), 'sparkles');
